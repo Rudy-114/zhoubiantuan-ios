@@ -1,0 +1,170 @@
+{
+  "generatedAt": "2026-05-17T19:37:29+08:00",
+  "workspace": "/Users/panpanpan/Documents/欧美团app",
+  "project": {
+    "name": "周边团 / ZhouBianTuan",
+    "type": "原生 SwiftUI iOS 高保真原型",
+    "positioning": "小红书式娱乐周边团购社区原型，只展示团购信息、站内互动和外部联系方式",
+    "platform": "iOS",
+    "deploymentTarget": "iOS 17.0",
+    "xcodeProject": "ZhouBianTuan.xcodeproj",
+    "scheme": "ZhouBianTuan",
+    "target": "ZhouBianTuan",
+    "bundleDisplayName": "周边团",
+    "bundleIdentifier": "com.panpanpan.zhoubiantuan",
+    "appCategory": "public.app-category.social-networking"
+  },
+  "git": {
+    "branch": "main",
+    "hasCommits": false,
+    "statusSummary": "当前仓库还没有提交，README、Xcode 工程和 App 源码目录均为未跟踪文件。",
+    "untrackedItems": [
+      "README.md",
+      "ZhouBianTuan.xcodeproj/",
+      "ZhouBianTuan/"
+    ]
+  },
+  "fileInventory": {
+    "scope": "项目文件清单，排除 .git、DerivedData 和构建产物；本清单为生成该进度文件前的 app 文件。",
+    "count": 21,
+    "files": [
+      "README.md",
+      "ZhouBianTuan.xcodeproj/project.pbxproj",
+      "ZhouBianTuan/Assets.xcassets/AccentColor.colorset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_album.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_album.imageset/merch_album.png",
+      "ZhouBianTuan/Assets.xcassets/merch_badges.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_badges.imageset/merch_badges.png",
+      "ZhouBianTuan/Assets.xcassets/merch_concert.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_concert.imageset/merch_concert.png",
+      "ZhouBianTuan/Assets.xcassets/merch_jewelry.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_jewelry.imageset/merch_jewelry.png",
+      "ZhouBianTuan/Assets.xcassets/merch_magazine.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_magazine.imageset/merch_magazine.png",
+      "ZhouBianTuan/Assets.xcassets/merch_photocards.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_photocards.imageset/merch_photocards.png",
+      "ZhouBianTuan/Assets.xcassets/merch_plush.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_plush.imageset/merch_plush.png",
+      "ZhouBianTuan/Assets.xcassets/merch_standees.imageset/Contents.json",
+      "ZhouBianTuan/Assets.xcassets/merch_standees.imageset/merch_standees.png",
+      "ZhouBianTuan/ZhouBianTuanApp.swift"
+    ],
+    "generatedReportFile": "project_progress.json"
+  },
+  "codebaseMetrics": {
+    "readmeLines": 25,
+    "swiftSourceLines": 2276,
+    "xcodeProjectLines": 336,
+    "totalProjectFilesBeforeReport": 21,
+    "swiftSourceFiles": 1,
+    "assetCatalogImageSets": 8
+  },
+  "implementationProgress": {
+    "stage": "可编译高保真原型",
+    "status": "核心原型页面和本地模拟交互已完成，尚未进入后端、账号、支付、订单和生产化阶段。",
+    "lastBuildCheck": {
+      "checkedAt": "2026-05-17T19:37:17+08:00",
+      "command": "xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
+      "result": "succeeded",
+      "notes": [
+        "构建目标为 generic iOS Simulator。",
+        "构建日志中仅出现 AppIntents/AppShortcuts metadata 跳过提示，未发现编译失败。"
+      ]
+    },
+    "implementedScreens": [
+      "RootView：五栏 Tab 导航：首页、市集、发布、消息、我",
+      "HomeView：首页，含关注 / 发现 / 市集切换和双列瀑布流",
+      "MarketView：市集浏览和分类入口",
+      "SearchView：搜索筛选页面",
+      "PostDetailView：团购详情页，含轮播、信息卡、联系方式、风险提示、评论和底部互动栏",
+      "CreatePostView：发布团购帖页面，含图片选择、必填字段和发布校验",
+      "MessagesView：消息/私信列表",
+      "ChatView：私信对话页",
+      "ProfileView：我的页面",
+      "FavoritesView：收藏页",
+      "ReminderCenterView：截团提醒中心",
+      "AdminReportView：管理后台举报处理页",
+      "UserProfileView：用户主页"
+    ],
+    "implementedDataModels": [
+      "User",
+      "GroupBuyPost",
+      "ReviewPost",
+      "Comment",
+      "MessageThread",
+      "DirectMessage",
+      "Report",
+      "Reminder",
+      "ReportTarget",
+      "ContentStatus",
+      "ReportStatus",
+      "ColorToken"
+    ],
+    "mockData": {
+      "users": 5,
+      "groupBuyPosts": 8,
+      "reviewPosts": 1,
+      "comments": 4,
+      "messageThreads": 2,
+      "reports": 2,
+      "reminders": 2,
+      "prelikedPosts": [
+        "p-card",
+        "p-plush"
+      ],
+      "prefavoritedPosts": [
+        "p-card",
+        "p-album"
+      ],
+      "prefollowedUsers": [
+        "u-echo",
+        "u-black"
+      ]
+    },
+    "implementedInteractions": [
+      "点赞 / 取消点赞",
+      "收藏 / 取消收藏，并同步创建或移除截团提醒",
+      "关注 / 取消关注团长",
+      "添加评论",
+      "举报帖子",
+      "管理员处理举报：隐藏、下架、警告、忽略",
+      "复制微信 / QQ 到剪贴板",
+      "发送站内私信",
+      "创建新的团购帖子",
+      "Toast 反馈提示"
+    ],
+    "assets": [
+      "merch_album.png",
+      "merch_badges.png",
+      "merch_concert.png",
+      "merch_jewelry.png",
+      "merch_magazine.png",
+      "merch_photocards.png",
+      "merch_plush.png",
+      "merch_standees.png"
+    ],
+    "explicitlyOutOfScopeForCurrentPrototype": [
+      "站内支付",
+      "订单系统",
+      "退款流程",
+      "物流跟踪",
+      "售后系统",
+      "担保交易"
+    ],
+    "knownLimitations": [
+      "所有业务状态都存在本地 MockAppStore 中，重启 app 后不会持久化。",
+      "源码目前集中在 ZhouBianTuanApp.swift 单文件中，后续继续迭代前建议拆分模型、Store、页面和组件。",
+      "没有真实后端、账号登录、权限、内容审核服务或外部表单接口。",
+      "目前没有单元测试、UI 测试或截图回归测试。",
+      "Git 仓库尚未创建首个提交。"
+    ],
+    "suggestedNextTasks": [
+      "拆分 Swift 文件结构，按 Models、Store、Views、Components 组织。",
+      "补充最小测试：MockAppStore 交互逻辑、发布校验、举报处理状态。",
+      "增加真实持久化方案，例如 SwiftData、本地 JSON 或后端 API。",
+      "在模拟器上进行完整点击走查并记录截图。",
+      "初始化 Git 提交，固定当前可编译原型基线。"
+    ]
+  }
+}

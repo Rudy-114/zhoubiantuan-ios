@@ -1,0 +1,40 @@
+Migration package manifest
+Generated at: 2026-05-17 20:21:59 +0800
+Workspace: /Users/panpanpan/Documents/欧美团app
+
+This manifest lists the project files intended for migration.
+It excludes .git, DerivedData, and build artifacts.
+
+File count inside project folder after this manifest is added: 24
+
+Files:
+CODEX_HANDOFF.md
+README.md
+ZhouBianTuan.xcodeproj/project.pbxproj
+ZhouBianTuan/Assets.xcassets/AccentColor.colorset/Contents.json
+ZhouBianTuan/Assets.xcassets/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_album.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_album.imageset/merch_album.png
+ZhouBianTuan/Assets.xcassets/merch_badges.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_badges.imageset/merch_badges.png
+ZhouBianTuan/Assets.xcassets/merch_concert.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_concert.imageset/merch_concert.png
+ZhouBianTuan/Assets.xcassets/merch_jewelry.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_jewelry.imageset/merch_jewelry.png
+ZhouBianTuan/Assets.xcassets/merch_magazine.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_magazine.imageset/merch_magazine.png
+ZhouBianTuan/Assets.xcassets/merch_photocards.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_photocards.imageset/merch_photocards.png
+ZhouBianTuan/Assets.xcassets/merch_plush.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_plush.imageset/merch_plush.png
+ZhouBianTuan/Assets.xcassets/merch_standees.imageset/Contents.json
+ZhouBianTuan/Assets.xcassets/merch_standees.imageset/merch_standees.png
+ZhouBianTuan/ZhouBianTuanApp.swift
+file_manifest.txt
+project_progress.json
+
+Recommended first steps after transfer:
+1. Unzip the migration package.
+2. Open 欧美团app/ZhouBianTuan.xcodeproj in Xcode.
+3. Build the ZhouBianTuan scheme on an iPhone simulator.
+4. Ask Codex on the new device to read CODEX_HANDOFF.md, project_progress.json, and file_manifest.txt before continuing.
