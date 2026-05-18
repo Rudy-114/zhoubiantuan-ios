@@ -75,6 +75,9 @@ enum Route: Hashable {
     case editProfile
     case favorites
     case reminders
+    case drafts
+    case browsingHistory
+    case settings
     case admin
 }
 
@@ -150,6 +153,12 @@ extension View {
                 FavoritesView()
             case .reminders:
                 ReminderCenterView()
+            case .drafts:
+                DraftsView()
+            case .browsingHistory:
+                BrowsingHistoryView()
+            case .settings:
+                SettingsView()
             case .admin:
                 AdminReportView()
             }
@@ -420,6 +429,7 @@ final class MockAppStore: ObservableObject {
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
+    @Published var browsingHistoryIDs: [String]
     @Published var toastMessage: String?
     @Published var isLoggedIn = true
 
@@ -484,6 +494,7 @@ final class MockAppStore: ObservableObject {
         likedPostIDs = ["p-card", "p-plush"]
         favoritePostIDs = ["p-card", "p-album"]
         followedUserIDs = ["u-echo", "u-black", "u-moon"]
+        browsingHistoryIDs = ["p-my-pinggu", "p-badge", "p-card", "p-jewelry", "p-concert", "p-magazine"]
     }
 
     var currentUser: User {
@@ -533,6 +544,23 @@ final class MockAppStore: ObservableObject {
 
     func availableRoles(for postID: String) -> [UnsoldRole] {
         post(id: postID)?.unsoldRoles.filter(\.isAvailable).sorted { $0.name < $1.name } ?? []
+    }
+
+    func browsingHistoryPosts() -> [GroupBuyPost] {
+        browsingHistoryIDs.compactMap(post).filter { $0.status == .active }
+    }
+
+    func recordBrowse(postID: String) {
+        browsingHistoryIDs.removeAll { $0 == postID }
+        browsingHistoryIDs.insert(postID, at: 0)
+        if browsingHistoryIDs.count > 30 {
+            browsingHistoryIDs = Array(browsingHistoryIDs.prefix(30))
+        }
+    }
+
+    func removeBrowsingHistory(postIDs: Set<String>) {
+        browsingHistoryIDs.removeAll { postIDs.contains($0) }
+        showToast(postIDs.isEmpty ? "未选择记录" : "已删除浏览记录")
     }
 
     func comments(for postID: String) -> [Comment] {
@@ -1493,6 +1521,9 @@ struct PostDetailView: View {
                 ShareSheetView(post: post)
                     .presentationDetents([.height(440), .large])
                     .presentationDragIndicator(.hidden)
+            }
+            .onAppear {
+                store.recordBrowse(postID: post.id)
             }
             .navigationBarBackButtonHidden(true)
             .navigationBarHidden(true)
@@ -3384,71 +3415,460 @@ struct CollectionSharedInfoCard: View {
     }
 }
 
+struct DraftsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SimpleTopBar(title: "我的草稿", trailing: nil) {
+                dismiss()
+            }
+            VStack(spacing: 16) {
+                Image(systemName: "tray")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(Theme.muted)
+                Text("暂无草稿")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                Text("未发布的团购帖会保存在这里")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct BrowsingHistoryView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var isManaging = false
+    @State private var selectedIDs: Set<String> = []
+
+    var posts: [GroupBuyPost] {
+        store.browsingHistoryPosts()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SimpleTopBar(title: "浏览记录", trailing: isManaging ? "完成" : "管理", trailingIcon: isManaging ? "checkmark" : "line.3.horizontal") {
+                dismiss()
+            } trailingAction: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    isManaging.toggle()
+                    if !isManaging {
+                        selectedIDs.removeAll()
+                    }
+                }
+            }
+
+            HStack(spacing: 92) {
+                VStack(spacing: 7) {
+                    Text("笔记")
+                        .font(.system(size: 22, weight: .black))
+                        .foregroundStyle(Theme.text)
+                    Capsule()
+                        .fill(Theme.hotPink)
+                        .frame(width: 48, height: 4)
+                }
+                Text("直播")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(Theme.muted)
+            }
+            .padding(.top, 14)
+            .padding(.bottom, 26)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("昨天")
+                        .font(.system(size: 24, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 16)
+                    if posts.isEmpty {
+                        Text("还没有最近浏览记录")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 80)
+                    } else {
+                        HistoryWaterfallGrid(posts: posts, isManaging: isManaging, selectedIDs: $selectedIDs)
+                            .padding(.horizontal, 12)
+                    }
+                }
+                .padding(.bottom, isManaging ? 96 : 30)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isManaging {
+                Button {
+                    store.removeBrowsingHistory(postIDs: selectedIDs)
+                    selectedIDs.removeAll()
+                    if posts.isEmpty {
+                        isManaging = false
+                    }
+                } label: {
+                    Text(selectedIDs.isEmpty ? "选择要删除的记录" : "删除 \(selectedIDs.count) 条记录")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(selectedIDs.isEmpty ? Theme.muted : .white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(selectedIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 8)
+                }
+                .disabled(selectedIDs.isEmpty)
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct HistoryWaterfallGrid: View {
+    let posts: [GroupBuyPost]
+    let isManaging: Bool
+    @Binding var selectedIDs: Set<String>
+
+    private var leftPosts: [GroupBuyPost] {
+        posts.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
+    }
+
+    private var rightPosts: [GroupBuyPost] {
+        posts.enumerated().filter { !$0.offset.isMultiple(of: 2) }.map(\.element)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            LazyVStack(spacing: 14) {
+                ForEach(leftPosts) { post in
+                    HistoryCard(post: post, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
+                        toggle(post.id)
+                    }
+                }
+            }
+            LazyVStack(spacing: 14) {
+                ForEach(rightPosts) { post in
+                    HistoryCard(post: post, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
+                        toggle(post.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+}
+
+struct HistoryCard: View {
+    @EnvironmentObject private var store: MockAppStore
+    let post: GroupBuyPost
+    let isManaging: Bool
+    let isSelected: Bool
+    let toggleSelection: () -> Void
+
+    var author: User {
+        store.user(id: post.authorID)
+    }
+
+    var body: some View {
+        Group {
+            if isManaging {
+                Button(action: toggleSelection) {
+                    cardBody
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: Route.postDetail(post.id)) {
+                    cardBody
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var cardBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(post.imageAspect, contentMode: .fit)
+                    .clipped()
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(.black.opacity(0.34), in: Circle())
+                    .padding(8)
+                if isManaging {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 25, weight: .bold))
+                        .foregroundStyle(isSelected ? Theme.hotPink : .white)
+                        .shadow(radius: 4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(8)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(post.title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 7) {
+                    AvatarView(user: author, size: 24)
+                    Text(author.nickname)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.subtext)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Image(systemName: "heart")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                    Text(post.favoriteCount.formattedCount)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.subtext)
+                }
+            }
+            .padding(10)
+        }
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+    }
+}
+
+struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SimpleTopBar(title: "设置", trailing: nil) {
+                dismiss()
+            }
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    SettingsGroup {
+                        SettingsRow(icon: "person.crop.circle", title: "账号与安全")
+                        SettingsRow(icon: "gearshape", title: "通用设置")
+                        SettingsRow(icon: "bell", title: "通知设置")
+                    }
+
+                    SettingsGroup {
+                        Button {
+                            store.showToast("已打开切换账号占位")
+                        } label: {
+                            SettingsPlainActionRow(title: "切换账号")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        Button {
+                            store.setLoginState(false)
+                        } label: {
+                            SettingsPlainActionRow(title: "退出登录")
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    VStack(spacing: 10) {
+                        Text("《个人信息收集清单》    《第三方信息共享清单》")
+                        Text("《周边团用户服务协议》    《周边团用户隐私政策》")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 14)
+                    .padding(.bottom, 60)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 30)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct SettingsGroup<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .padding(.vertical, 4)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+struct SettingsRow: View {
+    let icon: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Image(systemName: icon)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(Theme.text.opacity(0.88))
+                .frame(width: 40, height: 56)
+            Text(title)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(Theme.text.opacity(0.9))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Theme.muted)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+}
+
+struct SettingsPlainActionRow: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 20, weight: .regular))
+            .foregroundStyle(Theme.text.opacity(0.92))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+    }
+}
+
+struct SimpleTopBar: View {
+    let title: String
+    let trailing: String?
+    var trailingIcon: String? = nil
+    let backAction: () -> Void
+    var trailingAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack {
+            Button(action: backAction) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 27, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 44, height: 50)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+            Text(title)
+                .font(.system(size: 22, weight: .black))
+                .foregroundStyle(Theme.text)
+            Spacer()
+
+            if let trailing, let trailingAction {
+                Button(action: trailingAction) {
+                    HStack(spacing: 6) {
+                        if let trailingIcon {
+                            Image(systemName: trailingIcon)
+                                .font(.system(size: 16, weight: .bold))
+                        }
+                        Text(trailing)
+                            .font(.system(size: 16, weight: .black))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .overlay {
+                        Capsule().stroke(Theme.subtext, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                Color.clear.frame(width: 78, height: 44)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+}
+
 struct ProfileSideMenu: View {
     @EnvironmentObject private var store: MockAppStore
     @Binding var isMenuOpen: Bool
 
     var body: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 10) {
-                DrawerRow(icon: "person.crop.circle.badge.plus", title: "添加好友")
-                DrawerRow(icon: "lightbulb", title: "创作者中心")
-                DrawerRow(icon: "tray", title: "我的草稿")
-                DrawerRow(icon: "medal", title: "我的活动", badge: "新")
-                DrawerRow(icon: "clock.arrow.circlepath", title: "浏览记录")
-                DrawerRow(icon: "arrow.down.to.line.compact", title: "我的下载")
-            }
-            .padding(.vertical, 16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        VStack(spacing: 18) {
+            VStack(spacing: 6) {
+                NavigationLink(value: Route.drafts) {
+                    DrawerRowContent(icon: "tray", title: "我的草稿")
+                }
+                .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
+                .buttonStyle(.plain)
 
-            VStack(spacing: 10) {
-                NavigationLink(value: Route.reminders) {
-                    DrawerRowContent(icon: "list.clipboard", title: "订单")
+                NavigationLink(value: Route.browsingHistory) {
+                    DrawerRowContent(icon: "clock.arrow.circlepath", title: "浏览记录")
                 }
+                .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
                 .buttonStyle(.plain)
-                DrawerRow(icon: "cart", title: "购物车")
-                NavigationLink(value: Route.favorites) {
-                    DrawerRowContent(icon: "wallet.pass", title: "钱包")
+
+                NavigationLink(value: Route.settings) {
+                    DrawerRowContent(icon: "gearshape", title: "设置")
                 }
+                .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
                 .buttonStyle(.plain)
-                NavigationLink(value: Route.admin) {
-                    DrawerRowContent(icon: "shield.lefthalf.filled", title: "管理后台")
-                }
-                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 12)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            VStack(spacing: 6) {
                 Button {
                     store.setLoginState(!store.isLoggedIn)
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                        isMenuOpen = false
-                    }
+                    closeMenu()
                 } label: {
                     DrawerRowContent(icon: store.isLoggedIn ? "rectangle.portrait.and.arrow.right" : "person.badge.key", title: store.isLoggedIn ? "退出登录" : "登录")
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.vertical, 16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            VStack(spacing: 10) {
-                DrawerRow(icon: "link.circle", title: "小程序")
-                DrawerRow(icon: "circle.circle", title: "瞬间")
-            }
-            .padding(.vertical, 16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.vertical, 12)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             Spacer()
-
-            HStack(spacing: 48) {
-                DrawerBottomButton(icon: "viewfinder", title: "扫一扫")
-                DrawerBottomButton(icon: "headphones", title: "帮助与客服")
-                DrawerBottomButton(icon: "gearshape", title: "设置")
-            }
-            .padding(.bottom, 28)
         }
         .padding(.horizontal, 18)
-        .padding(.top, 96)
+        .padding(.top, 112)
         .frame(width: 330)
         .frame(maxHeight: .infinity)
         .background(Theme.background.ignoresSafeArea())
+    }
+
+    private func closeMenu() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            isMenuOpen = false
+        }
+    }
+
+    private func closeMenuAfterNavigation() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            closeMenu()
+        }
     }
 }
 
@@ -3468,13 +3888,13 @@ struct DrawerRowContent: View {
     var badge: String? = nil
 
     var body: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 18) {
             Image(systemName: icon)
-                .font(.system(size: 25, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.text)
-                .frame(width: 46, height: 46)
+                .frame(width: 40, height: 40)
             Text(title)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Theme.text)
             Spacer()
             if let badge {
@@ -3485,8 +3905,8 @@ struct DrawerRowContent: View {
                     .background(Theme.hotPink, in: Circle())
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
     }
 }
 
