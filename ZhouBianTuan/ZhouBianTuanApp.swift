@@ -567,6 +567,12 @@ final class MockAppStore: ObservableObject {
         comments.filter { $0.postID == postID && $0.status == .active }.sorted { $0.createdAt < $1.createdAt }
     }
 
+    func comments(by userID: String) -> [Comment] {
+        comments
+            .filter { $0.authorID == userID && $0.status == .active && post(id: $0.postID)?.status == .active }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
     func toggleLike(postID: String) {
         guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
         if likedPostIDs.contains(postID) {
@@ -2847,7 +2853,7 @@ struct ProfileView: View {
     @State private var isMenuOpen = false
     @State private var selectedTab = "笔记"
 
-    let profileTabs = ["笔记", "拼团合集", "评论", "收藏", "赞过"]
+    let profileTabs = ["笔记", "拼团合集", "评论", "赞过"]
 
     var body: some View {
         let user = store.currentUser
@@ -2857,7 +2863,7 @@ struct ProfileView: View {
                     ZStack(alignment: .top) {
                         BundleImage(name: user.backgroundImageName)
                             .scaledToFill()
-                            .frame(height: 430)
+                            .frame(height: 382)
                             .frame(maxWidth: .infinity)
                             .clipped()
                             .overlay(.black.opacity(0.52))
@@ -2947,16 +2953,10 @@ struct ProfileView: View {
                             Text(user.bio)
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(Theme.text.opacity(0.86))
-
-                            HStack(spacing: 10) {
-                                ProfileActionTile(title: "浏览记录", subtitle: "看过的笔记", icon: "clock.arrow.circlepath")
-                                ProfileActionTile(title: "RED创作大赛", subtitle: "为新生代好作品助力", icon: "flag")
-                                ProfileActionTile(title: "钱包", subtitle: "查看详情", icon: "wallet.pass")
-                            }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
-                        .frame(height: 430)
+                        .frame(height: 382)
                     }
 
                     VStack(spacing: 0) {
@@ -2967,10 +2967,6 @@ struct ProfileView: View {
                                 } label: {
                                     VStack(spacing: 8) {
                                         HStack(spacing: 6) {
-                                            if tab != "笔记" && tab != "拼团合集" {
-                                                Image(systemName: "lock.fill")
-                                                    .font(.system(size: 15, weight: .bold))
-                                            }
                                             Text(tab)
                                                 .font(.system(size: tab == "拼团合集" ? 16 : 18, weight: selectedTab == tab ? .black : .semibold))
                                                 .lineLimit(1)
@@ -3003,6 +2999,10 @@ struct ProfileView: View {
                                 ProfileNotesPanel(userID: user.id)
                             } else if selectedTab == "拼团合集" {
                                 ProfileCollectionsPanel(ownerID: user.id, canManage: true)
+                            } else if selectedTab == "评论" {
+                                ProfileCommentsPanel(userID: user.id)
+                            } else if selectedTab == "赞过" {
+                                ProfileLikedPostsPanel(userID: user.id)
                             } else {
                                 ProfileEmptyNotesView()
                             }
@@ -3032,34 +3032,6 @@ struct ProfileView: View {
             }
         }
         .navigationBarHidden(true)
-    }
-}
-
-struct ProfileActionTile: View {
-    let title: String
-    let subtitle: String
-    let icon: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(Theme.text)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 16, weight: .black))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.subtext)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -3128,6 +3100,117 @@ struct ProfileNotesPanel: View {
                 .padding(.top, 14)
                 .padding(.bottom, 28)
         }
+    }
+}
+
+struct ProfileCommentsPanel: View {
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+
+    var comments: [Comment] {
+        store.comments(by: userID)
+    }
+
+    var body: some View {
+        if comments.isEmpty {
+            ProfileEmptyState(text: "你还没有评论过", icon: "bubble.left")
+        } else {
+            VStack(spacing: 12) {
+                ForEach(comments) { comment in
+                    if let post = store.post(id: comment.postID) {
+                        NavigationLink(value: Route.postDetail(post.id)) {
+                            ProfileCommentHistoryRow(comment: comment, post: post)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 28)
+        }
+    }
+}
+
+struct ProfileCommentHistoryRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let comment: Comment
+    let post: GroupBuyPost
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                .scaledToFill()
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 8) {
+                Text(comment.body)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("评论于《\(post.title)》")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .lineLimit(2)
+                Text(comment.createdAt.relativeText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .padding(.top, 4)
+        }
+        .padding(12)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Theme.hairline, lineWidth: 1)
+        }
+    }
+}
+
+struct ProfileLikedPostsPanel: View {
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+
+    var posts: [GroupBuyPost] {
+        guard userID == store.currentUserID else { return [] }
+        return store.activePosts
+            .filter { store.likedPostIDs.contains($0.id) }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var body: some View {
+        if posts.isEmpty {
+            ProfileEmptyState(text: "你还没有赞过", icon: "heart")
+        } else {
+            WaterfallGrid(posts: posts)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 28)
+        }
+    }
+}
+
+struct ProfileEmptyState: View {
+    let text: String
+    let icon: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: icon)
+                .font(.system(size: 46, weight: .light))
+                .foregroundStyle(Theme.muted)
+            Text(text)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.subtext)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
