@@ -878,12 +878,8 @@ struct HomeHeader: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                NavigationLink(value: Route.chat("t-card")) {
-                    Image(systemName: "bubble.left")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .frame(width: 44, height: 44)
-                }
+                Color.clear
+                    .frame(width: 44, height: 44)
                 Spacer()
                 HStack(spacing: 28) {
                     ForEach(HomeFeed.allCases) { item in
@@ -1135,7 +1131,51 @@ struct SearchView: View {
     let filters = ["综合", "拼谷有货", "跟团", "最新"]
 
     var activeQuery: String {
-        committedQuery.trimmed.isEmpty ? query.trimmed : committedQuery.trimmed
+        committedQuery.trimmed
+    }
+
+    var typedQuery: String {
+        query.trimmed
+    }
+
+    var isShowingResults: Bool {
+        !activeQuery.isEmpty && activeQuery == typedQuery
+    }
+
+    var suggestions: [String] {
+        let keyword = typedQuery
+        guard !keyword.isEmpty else { return [] }
+        var pool: [String] = [
+            "\(keyword) 拼谷",
+            "\(keyword) 跟团",
+            "\(keyword) 吧唧",
+            "\(keyword) 角色余量",
+            "\(keyword) 自印团",
+            "Bucky Barnes 拼谷",
+            "Steve Rogers 角色位",
+            "Tony Stark 余量",
+            "Loki 挂件",
+            "冬兵生日团",
+            "巡演小卡",
+            "吧唧拼谷",
+            "亚克力立牌",
+            "自印团补款"
+        ]
+
+        for post in store.activePosts {
+            pool.append(post.title)
+            pool.append(contentsOf: post.categoryTags)
+            pool.append(contentsOf: post.fandomTags)
+            pool.append(contentsOf: post.unsoldRoles.map(\.name))
+        }
+
+        let filtered = pool
+            .map { $0.trimmed }
+            .filter { !$0.isEmpty }
+            .filter { $0.localizedCaseInsensitiveContains(keyword) || keyword.localizedCaseInsensitiveContains($0) }
+
+        let unique = Array(NSOrderedSet(array: filtered)) as? [String] ?? filtered
+        return Array((unique.isEmpty ? pool.filter { $0.localizedCaseInsensitiveContains(keyword.prefix(1)) } : unique).prefix(9))
     }
 
     var results: [GroupBuyPost] {
@@ -1218,12 +1258,17 @@ struct SearchView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            .padding(.bottom, activeQuery.isEmpty ? 20 : 10)
+            .padding(.bottom, typedQuery.isEmpty ? 20 : 10)
 
-            if activeQuery.isEmpty {
+            if typedQuery.isEmpty {
                 SearchInitialContent(history: history, guesses: guesses) { term in
                     query = term
-                    committedQuery = term
+                    committedQuery = ""
+                }
+            } else if !isShowingResults {
+                SearchSuggestionsContent(query: typedQuery, suggestions: suggestions) { suggestion in
+                    query = suggestion
+                    committedQuery = ""
                 }
             } else {
                 SearchResultsContent(
@@ -1245,6 +1290,67 @@ struct SearchView: View {
     private func submitSearch() {
         committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
         query = committedQuery
+    }
+}
+
+struct SearchSuggestionsContent: View {
+    let query: String
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                ForEach(suggestions, id: \.self) { suggestion in
+                    Button {
+                        onSelect(suggestion)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(Theme.muted)
+                                .frame(width: 28)
+                            HighlightedSuggestionText(text: suggestion, query: query)
+                            Spacer()
+                            Image(systemName: "arrow.up.left")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(Theme.muted)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 17)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                        .overlay(Theme.hairline)
+                        .padding(.leading, 60)
+                }
+            }
+            .padding(.top, 16)
+        }
+    }
+}
+
+struct HighlightedSuggestionText: View {
+    let text: String
+    let query: String
+
+    var body: some View {
+        Text(attributedText)
+            .font(.system(size: 20, weight: .semibold))
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var attributedText: AttributedString {
+        var value = AttributedString(text)
+        value.foregroundColor = Theme.text.opacity(0.88)
+        let trimmed = query.trimmed
+        if !trimmed.isEmpty,
+           let range = value.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) {
+            value[range].foregroundColor = Theme.hotPink
+        }
+        return value
     }
 }
 
