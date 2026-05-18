@@ -3726,8 +3726,45 @@ extension Date {
     }
 }
 
-#Preview {
+#Preview("完整 App") {
     RootView()
         .environmentObject(MockAppStore())
+        .tint(Theme.hotPink)
         .preferredColorScheme(.dark)
+}
+
+#Preview("团购详情") {
+    NavigationStack {
+        PostDetailView(postID: "p-card")
+    }
+    .environmentObject(MockAppStore())
+    .tint(Theme.hotPink)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("发布页") {
+    NavigationStack {
+        CreatePostView()
+    }
+    .environmentObject(MockAppStore())
+    .tint(Theme.hotPink)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("我的主页") {
+    NavigationStack {
+        ProfileView()
+    }
+    .environmentObject(MockAppStore())
+    .tint(Theme.hotPink)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("举报后台") {
+    NavigationStack {
+        AdminReportView()
+    }
+    .environmentObject(MockAppStore())
+    .tint(Theme.hotPink)
+    .preferredColorScheme(.dark)
 }
