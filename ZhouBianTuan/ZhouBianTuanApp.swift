@@ -446,10 +446,17 @@ final class MockAppStore: ObservableObject {
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
     @Published var browsingHistoryIDs: [String]
+    @Published var searchHistory: [String] {
+        didSet {
+            UserDefaults.standard.set(searchHistory, forKey: Self.searchHistoryDefaultsKey)
+        }
+    }
     @Published var toastMessage: String?
     @Published var isLoggedIn = true
 
     let currentUserID = "u-me"
+    private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
+    private static let defaultSearchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
 
     init() {
         let now = Date()
@@ -511,6 +518,7 @@ final class MockAppStore: ObservableObject {
         favoritePostIDs = ["p-card", "p-album"]
         followedUserIDs = ["u-echo", "u-black", "u-moon"]
         browsingHistoryIDs = ["p-my-pinggu", "p-badge", "p-card", "p-jewelry", "p-concert", "p-magazine"]
+        searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? Self.defaultSearchHistory
     }
 
     var currentUser: User {
@@ -571,6 +579,16 @@ final class MockAppStore: ObservableObject {
         browsingHistoryIDs.insert(postID, at: 0)
         if browsingHistoryIDs.count > 30 {
             browsingHistoryIDs = Array(browsingHistoryIDs.prefix(30))
+        }
+    }
+
+    func recordSearchHistory(_ term: String) {
+        let trimmed = term.trimmed
+        guard !trimmed.isEmpty else { return }
+        searchHistory.removeAll { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+        searchHistory.insert(trimmed, at: 0)
+        if searchHistory.count > 20 {
+            searchHistory = Array(searchHistory.prefix(20))
         }
     }
 
@@ -740,6 +758,13 @@ final class MockAppStore: ObservableObject {
               let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         threads[index].messages.append(DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date()))
         threads[index].updatedAt = Date()
+        threads[index].unreadCount = 0
+    }
+
+    func markThreadRead(threadID: String) {
+        guard let index = threads.firstIndex(where: { $0.id == threadID }),
+              threads[index].unreadCount > 0 else { return }
+        threads[index].unreadCount = 0
     }
 
     func createCollection(name: String, wechat: String, qq: String, groupInfo: String, deadline: Date, defaultNote: String) {
@@ -1202,7 +1227,6 @@ struct SearchView: View {
     @State private var committedQuery = ""
     @State private var selectedTab = "全部"
     @State private var selectedFilter = "综合"
-    @State private var searchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
     @State private var isManagingHistory = false
 
     let tabs = ["全部", "拼谷角色", "团长", "商品"]
@@ -1339,7 +1363,7 @@ struct SearchView: View {
             .padding(.bottom, typedQuery.isEmpty ? 20 : 10)
 
             if typedQuery.isEmpty {
-                SearchInitialContent(history: $searchHistory, isManaging: $isManagingHistory) { term in
+                SearchInitialContent(history: $store.searchHistory, isManaging: $isManagingHistory) { term in
                     query = term
                     committedQuery = ""
                 }
@@ -1368,18 +1392,8 @@ struct SearchView: View {
     private func submitSearch() {
         committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
         query = committedQuery
-        recordSearchHistory(committedQuery)
+        store.recordSearchHistory(committedQuery)
         isManagingHistory = false
-    }
-
-    private func recordSearchHistory(_ term: String) {
-        let trimmed = term.trimmed
-        guard !trimmed.isEmpty else { return }
-        searchHistory.removeAll { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
-        searchHistory.insert(trimmed, at: 0)
-        if searchHistory.count > 20 {
-            searchHistory = Array(searchHistory.prefix(20))
-        }
     }
 }
 
@@ -3005,6 +3019,9 @@ struct ChatView: View {
             .navigationBarBackButtonHidden(true)
             .navigationBarHidden(true)
             .toolbar(.hidden, for: .tabBar)
+            .onAppear {
+                store.markThreadRead(threadID: threadID)
+            }
         } else {
             ContentUnavailableView("会话不存在", systemImage: "bubble.left")
         }
