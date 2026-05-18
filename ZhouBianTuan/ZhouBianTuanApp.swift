@@ -1202,9 +1202,9 @@ struct SearchView: View {
     @State private var committedQuery = ""
     @State private var selectedTab = "全部"
     @State private var selectedFilter = "综合"
+    @State private var searchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
+    @State private var isManagingHistory = false
 
-    let history = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团"]
-    let guesses = ["Bucky Barnes", "Tony Stark", "Loki", "亚克力立牌", "主角团角色位", "自印团补款"]
     let tabs = ["全部", "拼谷角色", "团长", "商品"]
     let filters = ["综合", "拼谷有货", "跟团", "最新"]
 
@@ -1300,7 +1300,7 @@ struct SearchView: View {
                 .buttonStyle(.plain)
 
                 HStack(spacing: 10) {
-                    TextField("搜索角色名，如 Bucky", text: $query)
+                    TextField("搜索角色名", text: $query)
                         .font(.system(size: 20, weight: .semibold))
                         .submitLabel(.search)
                         .textInputAutocapitalization(.never)
@@ -1339,7 +1339,7 @@ struct SearchView: View {
             .padding(.bottom, typedQuery.isEmpty ? 20 : 10)
 
             if typedQuery.isEmpty {
-                SearchInitialContent(history: history, guesses: guesses) { term in
+                SearchInitialContent(history: $searchHistory, isManaging: $isManagingHistory) { term in
                     query = term
                     committedQuery = ""
                 }
@@ -1368,6 +1368,18 @@ struct SearchView: View {
     private func submitSearch() {
         committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
         query = committedQuery
+        recordSearchHistory(committedQuery)
+        isManagingHistory = false
+    }
+
+    private func recordSearchHistory(_ term: String) {
+        let trimmed = term.trimmed
+        guard !trimmed.isEmpty else { return }
+        searchHistory.removeAll { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+        searchHistory.insert(trimmed, at: 0)
+        if searchHistory.count > 20 {
+            searchHistory = Array(searchHistory.prefix(20))
+        }
     }
 }
 
@@ -1433,97 +1445,189 @@ struct HighlightedSuggestionText: View {
 }
 
 struct SearchInitialContent: View {
-    let history: [String]
-    let guesses: [String]
+    @Binding var history: [String]
+    @Binding var isManaging: Bool
     let onSelect: (String) -> Void
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 22) {
                 HStack {
                     Text("历史记录")
                         .font(.system(size: 24, weight: .black))
                         .foregroundStyle(Theme.text)
                     Spacer()
-                    Image(systemName: "trash")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
-                }
-                .padding(.horizontal, 16)
-
-                FlowWrapStatic(items: history) { item in
-                    Button {
-                        onSelect(item)
-                    } label: {
-                        Text(item)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(Theme.text.opacity(0.86))
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 12)
-                            .background(Theme.panel, in: Capsule())
-                            .overlay {
-                                Capsule().stroke(Theme.hairline, lineWidth: 1)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 16)
-
-                HStack {
-                    Text("猜你想搜")
-                        .font(.system(size: 24, weight: .black))
-                        .foregroundStyle(Theme.text)
-                    Spacer()
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 22, weight: .black))
-                        .foregroundStyle(Theme.muted)
-                }
-                .padding(.horizontal, 16)
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 24) {
-                    ForEach(guesses, id: \.self) { item in
+                    if isManaging {
                         Button {
-                            onSelect(item.replacingOccurrences(of: " 热", with: ""))
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(item)
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(Theme.text.opacity(0.88))
-                                    .lineLimit(1)
-                                if item.contains("卢昱晓") {
-                                    Text("热")
-                                        .font(.system(size: 14, weight: .black))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 3)
-                                        .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 5))
-                                }
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                history.removeAll()
+                                isManaging = false
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } label: {
+                            Text("全部删除")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(history.isEmpty ? Theme.muted : Theme.subtext)
+                        }
+                        .disabled(history.isEmpty)
+                        .buttonStyle(.plain)
+
+                        Rectangle()
+                            .fill(Theme.hairline)
+                            .frame(width: 1, height: 22)
+                            .padding(.horizontal, 8)
+
+                        Button {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                isManaging = false
+                            }
+                        } label: {
+                            Text("完成")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                isManaging = true
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(Theme.muted)
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 16)
 
-                VStack(spacing: 20) {
-                    Text("按住提问 有问必答")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Theme.subtext)
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 32, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 132, height: 70)
-                        .background(Theme.panelRaised, in: Capsule())
-                        .overlay {
-                            Capsule().stroke(Theme.hairline, lineWidth: 1)
+                if history.isEmpty {
+                    Text("暂无搜索历史")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                } else {
+                    SearchHistoryWrap(items: history) { item in
+                        SearchHistoryChip(title: item, isManaging: isManaging) {
+                            onSelect(item)
+                        } deleteAction: {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                history.removeAll { $0 == item }
+                                if history.isEmpty {
+                                    isManaging = false
+                                }
+                            }
                         }
+                    }
+                    .padding(.horizontal, 16)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 20)
             }
             .padding(.bottom, 36)
         }
+    }
+}
+
+struct SearchHistoryChip: View {
+    let title: String
+    let isManaging: Bool
+    let selectAction: () -> Void
+    let deleteAction: () -> Void
+
+    private var displayTitle: String {
+        title.count > 10 ? "\(title.prefix(10))..." : title
+    }
+
+    var body: some View {
+        Button {
+            if isManaging {
+                deleteAction()
+            } else {
+                selectAction()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(displayTitle)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.text.opacity(0.86))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                if isManaging {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(Theme.panel, in: Capsule())
+            .overlay {
+                Capsule().stroke(Theme.hairline, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct SearchHistoryWrap<Content: View>: View {
+    let items: [String]
+    let content: (String) -> Content
+
+    var body: some View {
+        SearchWrappingLayout(horizontalSpacing: 10, verticalSpacing: 12) {
+            ForEach(items, id: \.self) { item in
+                content(item)
+            }
+        }
+    }
+}
+
+private struct SearchWrappingLayout: Layout {
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let availableWidth = proposal.width ?? .infinity
+        let result = arrangedSubviews(subviews, availableWidth: availableWidth)
+        return CGSize(width: proposal.width ?? result.size.width, height: result.size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrangedSubviews(subviews, availableWidth: bounds.width)
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.positions[index].x,
+                    y: bounds.minY + result.positions[index].y
+                ),
+                proposal: .unspecified
+            )
+        }
+    }
+
+    private func arrangedSubviews(_ subviews: Subviews, availableWidth: CGFloat) -> (size: CGSize, positions: [CGPoint]) {
+        let maxWidth = availableWidth.isFinite ? availableWidth : .greatestFiniteMagnitude
+        var positions: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                y += rowHeight + verticalSpacing
+                x = 0
+                rowHeight = 0
+            }
+            positions.append(CGPoint(x: x, y: y))
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+            usedWidth = max(usedWidth, x - horizontalSpacing)
+        }
+
+        return (CGSize(width: usedWidth, height: y + rowHeight), positions)
     }
 }
 
@@ -3010,7 +3114,7 @@ struct ProfileView: View {
     @State private var isBioEditorPresented = false
     @State private var bioDraft = ""
 
-    let profileTabs = ["笔记", "拼团合集", "赞过"]
+    let profileTabs = ["笔记", "拼团合集", "收藏", "赞过"]
 
     var body: some View {
         let user = store.currentUser
@@ -3134,9 +3238,9 @@ struct ProfileView: View {
                                     VStack(spacing: 8) {
                                         HStack(spacing: 6) {
                                             Text(tab)
-                                                .font(.system(size: tab == "拼团合集" ? 16 : 18, weight: selectedTab == tab ? .black : .semibold))
+                                                .font(.system(size: tab == "拼团合集" ? 15 : 17, weight: selectedTab == tab ? .black : .semibold))
                                                 .lineLimit(1)
-                                                .minimumScaleFactor(0.82)
+                                                .minimumScaleFactor(0.76)
                                         }
                                         .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                         Capsule()
@@ -3152,7 +3256,7 @@ struct ProfileView: View {
                                 Image(systemName: "magnifyingglass")
                                     .font(.system(size: 28, weight: .medium))
                                     .foregroundStyle(Theme.subtext)
-                                    .frame(width: 64)
+                                    .frame(width: 54)
                             }
                             .buttonStyle(.plain)
                         }
@@ -3165,6 +3269,8 @@ struct ProfileView: View {
                                 ProfileNotesPanel(userID: user.id)
                             } else if selectedTab == "拼团合集" {
                                 ProfileCollectionsPanel(ownerID: user.id, canManage: true)
+                            } else if selectedTab == "收藏" {
+                                ProfileFavoritePostsPanel(userID: user.id)
                             } else if selectedTab == "赞过" {
                                 ProfileLikedPostsPanel(userID: user.id)
                             } else {
@@ -3369,6 +3475,29 @@ struct ProfileLikedPostsPanel: View {
     var body: some View {
         if posts.isEmpty {
             ProfileEmptyState(text: "你还没有赞过", icon: "heart")
+        } else {
+            WaterfallGrid(posts: posts)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 28)
+        }
+    }
+}
+
+struct ProfileFavoritePostsPanel: View {
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+
+    var posts: [GroupBuyPost] {
+        guard userID == store.currentUserID else { return [] }
+        return store.activePosts
+            .filter { store.favoritePostIDs.contains($0.id) }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var body: some View {
+        if posts.isEmpty {
+            ProfileEmptyState(text: "你还没有收藏过", icon: "star")
         } else {
             WaterfallGrid(posts: posts)
                 .padding(.horizontal, 12)
