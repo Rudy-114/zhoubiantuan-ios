@@ -3151,35 +3151,36 @@ struct ProfileView: View {
             }
         }
         .navigationBarHidden(true)
-        .sheet(isPresented: $isBioEditorPresented) {
-            ProfileBioEditorSheet(bio: $bioDraft) {
+        .fullScreenCover(isPresented: $isBioEditorPresented) {
+            ProfileBioEditorView(bio: $bioDraft) {
                 store.updateCurrentBio(bioDraft)
                 isBioEditorPresented = false
             }
-            .presentationDetents([.height(300)])
         }
     }
 }
 
-struct ProfileBioEditorSheet: View {
+struct ProfileBioEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var bio: String
     let onSave: () -> Void
+    private let maxLength = 160
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             HStack {
                 Button("取消") {
                     dismiss()
                 }
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.62))
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Theme.subtext)
+                .frame(width: 86, height: 48, alignment: .leading)
 
                 Spacer()
 
                 Text("编辑简介")
-                    .font(.system(size: 19, weight: .black))
-                    .foregroundStyle(Color.black.opacity(0.84))
+                    .font(.system(size: 21, weight: .bold))
+                    .foregroundStyle(Theme.text)
 
                 Spacer()
 
@@ -3187,21 +3188,55 @@ struct ProfileBioEditorSheet: View {
                     onSave()
                     dismiss()
                 }
-                .font(.system(size: 17, weight: .black))
-                .foregroundStyle(Theme.hotPink)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Color(red: 0.45, green: 0.08, blue: 0.13))
+                .frame(width: 86, height: 48, alignment: .trailing)
             }
+            .padding(.horizontal, 18)
+            .padding(.top, 0)
+            .padding(.bottom, 14)
 
-            TextEditor(text: $bio)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.84))
-                .tint(Theme.hotPink)
-                .scrollContentBackground(.hidden)
-                .padding(12)
-                .frame(height: 150)
-                .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Theme.panel)
+
+                TextEditor(text: $bio)
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .tint(Theme.hotPink)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .padding(.bottom, 46)
+
+                if bio.trimmed.isEmpty {
+                    Text("填写简介")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Theme.subtext)
+                        .padding(.leading, 14)
+                        .padding(.top, 18)
+                        .allowsHitTesting(false)
+                }
+
+                Text("\(bio.count)/\(maxLength)")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.subtext)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 14)
+                    .padding(.bottom, 22)
+            }
+            .frame(height: 160)
+            .padding(.horizontal, 18)
+
+            Spacer()
         }
-        .padding(18)
-        .background(Color.white.ignoresSafeArea())
+        .background(Theme.background.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .onChange(of: bio) { _, newValue in
+            if newValue.count > maxLength {
+                bio = String(newValue.prefix(maxLength))
+            }
+        }
     }
 }
 
