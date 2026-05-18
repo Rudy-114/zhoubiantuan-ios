@@ -68,6 +68,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 enum Route: Hashable {
     case search
     case postDetail(String)
+    case collectionDetail(String)
     case tag(String)
     case chat(String)
     case userProfile(String)
@@ -135,6 +136,8 @@ extension View {
                 SearchView()
             case .postDetail(let id):
                 PostDetailView(postID: id)
+            case .collectionDetail(let id):
+                CollectionDetailView(collectionID: id)
             case .tag(let tag):
                 TagContentView(tag: tag)
             case .chat(let id):
@@ -211,6 +214,8 @@ struct GroupBuyPost: Identifiable, Hashable {
     var title: String
     var imageNames: [String]
     var authorID: String
+    var groupType: GroupBuyType = .followGroup
+    var collectionID: String? = nil
     var categoryTags: [String]
     var fandomTags: [String]
     var price: String
@@ -231,6 +236,73 @@ struct GroupBuyPost: Identifiable, Hashable {
     var reportCount: Int
     var status: ContentStatus
     var imageAspect: Double
+    var pingguAveragePrice: String = ""
+    var pingguNote: String = ""
+    var unsoldRoles: [UnsoldRole] = []
+}
+
+enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
+    case followGroup = "跟团"
+    case splitGoods = "拼谷"
+
+    var id: String { rawValue }
+
+    var moduleTitle: String {
+        switch self {
+        case .followGroup: "跟团"
+        case .splitGoods: "拼谷"
+        }
+    }
+
+    var feedDescription: String {
+        switch self {
+        case .followGroup: "自印团信息流"
+        case .splitGoods: "角色余量可筛选"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .followGroup: "bag.fill"
+        case .splitGoods: "person.3.fill"
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .followGroup: Theme.hotPink
+        case .splitGoods: Color(red: 0.25, green: 0.78, blue: 0.72)
+        }
+    }
+}
+
+struct UnsoldRole: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var quantity: Int
+
+    init(id: String = "role-\(UUID().uuidString)", name: String, quantity: Int) {
+        self.id = id
+        self.name = name
+        self.quantity = quantity
+    }
+
+    var isAvailable: Bool {
+        quantity > 0 && !name.trimmed.isEmpty
+    }
+}
+
+struct GroupCollection: Identifiable, Hashable {
+    let id: String
+    var ownerID: String
+    var name: String
+    var contactWechat: String
+    var contactQQ: String
+    var groupInfo: String
+    var deadline: Date
+    var defaultNote: String
+    var postIDs: [String]
+    var createdAt: Date
 }
 
 struct ReviewPost: Identifiable, Hashable {
@@ -339,6 +411,7 @@ enum ColorToken: String, Hashable {
 final class MockAppStore: ObservableObject {
     @Published var users: [User]
     @Published var posts: [GroupBuyPost]
+    @Published var collections: [GroupCollection]
     @Published var reviews: [ReviewPost]
     @Published var comments: [Comment]
     @Published var threads: [MessageThread]
@@ -354,24 +427,33 @@ final class MockAppStore: ObservableObject {
 
     init() {
         let now = Date()
+        let myCollectionID = "col-my-winter"
+        let winterCollectionID = "col-winter-bucky"
+        let tourCollectionID = "col-tour-cards"
         users = [
-            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 0, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", profession: "选择职业", school: "选择学校", backgroundImageName: "merch_magazine"),
+            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", profession: "选择职业", school: "选择学校", backgroundImageName: "merch_magazine"),
             User(id: "u-black", nickname: "黑贝果", bio: "原创设计小众饰品，开团前都会补风险说明。", followingCount: 88, followersCount: 12800, postCount: 36, isRestricted: false, canShowContact: true, avatarSymbol: "黑", avatarTint: .rose, redBookID: "BlackBagel2026", region: "上海", backgroundImageName: "merch_jewelry"),
             User(id: "u-moon", nickname: "月光补货站", bio: "演唱会周边、立牌、吧唧团购整理。", followingCount: 54, followersCount: 5320, postCount: 22, isRestricted: false, canShowContact: true, avatarSymbol: "月", avatarTint: .violet, redBookID: "MoonPin0909", region: "广州", backgroundImageName: "merch_badges"),
             User(id: "u-berry", nickname: "莓果小铺", bio: "娃娃衣和棉花娃配件长期团。", followingCount: 91, followersCount: 2401, postCount: 18, isRestricted: false, canShowContact: true, avatarSymbol: "莓", avatarTint: .amber, redBookID: "BerryDollClub", region: "杭州", backgroundImageName: "merch_plush"),
             User(id: "u-echo", nickname: "Echo周边记录", bio: "专辑、杂志、明信片成团信息搬运。", followingCount: 37, followersCount: 901, postCount: 11, isRestricted: false, canShowContact: true, avatarSymbol: "E", avatarTint: .blue, redBookID: "EchoGB2026", region: "成都", backgroundImageName: "merch_album")
         ]
         let initialPosts = [
-            GroupBuyPost(id: "p-card", title: "巡演限定小卡套组二开，余量 30 份", imageNames: ["merch_photocards", "merch_magazine"], authorID: "u-echo", categoryTags: ["小卡", "预售", "拼团"], fandomTags: ["欧美巡演", "收藏卡"], price: "¥42/套", deposit: "¥15 定金", deadline: Self.date(days: 1, hour: 22), condition: "满 60 套开团，未成团原路退定", isFormed: true, description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", externalLink: "https://forms.example/cards", riskNotice: "非官方周边，制作周期约 25-35 天；运输压痕由团内统一登记处理。", createdAt: now.addingTimeInterval(-3600 * 2), likedCount: 9618, favoriteCount: 1280, commentCount: 86, reportCount: 0, status: .active, imageAspect: 1.12),
-            GroupBuyPost(id: "p-badge", title: "黑粉星芒吧唧套装，今晚截团", imageNames: ["merch_badges", "merch_jewelry"], authorID: "u-moon", categoryTags: ["吧唧", "现货", "今晚截团"], fandomTags: ["舞台风", "星芒"], price: "¥19.9/枚", deposit: "全款", deadline: Self.date(days: 0, hour: 23), condition: "满 80 枚发货，当前已成团", isFormed: true, description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "", riskNotice: "金属制品可能存在极轻微针眼和色差，介意慎拍。", createdAt: now.addingTimeInterval(-3600 * 5), likedCount: 880, favoriteCount: 282, commentCount: 24, reportCount: 1, status: .active, imageAspect: 0.86),
-            GroupBuyPost(id: "p-stand", title: "舞台灯光亚克力立牌 7 人套，已打样", imageNames: ["merch_standees", "merch_album"], authorID: "u-black", categoryTags: ["立牌", "预售", "成团"], fandomTags: ["演唱会周边"], price: "¥68/套", deposit: "¥20 定金", deadline: Self.date(days: 3, hour: 20), condition: "满 120 套开模，当前 147 套", isFormed: true, description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "QQ群 909 610 228", externalLink: "https://forms.example/standee", riskNotice: "亚克力保护膜需自行撕开，运输过程如断裂按团规补件。", createdAt: now.addingTimeInterval(-3600 * 20), likedCount: 2301, favoriteCount: 911, commentCount: 51, reportCount: 0, status: .active, imageAspect: 1.24),
-            GroupBuyPost(id: "p-plush", title: "棉花娃睡衣和小配件团，粉色猫耳款", imageNames: ["merch_plush", "merch_concert"], authorID: "u-berry", categoryTags: ["娃娃", "饰品", "预售"], fandomTags: ["棉花娃", "娃衣"], price: "¥35 起", deposit: "¥10 定金", deadline: Self.date(days: 5, hour: 21), condition: "满 50 件成团，可混款", isFormed: false, description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "", riskNotice: "手工娃衣存在 1-2cm 误差；不同娃体上身效果不同。", createdAt: now.addingTimeInterval(-3600 * 8), likedCount: 1490, favoriteCount: 507, commentCount: 39, reportCount: 0, status: .active, imageAspect: 1.06),
-            GroupBuyPost(id: "p-album", title: "黑胶专辑 + 明信片补款提醒，明晚截止", imageNames: ["merch_album", "merch_photocards"], authorID: "u-echo", categoryTags: ["专辑", "明信片", "补款"], fandomTags: ["黑胶", "欧美音乐"], price: "¥118/套", deposit: "已收 ¥30", deadline: Self.date(days: 1, hour: 20), condition: "已成团，补款后统一打包", isFormed: true, description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "原补款群内公告", externalLink: "https://forms.example/album", riskNotice: "黑胶运输默认加固，海外段可能慢；站内不承接售后，仅展示团购信息。", createdAt: now.addingTimeInterval(-3600 * 30), likedCount: 620, favoriteCount: 308, commentCount: 17, reportCount: 0, status: .active, imageAspect: 0.98),
-            GroupBuyPost(id: "p-magazine", title: "杂志切页 + 拍立得风卡册，拼团中", imageNames: ["merch_magazine", "merch_badges"], authorID: "u-moon", categoryTags: ["杂志", "小卡", "拼团"], fandomTags: ["切页", "卡册"], price: "¥26 起", deposit: "全款", deadline: Self.date(days: 2, hour: 18), condition: "满 30 本拆页，当前 21 本", isFormed: false, description: "杂志切页和拍立得风卡册拼团，可选单页/整套。开团后按编号排单。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "QQ群 204 118 776", externalLink: "", riskNotice: "拆页类商品边角无法做到完全无痕，介意不要上车。", createdAt: now.addingTimeInterval(-3600 * 6), likedCount: 402, favoriteCount: 122, commentCount: 11, reportCount: 2, status: .active, imageAspect: 1.18),
-            GroupBuyPost(id: "p-jewelry", title: "银色星心挂件和项链，孤品余量", imageNames: ["merch_jewelry", "merch_badges"], authorID: "u-black", categoryTags: ["饰品", "孤品", "现货"], fandomTags: ["中性风", "礼物"], price: "¥39-79", deposit: "全款", deadline: Self.date(days: 4, hour: 22), condition: "现货余量 18 件，拍完即止", isFormed: true, description: "星心元素挂件、项链、手链，适合挂包或日常佩戴。孤品数量少，不支持长时间占位。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "微信群，复制微信备注：星心", externalLink: "", riskNotice: "合金饰品非纯银，避免接触水和香水。", createdAt: now.addingTimeInterval(-3600 * 12), likedCount: 734, favoriteCount: 241, commentCount: 29, reportCount: 0, status: .active, imageAspect: 0.92),
-            GroupBuyPost(id: "p-concert", title: "演唱会痛包挂件 + 应援棒收纳套", imageNames: ["merch_concert", "merch_standees"], authorID: "u-berry", categoryTags: ["演唱会周边", "痛包", "预售"], fandomTags: ["应援", "收纳"], price: "¥58/套", deposit: "¥20 定金", deadline: Self.date(days: 6, hour: 20), condition: "满 100 套生产，当前 73 套", isFormed: false, description: "黑粉色痛包挂件、证件卡套、应援棒收纳套组合。适合巡演现场携带。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "https://forms.example/concertbag", riskNotice: "预售周期较长，预计 45 天左右；正式交易在外部平台完成。", createdAt: now.addingTimeInterval(-3600 * 3), likedCount: 1188, favoriteCount: 609, commentCount: 41, reportCount: 0, status: .active, imageAspect: 1.08)
+            GroupBuyPost(id: "p-card", title: "巡演限定小卡套组二开，余量 30 份", imageNames: ["merch_photocards", "merch_magazine"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["小卡", "预售", "自印团"], fandomTags: ["欧美巡演", "收藏卡"], price: "¥42/套", deposit: "¥15 定金", deadline: Self.date(days: 1, hour: 22), condition: "满 60 套开团，未成团原路退定", isFormed: true, description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", externalLink: "https://forms.example/cards", riskNotice: "非官方周边，制作周期约 25-35 天；运输压痕由团内统一登记处理。", createdAt: now.addingTimeInterval(-3600 * 2), likedCount: 9618, favoriteCount: 1280, commentCount: 86, reportCount: 0, status: .active, imageAspect: 1.12),
+            GroupBuyPost(id: "p-badge", title: "2026冬兵生日团吧唧拼谷，今晚截团", imageNames: ["merch_badges", "merch_jewelry"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["吧唧", "现货", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes"], price: "¥35/吧唧", deposit: "全款", deadline: Self.date(days: 0, hour: 23), condition: "主角团角色位优先成团，余量实时更新", isFormed: true, description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "", riskNotice: "金属制品可能存在极轻微针眼和色差，介意慎拍。", createdAt: now.addingTimeInterval(-3600 * 5), likedCount: 880, favoriteCount: 282, commentCount: 24, reportCount: 1, status: .active, imageAspect: 0.86, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)]),
+            GroupBuyPost(id: "p-stand", title: "2026冬兵生日团亚克力立牌角色位", imageNames: ["merch_standees", "merch_album"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["立牌", "预售", "拼谷"], fandomTags: ["Bucky Barnes", "Sam Wilson"], price: "¥68/立牌", deposit: "¥20 定金", deadline: Self.date(days: 3, hour: 20), condition: "满 120 套开模，角色位未满可继续认领", isFormed: true, description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "https://forms.example/standee", riskNotice: "亚克力保护膜需自行撕开，运输过程如断裂按团规补件。", createdAt: now.addingTimeInterval(-3600 * 20), likedCount: 2301, favoriteCount: 911, commentCount: 51, reportCount: 0, status: .active, imageAspect: 1.24, pingguAveragePrice: "均价68元/立牌", pingguNote: "Bucky 和 Sam 位还可拼", unsoldRoles: [UnsoldRole(name: "Bucky Barnes", quantity: 2), UnsoldRole(name: "Sam Wilson", quantity: 1), UnsoldRole(name: "Natasha Romanoff", quantity: 2)]),
+            GroupBuyPost(id: "p-plush", title: "棉花娃睡衣和小配件自印团，粉色猫耳款", imageNames: ["merch_plush", "merch_concert"], authorID: "u-berry", categoryTags: ["娃娃", "饰品", "自印团"], fandomTags: ["棉花娃", "娃衣"], price: "¥35 起", deposit: "¥10 定金", deadline: Self.date(days: 5, hour: 21), condition: "满 50 件成团，可混款", isFormed: false, description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "", riskNotice: "手工娃衣存在 1-2cm 误差；不同娃体上身效果不同。", createdAt: now.addingTimeInterval(-3600 * 8), likedCount: 1490, favoriteCount: 507, commentCount: 39, reportCount: 0, status: .active, imageAspect: 1.06),
+            GroupBuyPost(id: "p-album", title: "巡演黑胶专辑 + 明信片补款提醒，明晚截止", imageNames: ["merch_album", "merch_photocards"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["专辑", "明信片", "补款"], fandomTags: ["黑胶", "欧美音乐"], price: "¥118/套", deposit: "已收 ¥30", deadline: Self.date(days: 1, hour: 20), condition: "已成团，补款后统一打包", isFormed: true, description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "原补款群内公告", externalLink: "https://forms.example/album", riskNotice: "黑胶运输默认加固，海外段可能慢；站内不承接售后，仅展示团购信息。", createdAt: now.addingTimeInterval(-3600 * 30), likedCount: 620, favoriteCount: 308, commentCount: 17, reportCount: 0, status: .active, imageAspect: 0.98),
+            GroupBuyPost(id: "p-magazine", title: "杂志切页 + 拍立得风卡册自印团", imageNames: ["merch_magazine", "merch_badges"], authorID: "u-moon", categoryTags: ["杂志", "小卡", "自印团"], fandomTags: ["切页", "卡册"], price: "¥26 起", deposit: "全款", deadline: Self.date(days: 2, hour: 18), condition: "满 30 本拆页，当前 21 本", isFormed: false, description: "杂志切页和拍立得风卡册拼团，可选单页/整套。开团后按编号排单。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "QQ群 204 118 776", externalLink: "", riskNotice: "拆页类商品边角无法做到完全无痕，介意不要上车。", createdAt: now.addingTimeInterval(-3600 * 6), likedCount: 402, favoriteCount: 122, commentCount: 11, reportCount: 2, status: .active, imageAspect: 1.18),
+            GroupBuyPost(id: "p-jewelry", title: "银色星心挂件拼谷，Loki 位有余量", imageNames: ["merch_jewelry", "merch_badges"], authorID: "u-black", groupType: .splitGoods, categoryTags: ["饰品", "孤品", "拼谷"], fandomTags: ["Loki", "Mobius"], price: "¥39-79", deposit: "全款", deadline: Self.date(days: 4, hour: 22), condition: "现货余量 18 件，拍完即止", isFormed: true, description: "星心元素挂件、项链、手链，适合挂包或日常佩戴。孤品数量少，不支持长时间占位。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "微信群，复制微信备注：星心", externalLink: "", riskNotice: "合金饰品非纯银，避免接触水和香水。", createdAt: now.addingTimeInterval(-3600 * 12), likedCount: 734, favoriteCount: 241, commentCount: 29, reportCount: 0, status: .active, imageAspect: 0.92, pingguAveragePrice: "均价49元/挂件", pingguNote: "Loki 位还有少量可拼", unsoldRoles: [UnsoldRole(name: "Loki", quantity: 4), UnsoldRole(name: "Mobius", quantity: 1)]),
+            GroupBuyPost(id: "p-concert", title: "演唱会痛包挂件 + 应援棒收纳套", imageNames: ["merch_concert", "merch_standees"], authorID: "u-berry", categoryTags: ["演唱会周边", "痛包", "自印团"], fandomTags: ["应援", "收纳"], price: "¥58/套", deposit: "¥20 定金", deadline: Self.date(days: 6, hour: 20), condition: "满 100 套生产，当前 73 套", isFormed: false, description: "黑粉色痛包挂件、证件卡套、应援棒收纳套组合。适合巡演现场携带。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "https://forms.example/concertbag", riskNotice: "预售周期较长，预计 45 天左右；正式交易在外部平台完成。", createdAt: now.addingTimeInterval(-3600 * 3), likedCount: 1188, favoriteCount: 609, commentCount: 41, reportCount: 0, status: .active, imageAspect: 1.08),
+            GroupBuyPost(id: "p-my-pinggu", title: "2026冬兵生日团角色余量更新", imageNames: ["merch_badges", "merch_standees"], authorID: "u-me", groupType: .splitGoods, collectionID: myCollectionID, categoryTags: ["吧唧", "立牌", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes", "Tony Stark"], price: "¥35-68", deposit: "全款/定金", deadline: Self.date(days: 4, hour: 22), condition: "角色位有余量即可认领，售罄后从列表隐藏", isFormed: true, description: "这里是团长本人可维护的拼谷演示帖，可以在详情页实时编辑未售角色和数量。", wechat: "PanPanGroup", qq: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", externalLink: "", riskNotice: "原型演示帖，实际交易仍需在外部平台完成。", createdAt: now.addingTimeInterval(-1800), likedCount: 126, favoriteCount: 48, commentCount: 3, reportCount: 0, status: .active, imageAspect: 1.04, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)])
         ]
         posts = initialPosts
+        collections = [
+            GroupCollection(id: myCollectionID, ownerID: "u-me", name: "2026冬兵生日团", contactWechat: "PanPanGroup", contactQQ: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", deadline: Self.date(days: 4, hour: 22), defaultNote: "同一拼谷团内的宣传、进度、角色余量更新共用联系方式和截团时间。", postIDs: ["p-my-pinggu"], createdAt: now.addingTimeInterval(-3600 * 3)),
+            GroupCollection(id: winterCollectionID, ownerID: "u-moon", name: "2026冬兵生日团", contactWechat: "MoonPin0909", contactQQ: "190443821", groupInfo: "微信群复制微信后拉群，备注：冬兵生日团", deadline: Self.date(days: 3, hour: 23), defaultNote: "同一生日团内宣传、进度和余量更新共用联系方式与截团时间。", postIDs: ["p-badge", "p-stand"], createdAt: now.addingTimeInterval(-3600 * 26)),
+            GroupCollection(id: tourCollectionID, ownerID: "u-echo", name: "巡演补款小卡团", contactWechat: "EchoGB2026", contactQQ: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", deadline: Self.date(days: 1, hour: 22), defaultNote: "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。", postIDs: ["p-card", "p-album"], createdAt: now.addingTimeInterval(-3600 * 42))
+        ]
         reviews = [
             ReviewPost(id: "r-1", imageName: "merch_badges", body: "上一团吧唧到货，电镀质感比预期好。", groupBuyPostID: "p-badge", publisherID: "u-moon", authorID: "u-me", likedCount: 88, commentCount: 9, createdAt: now.addingTimeInterval(-86400 * 3))
         ]
@@ -401,7 +483,7 @@ final class MockAppStore: ObservableObject {
         ]
         likedPostIDs = ["p-card", "p-plush"]
         favoritePostIDs = ["p-card", "p-album"]
-        followedUserIDs = ["u-echo", "u-black"]
+        followedUserIDs = ["u-echo", "u-black", "u-moon"]
     }
 
     var currentUser: User {
@@ -418,6 +500,39 @@ final class MockAppStore: ObservableObject {
 
     func post(id: String) -> GroupBuyPost? {
         posts.first(where: { $0.id == id })
+    }
+
+    func collection(id: String?) -> GroupCollection? {
+        guard let id else { return nil }
+        return collections.first(where: { $0.id == id })
+    }
+
+    func collections(ownerID: String) -> [GroupCollection] {
+        collections
+            .filter { $0.ownerID == ownerID }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func posts(in collectionID: String) -> [GroupBuyPost] {
+        guard let collection = collection(id: collectionID) else { return [] }
+        return collection.postIDs.compactMap(post).filter { $0.status == .active }
+    }
+
+    func splitGoodsPosts(matchingRole keyword: String) -> [GroupBuyPost] {
+        let trimmed = keyword.trimmed
+        guard !trimmed.isEmpty else { return [] }
+        return activePosts
+            .filter { post in
+                post.groupType == .splitGoods &&
+                post.unsoldRoles.contains { role in
+                    role.isAvailable && role.name.localizedCaseInsensitiveContains(trimmed)
+                }
+            }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func availableRoles(for postID: String) -> [UnsoldRole] {
+        post(id: postID)?.unsoldRoles.filter(\.isAvailable).sorted { $0.name < $1.name } ?? []
     }
 
     func comments(for postID: String) -> [Comment] {
@@ -555,23 +670,98 @@ final class MockAppStore: ObservableObject {
         threads[index].updatedAt = Date()
     }
 
-    func createPost(title: String, imageName: String, tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, risk: String) {
+    func createCollection(name: String, wechat: String, qq: String, groupInfo: String, deadline: Date, defaultNote: String) {
+        let trimmedName = name.trimmed
+        guard !trimmedName.isEmpty else {
+            showToast("请先填写合集名称")
+            return
+        }
+        let collection = GroupCollection(
+            id: "col-\(UUID().uuidString)",
+            ownerID: currentUserID,
+            name: trimmedName,
+            contactWechat: wechat.trimmed,
+            contactQQ: qq.trimmed,
+            groupInfo: groupInfo.trimmed,
+            deadline: deadline,
+            defaultNote: defaultNote.trimmed.isEmpty ? "该合集内帖子共享联系方式、截团时间和默认说明。" : defaultNote.trimmed,
+            postIDs: [],
+            createdAt: Date()
+        )
+        collections.insert(collection, at: 0)
+        showToast("已创建拼团合集")
+    }
+
+    func addPost(_ postID: String, to collectionID: String) {
+        guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
+              let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
+        if !collections[collectionIndex].postIDs.contains(postID) {
+            collections[collectionIndex].postIDs.append(postID)
+        }
+        posts[postIndex].collectionID = collectionID
+        showToast("已加入合集")
+    }
+
+    func removePost(_ postID: String, from collectionID: String) {
+        guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
+              let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
+        collections[collectionIndex].postIDs.removeAll { $0 == postID }
+        if posts[postIndex].collectionID == collectionID {
+            posts[postIndex].collectionID = nil
+        }
+        showToast("已移出合集")
+    }
+
+    func addUnsoldRole(postID: String, name: String, quantity: Int) {
+        let trimmed = name.trimmed
+        guard !trimmed.isEmpty,
+              quantity > 0,
+              let index = posts.firstIndex(where: { $0.id == postID }) else { return }
+        posts[index].unsoldRoles.append(UnsoldRole(name: trimmed, quantity: quantity))
+        showToast("已更新角色余量")
+    }
+
+    func updateUnsoldRole(postID: String, roleID: String, name: String, quantity: Int) {
+        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
+              let roleIndex = posts[postIndex].unsoldRoles.firstIndex(where: { $0.id == roleID }) else { return }
+        posts[postIndex].unsoldRoles[roleIndex].name = name.trimmed
+        posts[postIndex].unsoldRoles[roleIndex].quantity = max(0, quantity)
+    }
+
+    func removeUnsoldRole(postID: String, roleID: String) {
+        guard let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
+        posts[postIndex].unsoldRoles.removeAll { $0.id == roleID }
+        showToast("已删除角色")
+    }
+
+    func createPost(title: String, groupType: GroupBuyType, collectionID: String?, imageName: String, tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, risk: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
+        let inherited = collection(id: collectionID)
+        let postID = "p-\(UUID().uuidString)"
+        var normalizedTags = tags
+        if !normalizedTags.contains(groupType.rawValue) {
+            normalizedTags.append(groupType.rawValue)
+        }
+        if groupType == .followGroup && !normalizedTags.contains("自印团") {
+            normalizedTags.append("自印团")
+        }
         let post = GroupBuyPost(
-            id: "p-\(UUID().uuidString)",
+            id: postID,
             title: title,
             imageNames: [imageName],
             authorID: currentUserID,
-            categoryTags: tags,
+            groupType: groupType,
+            collectionID: collectionID,
+            categoryTags: normalizedTags,
             fandomTags: ["新发布"],
             price: price,
             deposit: deposit,
-            deadline: deadline,
+            deadline: inherited?.deadline ?? deadline,
             condition: condition,
             isFormed: false,
             description: description,
-            wechat: wechat,
-            qq: qq,
-            groupInfo: groupInfo,
+            wechat: inherited?.contactWechat ?? wechat,
+            qq: inherited?.contactQQ ?? qq,
+            groupInfo: inherited?.groupInfo ?? groupInfo,
             externalLink: "",
             riskNotice: risk,
             createdAt: Date(),
@@ -580,10 +770,17 @@ final class MockAppStore: ObservableObject {
             commentCount: 0,
             reportCount: 0,
             status: .active,
-            imageAspect: 1.08
+            imageAspect: 1.08,
+            pingguAveragePrice: groupType == .splitGoods ? pingguAveragePrice : "",
+            pingguNote: groupType == .splitGoods ? pingguNote : "",
+            unsoldRoles: groupType == .splitGoods ? unsoldRoles.filter(\.isAvailable) : []
         )
         posts.insert(post, at: 0)
-        showToast("发布成功，已进入公开信息流")
+        if let collectionID,
+           let index = collections.firstIndex(where: { $0.id == collectionID }) {
+            collections[index].postIDs.insert(postID, at: 0)
+        }
+        showToast("发布成功，已进入\(groupType.moduleTitle)模块")
     }
 
     func showToast(_ message: String) {
@@ -603,16 +800,22 @@ final class MockAppStore: ObservableObject {
 
 struct HomeView: View {
     @EnvironmentObject private var store: MockAppStore
-    @State private var feed: HomeFeed = .discover
+    @State private var feed: HomeFeed = .following
 
     var posts: [GroupBuyPost] {
         switch feed {
         case .following:
-            store.activePosts.filter { store.followedUserIDs.contains($0.authorID) }
-        case .discover:
-            store.activePosts.sorted { $0.likedCount > $1.likedCount }
-        case .market:
-            store.activePosts.sorted { $0.deadline < $1.deadline }
+            store.activePosts
+                .filter { store.followedUserIDs.contains($0.authorID) }
+                .sorted { $0.createdAt > $1.createdAt }
+        case .followGroup:
+            store.activePosts
+                .filter { $0.groupType == .followGroup }
+                .sorted { $0.createdAt > $1.createdAt }
+        case .splitGoods:
+            store.activePosts
+                .filter { $0.groupType == .splitGoods }
+                .sorted { $0.createdAt > $1.createdAt }
         }
     }
 
@@ -638,10 +841,18 @@ struct HomeView: View {
 
 enum HomeFeed: String, CaseIterable, Identifiable {
     case following = "关注"
-    case discover = "发现"
-    case market = "市集"
+    case followGroup = "跟团"
+    case splitGoods = "拼谷"
 
     var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .following: "已关注团长"
+        case .followGroup: "自印团"
+        case .splitGoods: "角色余量"
+        }
+    }
 }
 
 struct HomeHeader: View {
@@ -662,23 +873,16 @@ struct HomeHeader: View {
                         Button {
                             feed = item
                         } label: {
-                            VStack(spacing: 6) {
+                            VStack(spacing: 4) {
                                 Text(item.rawValue)
                                     .font(.system(size: 22, weight: feed == item ? .bold : .semibold))
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
+                                Text(item.subtitle)
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(feed == item ? Theme.softPink : Theme.muted)
                                 Capsule()
                                     .fill(feed == item ? Theme.hotPink : Color.clear)
                                     .frame(width: 40, height: 4)
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                if item == .following {
-                                    Text("1")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .frame(width: 22, height: 22)
-                                        .background(Theme.hotPink, in: Circle())
-                                        .offset(x: 14, y: -8)
-                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -781,6 +985,16 @@ struct PostCard: View {
                         .frame(maxWidth: .infinity)
                         .aspectRatio(post.imageAspect, contentMode: .fit)
                         .clipped()
+                    HStack {
+                        Label(post.groupType.rawValue, systemImage: post.groupType.icon)
+                            .font(.system(size: 11, weight: .black))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(post.groupType.accent.opacity(0.92), in: Capsule())
+                        Spacer()
+                    }
+                    .padding(8)
                     Text(post.deadline.shortDeadlineText)
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
@@ -796,6 +1010,23 @@ struct PostCard: View {
                         .foregroundStyle(Theme.text)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if post.groupType == .splitGoods {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(post.pingguAveragePrice.isEmpty ? post.price : post.pingguAveragePrice)
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundStyle(post.groupType.accent)
+                            if !post.pingguNote.isEmpty {
+                                Text(post.pingguNote)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.subtext)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .padding(9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(post.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
 
                     HStack(spacing: 6) {
                         AvatarView(user: author, size: 24)
@@ -898,10 +1129,10 @@ struct SearchView: View {
     @State private var selectedTab = "全部"
     @State private var selectedFilter = "综合"
 
-    let history = ["520送女朋友什么礼物", "奶油蘑菇意面", "醉酒夫妇", "做饭", "土豆泥"]
-    let guesses = ["刑警推理题", "卢昱晓道歉", "日常生活做饭", "codex windows版", "500元左右的轻奢礼物", "自己skill怎么蒸馏"]
-    let tabs = ["全部", "用户", "商品", "图片", "地点", "问一问"]
-    let filters = ["综合", "可购买", "最新", "拉子", "学生党", "实用型"]
+    let history = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团"]
+    let guesses = ["Bucky Barnes", "Tony Stark", "Loki", "亚克力立牌", "主角团角色位", "自印团补款"]
+    let tabs = ["全部", "拼谷角色", "团长", "商品"]
+    let filters = ["综合", "拼谷有货", "跟团", "最新"]
 
     var activeQuery: String {
         committedQuery.trimmed.isEmpty ? query.trimmed : committedQuery.trimmed
@@ -911,15 +1142,23 @@ struct SearchView: View {
         let keyword = activeQuery
         var result = store.activePosts
         if !keyword.isEmpty {
-            result = result.filter { post in
-                post.title.localizedCaseInsensitiveContains(keyword) ||
-                post.description.localizedCaseInsensitiveContains(keyword) ||
-                post.categoryTags.joined().localizedCaseInsensitiveContains(keyword) ||
-                post.fandomTags.joined().localizedCaseInsensitiveContains(keyword)
+            let roleMatches = store.splitGoodsPosts(matchingRole: keyword)
+            if selectedTab == "拼谷角色" || selectedFilter == "拼谷有货" || !roleMatches.isEmpty {
+                result = roleMatches
+            } else {
+                result = result.filter { post in
+                    post.title.localizedCaseInsensitiveContains(keyword) ||
+                    post.description.localizedCaseInsensitiveContains(keyword) ||
+                    post.categoryTags.joined().localizedCaseInsensitiveContains(keyword) ||
+                    post.fandomTags.joined().localizedCaseInsensitiveContains(keyword)
+                }
             }
         }
-        if selectedFilter == "可购买" {
-            result = result.filter { $0.isFormed }
+        if selectedFilter == "拼谷有货" {
+            result = result.filter { $0.groupType == .splitGoods && !$0.unsoldRoles.filter(\.isAvailable).isEmpty }
+        }
+        if selectedFilter == "跟团" {
+            result = result.filter { $0.groupType == .followGroup }
         }
         switch selectedFilter {
         case "最新":
@@ -943,7 +1182,7 @@ struct SearchView: View {
                 .buttonStyle(.plain)
 
                 HStack(spacing: 10) {
-                    TextField("刑警推理题", text: $query)
+                    TextField("搜索角色名，如 Bucky", text: $query)
                         .font(.system(size: 20, weight: .semibold))
                         .submitLabel(.search)
                         .textInputAutocapitalization(.never)
@@ -1004,7 +1243,7 @@ struct SearchView: View {
     }
 
     private func submitSearch() {
-        committedQuery = query.trimmed.isEmpty ? "520送女朋友什么礼物" : query.trimmed
+        committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
         query = committedQuery
     }
 }
@@ -1154,7 +1393,7 @@ struct SearchResultsContent: View {
                                     selectedFilter = filter
                                 } label: {
                                     HStack(spacing: 6) {
-                                        if filter == "可购买" {
+                                        if filter == "拼谷有货" {
                                             Image(systemName: "bag")
                                                 .font(.system(size: 16, weight: .bold))
                                         }
@@ -1234,6 +1473,9 @@ struct PostDetailView: View {
                             TagCloud(tags: post.categoryTags + post.fandomTags)
 
                             GroupBuyInfoCard(post: post)
+                            if post.groupType == .splitGoods {
+                                PingguRoleAvailabilityCard(postID: post.id)
+                            }
                             ContactCard(post: post)
                             RiskNoticeCard(postID: post.id, text: post.riskNotice)
                             CommentSection(postID: post.id, commentDraft: $commentDraft)
@@ -1519,24 +1761,31 @@ struct ShareUtilityButton: View {
 }
 
 struct GroupBuyInfoCard: View {
+    @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
 
     var body: some View {
+        let collection = store.collection(id: post.collectionID)
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("团购信息", systemImage: "bag.badge.plus")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Text(post.isFormed ? "已成团" : "待成团")
+                Text(post.groupType.rawValue)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(post.isFormed ? Color.green.opacity(0.92) : Theme.softPink)
+                    .foregroundStyle(post.groupType.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background((post.isFormed ? Color.green : Theme.hotPink).opacity(0.12), in: Capsule())
+                    .background(post.groupType.accent.opacity(0.12), in: Capsule())
             }
+            if let collection {
+                InfoRow(title: "拼团合集", value: collection.name)
+                InfoRow(title: "合集说明", value: collection.defaultNote)
+            }
+            InfoRow(title: "成团状态", value: post.isFormed ? "已成团" : "待成团")
             InfoRow(title: "价格 / 定金", value: "\(post.price) · \(post.deposit)")
-            InfoRow(title: "截团时间", value: post.deadline.fullDisplay)
+            InfoRow(title: "截团时间", value: (collection?.deadline ?? post.deadline).fullDisplay)
             InfoRow(title: "成团条件", value: post.condition)
             InfoRow(title: "外部表单", value: post.externalLink.isEmpty ? "无，联系团长登记" : post.externalLink)
         }
@@ -1548,18 +1797,198 @@ struct GroupBuyInfoCard: View {
     }
 }
 
+struct PingguRoleAvailabilityCard: View {
+    @EnvironmentObject private var store: MockAppStore
+    @State private var isEditing = false
+    @State private var newRoleName = ""
+    @State private var newRoleQuantity = "1"
+    let postID: String
+
+    var body: some View {
+        if let post = store.post(id: postID) {
+            let isOwner = post.authorID == store.currentUserID
+            let roles = isEditing ? post.unsoldRoles : store.availableRoles(for: postID)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("未被购买角色", systemImage: "person.crop.rectangle.stack.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                    if isOwner {
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                                isEditing.toggle()
+                            }
+                        } label: {
+                            Text(isEditing ? "完成" : "编辑")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundStyle(post.groupType.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if !post.pingguAveragePrice.isEmpty || !post.pingguNote.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !post.pingguAveragePrice.isEmpty {
+                            Text(post.pingguAveragePrice)
+                                .font(.system(size: 17, weight: .black))
+                                .foregroundStyle(post.groupType.accent)
+                        }
+                        if !post.pingguNote.isEmpty {
+                            Text(post.pingguNote)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(post.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+
+                if roles.isEmpty {
+                    Text(isEditing ? "还没有录入角色，添加后会出现在拼谷搜索里。" : "当前没有可购买角色。")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(roles) { role in
+                            if isEditing {
+                                EditableRoleRow(postID: postID, role: role)
+                            } else {
+                                HStack {
+                                    Text(role.name)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(Theme.text)
+                                    Spacer()
+                                    Text("(\(role.quantity))")
+                                        .font(.system(size: 16, weight: .black))
+                                        .foregroundStyle(post.groupType.accent)
+                                }
+                                .padding(12)
+                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                    }
+                }
+
+                if isOwner && isEditing {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("添加角色")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Theme.subtext)
+                        HStack(spacing: 8) {
+                            TextField("角色名", text: $newRoleName)
+                                .foregroundStyle(Theme.text)
+                                .padding(12)
+                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+                            TextField("数量", text: $newRoleQuantity)
+                                .keyboardType(.numberPad)
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 66)
+                                .padding(12)
+                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+                            Button {
+                                store.addUnsoldRole(postID: postID, name: newRoleName, quantity: Int(newRoleQuantity) ?? 1)
+                                newRoleName = ""
+                                newRoleQuantity = "1"
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 17, weight: .black))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(post.groupType.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+
+                if !isOwner {
+                    Text("只有团长可维护角色余量。")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+            }
+            .padding(16)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8).stroke(post.groupType.accent.opacity(0.28), lineWidth: 1)
+            }
+        }
+    }
+}
+
+struct EditableRoleRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let postID: String
+    let role: UnsoldRole
+
+    var nameBinding: Binding<String> {
+        Binding(
+            get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name },
+            set: { newValue in
+                let quantity = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity
+                store.updateUnsoldRole(postID: postID, roleID: role.id, name: newValue, quantity: quantity)
+            }
+        )
+    }
+
+    var quantityBinding: Binding<Int> {
+        Binding(
+            get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity },
+            set: { newValue in
+                let name = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name
+                store.updateUnsoldRole(postID: postID, roleID: role.id, name: name, quantity: newValue)
+            }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            TextField("角色名", text: nameBinding)
+                .foregroundStyle(Theme.text)
+                .padding(11)
+                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+            Stepper(value: quantityBinding, in: 0...99) {
+                Text("\(quantityBinding.wrappedValue)")
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(quantityBinding.wrappedValue > 0 ? Color(red: 0.25, green: 0.78, blue: 0.72) : Theme.muted)
+            }
+            .labelsHidden()
+            .frame(width: 100)
+            Button {
+                store.removeUnsoldRole(postID: postID, roleID: role.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.hotPink)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 struct ContactCard: View {
     @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
 
     var body: some View {
+        let collection = store.collection(id: post.collectionID)
+        let wechat = collection?.contactWechat ?? post.wechat
+        let qq = collection?.contactQQ ?? post.qq
+        let groupInfo = collection?.groupInfo ?? post.groupInfo
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("联系团长", systemImage: "person.crop.circle.badge.questionmark")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Text("外部交易")
+                Text(collection == nil ? "外部交易" : "合集共享")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Theme.hotPink)
             }
@@ -1571,15 +2000,15 @@ struct ContactCard: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     ContactButton(title: "复制微信", icon: "doc.on.doc.fill") {
-                        store.copyToPasteboard(post.wechat, label: "微信")
+                        store.copyToPasteboard(wechat, label: "微信")
                     }
                     ContactButton(title: "复制 QQ", icon: "number") {
-                        store.copyToPasteboard(post.qq, label: "QQ")
+                        store.copyToPasteboard(qq, label: "QQ")
                     }
                 }
                 HStack(spacing: 10) {
                     ContactButton(title: "加入群聊", icon: "person.3.fill") {
-                        store.copyToPasteboard(post.groupInfo, label: "群聊信息")
+                        store.copyToPasteboard(groupInfo, label: "群聊信息")
                     }
                     ContactButton(title: "私信咨询", icon: "bubble.left.and.text.bubble.right.fill") {
                         store.showToast("可在消息页继续咨询团长")
@@ -1735,6 +2164,8 @@ struct DetailActionBar: View {
 struct CreatePostView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var title = ""
+    @State private var selectedGroupType: GroupBuyType?
+    @State private var selectedCollectionID = "none"
     @State private var selectedImage = "merch_photocards"
     @State private var selectedTags: Set<String> = ["预售"]
     @State private var price = ""
@@ -1746,24 +2177,102 @@ struct CreatePostView: View {
     @State private var groupInfo = ""
     @State private var description = ""
     @State private var risk = ""
+    @State private var pingguAveragePrice = ""
+    @State private var pingguNote = ""
+    @State private var newRoleName = ""
+    @State private var newRoleQuantity = "1"
+    @State private var roleDrafts: [UnsoldRole] = []
 
-    let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "拼团", "预售", "现货"]
+    let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
     let images = ["merch_photocards", "merch_badges", "merch_standees", "merch_plush", "merch_album", "merch_magazine", "merch_jewelry", "merch_concert"]
+    let noCollectionID = "none"
+
+    var selectedCollection: GroupCollection? {
+        selectedCollectionID == noCollectionID ? nil : store.collection(id: selectedCollectionID)
+    }
+
+    var usesCollection: Bool {
+        selectedCollection != nil
+    }
+
+    var isSplitGoods: Bool {
+        selectedGroupType == .splitGoods
+    }
 
     var canPublish: Bool {
+        selectedGroupType != nil &&
         !title.trimmed.isEmpty &&
         !price.trimmed.isEmpty &&
         !condition.trimmed.isEmpty &&
-        (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) &&
+        (usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) &&
         !description.trimmed.isEmpty &&
         !risk.trimmed.isEmpty &&
-        !selectedTags.isEmpty
+        !selectedTags.isEmpty &&
+        (!isSplitGoods || (!pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty && !roleDrafts.filter(\.isAvailable).isEmpty))
     }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
                 HeaderTitle(title: "发布团购帖", subtitle: "所有用户可发布，核心字段缺失时不能进入信息流")
+                VStack(alignment: .leading, spacing: 14) {
+                    RequiredLabel("拼团类型")
+                    HStack(spacing: 10) {
+                        ForEach(GroupBuyType.allCases) { type in
+                            Button {
+                                selectedGroupType = type
+                                if type == .splitGoods {
+                                    selectedTags.insert("拼谷")
+                                } else {
+                                    selectedTags.insert("自印团")
+                                    selectedTags.remove("拼谷")
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label(type.rawValue, systemImage: type.icon)
+                                        .font(.system(size: 17, weight: .black))
+                                    Text(type.feedDescription)
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(selectedGroupType == type ? .white.opacity(0.82) : Theme.muted)
+                                }
+                                .foregroundStyle(selectedGroupType == type ? .white : Theme.subtext)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(selectedGroupType == type ? type.accent : Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(selectedGroupType == type ? type.accent : Theme.hairline, lineWidth: 1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                if !store.collections(ownerID: store.currentUserID).isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("拼团合集")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Theme.subtext)
+                        Picker("拼团合集", selection: $selectedCollectionID) {
+                            Text("不加入合集").tag(noCollectionID)
+                            ForEach(store.collections(ownerID: store.currentUserID)) { collection in
+                                Text(collection.name).tag(collection.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+
+                        if let selectedCollection {
+                            CollectionSharedInfoCard(collection: selectedCollection)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+
                 VStack(alignment: .leading, spacing: 12) {
                     RequiredLabel("产品图片")
                     BundleImage(name: selectedImage)
@@ -1800,38 +2309,109 @@ struct CreatePostView: View {
                         PrototypeTextField(title: "价格或定金", placeholder: "¥42/套", text: $price, required: true)
                         PrototypeTextField(title: "定金", placeholder: "¥15", text: $deposit, required: false)
                     }
-                    DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
-                        .datePickerStyle(.compact)
-                        .foregroundStyle(Theme.text)
-                        .padding(14)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true)
-                    HStack(spacing: 10) {
-                        PrototypeTextField(title: "微信", placeholder: "至少填微信或 QQ", text: $wechat, required: qq.trimmed.isEmpty)
-                        PrototypeTextField(title: "QQ", placeholder: "至少填微信或 QQ", text: $qq, required: wechat.trimmed.isEmpty)
+                    if selectedCollection == nil {
+                        DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
+                            .datePickerStyle(.compact)
+                            .foregroundStyle(Theme.text)
+                            .padding(14)
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     }
-                    PrototypeTextField(title: "群聊信息", placeholder: "QQ群号 / 微信拉群说明", text: $groupInfo, required: false)
+                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true)
+                    if selectedCollection == nil {
+                        HStack(spacing: 10) {
+                            PrototypeTextField(title: "微信", placeholder: "至少填微信或 QQ", text: $wechat, required: qq.trimmed.isEmpty)
+                            PrototypeTextField(title: "QQ", placeholder: "至少填微信或 QQ", text: $qq, required: wechat.trimmed.isEmpty)
+                        }
+                        PrototypeTextField(title: "群聊信息", placeholder: "QQ群号 / 微信拉群说明", text: $groupInfo, required: false)
+                    }
                     PrototypeTextEditor(title: "团购说明", placeholder: "写清商品内容、规格、余量、表单和周期", text: $description, required: true)
                     PrototypeTextEditor(title: "风险说明", placeholder: "写清非官方周边、色差、周期、售后边界", text: $risk, required: true)
                 }
                 .padding(.horizontal, 16)
 
+                if isSplitGoods {
+                    VStack(alignment: .leading, spacing: 12) {
+                        RequiredLabel("拼谷展示信息")
+                        PrototypeTextField(title: "当前谷子均价", placeholder: "例如：均价35元/吧唧", text: $pingguAveragePrice, required: true)
+                        PrototypeTextEditor(title: "团长自定义描述", placeholder: "例如：目前还缺主角团角色位", text: $pingguNote, required: true)
+                        VStack(alignment: .leading, spacing: 10) {
+                            RequiredLabel("未被购买角色")
+                            if roleDrafts.isEmpty {
+                                Text("添加后会用于详情页展示和搜索栏角色筛选。")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.muted)
+                            } else {
+                                ForEach(roleDrafts) { role in
+                                    HStack {
+                                        Text(role.name)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundStyle(Theme.text)
+                                        Spacer()
+                                        Text("(\(role.quantity))")
+                                            .font(.system(size: 15, weight: .black))
+                                            .foregroundStyle(GroupBuyType.splitGoods.accent)
+                                        Button {
+                                            roleDrafts.removeAll { $0.id == role.id }
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(Theme.muted)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(12)
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                            }
+                            HStack(spacing: 8) {
+                                TextField("角色名，如 Bucky Barnes", text: $newRoleName)
+                                    .foregroundStyle(Theme.text)
+                                    .padding(12)
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                TextField("数量", text: $newRoleQuantity)
+                                    .keyboardType(.numberPad)
+                                    .foregroundStyle(Theme.text)
+                                    .frame(width: 72)
+                                    .padding(12)
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                Button {
+                                    addRoleDraft()
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 18, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 44, height: 44)
+                                        .background(GroupBuyType.splitGoods.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+
                 VStack(alignment: .leading, spacing: 10) {
+                    ValidationRow(isValid: selectedGroupType != nil, text: "已选择拼团类型")
                     ValidationRow(isValid: !title.trimmed.isEmpty, text: "已填写标题")
                     ValidationRow(isValid: !price.trimmed.isEmpty, text: "已填写价格或定金")
                     ValidationRow(isValid: !condition.trimmed.isEmpty, text: "已填写成团条件")
-                    ValidationRow(isValid: !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty, text: "已填写微信或 QQ")
+                    ValidationRow(isValid: usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty, text: usesCollection ? "已继承合集联系方式" : "已填写微信或 QQ")
                     ValidationRow(isValid: !description.trimmed.isEmpty && !risk.trimmed.isEmpty, text: "已填写说明和风险提示")
+                    if isSplitGoods {
+                        ValidationRow(isValid: !pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty, text: "已填写拼谷均价和描述")
+                        ValidationRow(isValid: !roleDrafts.filter(\.isAvailable).isEmpty, text: "已录入可售角色和数量")
+                    }
                 }
                 .padding(16)
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 16)
 
                 Button {
-                    store.createPost(title: title, imageName: selectedImage, tags: Array(selectedTags), price: price, deposit: deposit.isEmpty ? "全款" : deposit, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk)
-                    reset()
+                    if let selectedGroupType {
+                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageName: selectedImage, tags: Array(selectedTags), price: price, deposit: deposit.isEmpty ? "全款" : deposit, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
+                        reset()
+                    }
                 } label: {
-                    Text(canPublish ? "发布到公开信息流" : "补齐必填字段后发布")
+                    Text(canPublish ? "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块" : "补齐必填字段后发布")
                         .font(.system(size: 17, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
@@ -1850,6 +2430,8 @@ struct CreatePostView: View {
 
     func reset() {
         title = ""
+        selectedGroupType = nil
+        selectedCollectionID = noCollectionID
         selectedTags = ["预售"]
         price = ""
         deposit = ""
@@ -1859,6 +2441,20 @@ struct CreatePostView: View {
         groupInfo = ""
         description = ""
         risk = ""
+        pingguAveragePrice = ""
+        pingguNote = ""
+        newRoleName = ""
+        newRoleQuantity = "1"
+        roleDrafts = []
+    }
+
+    func addRoleDraft() {
+        let quantity = max(1, Int(newRoleQuantity) ?? 1)
+        let trimmed = newRoleName.trimmed
+        guard !trimmed.isEmpty else { return }
+        roleDrafts.append(UnsoldRole(name: trimmed, quantity: quantity))
+        newRoleName = ""
+        newRoleQuantity = "1"
     }
 }
 
@@ -2220,7 +2816,7 @@ struct ProfileView: View {
     @State private var isMenuOpen = false
     @State private var selectedTab = "笔记"
 
-    let profileTabs = ["笔记", "评论", "收藏", "赞过"]
+    let profileTabs = ["笔记", "拼团合集", "评论", "收藏", "赞过"]
 
     var body: some View {
         let user = store.currentUser
@@ -2340,12 +2936,14 @@ struct ProfileView: View {
                                 } label: {
                                     VStack(spacing: 8) {
                                         HStack(spacing: 6) {
-                                            if tab != "笔记" {
+                                            if tab != "笔记" && tab != "拼团合集" {
                                                 Image(systemName: "lock.fill")
                                                     .font(.system(size: 15, weight: .bold))
                                             }
                                             Text(tab)
-                                                .font(.system(size: 22, weight: selectedTab == tab ? .black : .semibold))
+                                                .font(.system(size: tab == "拼团合集" ? 16 : 18, weight: selectedTab == tab ? .black : .semibold))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.82)
                                         }
                                         .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                         Capsule()
@@ -2369,9 +2967,17 @@ struct ProfileView: View {
                         .padding(.bottom, 12)
                         .background(Theme.panel)
 
-                        ProfileEmptyNotesView()
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 430)
+                        Group {
+                            if selectedTab == "笔记" {
+                                ProfileNotesPanel(userID: user.id)
+                            } else if selectedTab == "拼团合集" {
+                                ProfileCollectionsPanel(ownerID: user.id, canManage: true)
+                            } else {
+                                ProfileEmptyNotesView()
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 430)
                     }
                     .background(Theme.background)
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
@@ -2468,6 +3074,312 @@ struct ProfileEmptyNotesView: View {
             }
             .buttonStyle(.plain)
             Spacer()
+        }
+    }
+}
+
+struct ProfileNotesPanel: View {
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+
+    var posts: [GroupBuyPost] {
+        store.activePosts
+            .filter { $0.authorID == userID }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var body: some View {
+        if posts.isEmpty {
+            ProfileEmptyNotesView()
+        } else {
+            WaterfallGrid(posts: posts)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 28)
+        }
+    }
+}
+
+struct ProfileCollectionsPanel: View {
+    @EnvironmentObject private var store: MockAppStore
+    @State private var isCreatingCollection = false
+    let ownerID: String
+    let canManage: Bool
+
+    var body: some View {
+        let collections = store.collections(ownerID: ownerID)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("拼团合集")
+                        .font(.system(size: 20, weight: .black))
+                        .foregroundStyle(Theme.text)
+                    Text("同一拼团的宣传、进度和余量更新放在一起")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.subtext)
+                }
+                Spacer()
+                if canManage {
+                    Button {
+                        isCreatingCollection = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(Theme.hotPink, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if collections.isEmpty {
+                Text(canManage ? "还没有合集，点右上角创建第一个拼团合集。" : "这个团长还没有公开拼团合集。")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(collections) { collection in
+                        CollectionCard(collection: collection)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .sheet(isPresented: $isCreatingCollection) {
+            CreateCollectionSheet()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+struct CollectionCard: View {
+    @EnvironmentObject private var store: MockAppStore
+    let collection: GroupCollection
+
+    var body: some View {
+        NavigationLink(value: Route.collectionDetail(collection.id)) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label(collection.name, systemImage: "rectangle.stack.fill")
+                        .font(.system(size: 17, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(collection.postIDs.count)帖")
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(Theme.hotPink)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                }
+                Text(collection.defaultNote)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .lineLimit(2)
+                HStack {
+                    Label(collection.deadline.shortDeadlineText, systemImage: "clock.fill")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Theme.muted)
+            }
+            .padding(14)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Theme.hairline, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CreateCollectionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var name = ""
+    @State private var wechat = ""
+    @State private var qq = ""
+    @State private var groupInfo = ""
+    @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
+    @State private var note = ""
+
+    var canCreate: Bool {
+        !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) && !note.trimmed.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HeaderTitle(title: "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
+                    PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
+                    HStack(spacing: 10) {
+                        PrototypeTextField(title: "微信", placeholder: "至少填微信或 QQ", text: $wechat, required: qq.trimmed.isEmpty)
+                        PrototypeTextField(title: "QQ", placeholder: "至少填微信或 QQ", text: $qq, required: wechat.trimmed.isEmpty)
+                    }
+                    PrototypeTextField(title: "群聊信息", placeholder: "群号 / 拉群说明", text: $groupInfo, required: false)
+                    DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.compact)
+                        .foregroundStyle(Theme.text)
+                        .padding(14)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                    PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
+                    Button {
+                        store.createCollection(name: name, wechat: wechat, qq: qq, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
+                        dismiss()
+                    } label: {
+                        Text(canCreate ? "创建合集" : "补齐必填字段")
+                            .font(.system(size: 17, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(canCreate ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                            .foregroundStyle(canCreate ? .white : Theme.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canCreate)
+                    .padding(.top, 8)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
+            }
+            .background(Theme.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct CollectionDetailView: View {
+    @EnvironmentObject private var store: MockAppStore
+    let collectionID: String
+
+    var body: some View {
+        if let collection = store.collection(id: collectionID) {
+            let posts = store.posts(in: collection.id)
+            let canManage = collection.ownerID == store.currentUserID
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    HeaderTitle(title: collection.name, subtitle: "合集共享信息会自动继承到新发布帖子")
+                    CollectionSharedInfoCard(collection: collection)
+                        .padding(.horizontal, 16)
+                    if canManage {
+                        CollectionPostManager(collection: collection)
+                            .padding(.horizontal, 16)
+                    }
+                    Text("合集内帖子")
+                        .font(.system(size: 20, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 16)
+                    if posts.isEmpty {
+                        Text("还没有帖子加入这个合集。")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.muted)
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal, 16)
+                    } else {
+                        WaterfallGrid(posts: posts)
+                            .padding(.horizontal, 12)
+                    }
+                }
+                .padding(.bottom, 28)
+            }
+            .background(Theme.background.ignoresSafeArea())
+            .navigationTitle(collection.name)
+            .navigationBarTitleDisplayMode(.inline)
+        } else {
+            ContentUnavailableView("合集不存在", systemImage: "rectangle.stack.badge.minus")
+                .background(Theme.background)
+        }
+    }
+}
+
+struct CollectionPostManager: View {
+    @EnvironmentObject private var store: MockAppStore
+    let collection: GroupCollection
+
+    var manageablePosts: [GroupBuyPost] {
+        store.activePosts
+            .filter { $0.authorID == collection.ownerID }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("选择已有帖子加入合集")
+                .font(.system(size: 16, weight: .black))
+                .foregroundStyle(Theme.text)
+            ForEach(manageablePosts) { post in
+                let isIncluded = collection.postIDs.contains(post.id)
+                HStack(spacing: 10) {
+                    BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                        .scaledToFill()
+                        .frame(width: 52, height: 52)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(post.title)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Text(post.groupType.rawValue)
+                            .font(.system(size: 12, weight: .black))
+                            .foregroundStyle(post.groupType.accent)
+                    }
+                    Spacer()
+                    Button {
+                        if isIncluded {
+                            store.removePost(post.id, from: collection.id)
+                        } else {
+                            store.addPost(post.id, to: collection.id)
+                        }
+                    } label: {
+                        Text(isIncluded ? "移出" : "加入")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(isIncluded ? Theme.subtext : .white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(isIncluded ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(14)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct CollectionSharedInfoCard: View {
+    let collection: GroupCollection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("合集共享信息", systemImage: "link.circle.fill")
+                .font(.system(size: 17, weight: .black))
+                .foregroundStyle(Theme.text)
+            InfoRow(title: "拼团名称", value: collection.name)
+            InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
+            InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
+            InfoRow(title: "群聊信息", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            InfoRow(title: "默认说明", value: collection.defaultNote)
+        }
+        .padding(14)
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Theme.hairline, lineWidth: 1)
         }
     }
 }
@@ -3200,6 +4112,9 @@ struct UserProfileView: View {
                 .padding(16)
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 16)
+
+                ProfileCollectionsPanel(ownerID: userID, canManage: userID == store.currentUserID)
+                    .padding(.bottom, 4)
 
                 Text("正在进行的团购")
                     .font(.system(size: 20, weight: .bold))
