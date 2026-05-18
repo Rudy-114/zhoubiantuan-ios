@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
 @main
 struct ZhouBianTuanApp: App {
@@ -198,6 +199,20 @@ struct BundleImage: View {
     }
 }
 
+struct UserBackgroundImage: View {
+    let user: User
+
+    var body: some View {
+        if let imageData = user.backgroundImageData,
+           let image = UIImage(data: imageData) {
+            Image(uiImage: image)
+                .resizable()
+        } else {
+            BundleImage(name: user.backgroundImageName)
+        }
+    }
+}
+
 struct User: Identifiable, Hashable {
     let id: String
     var nickname: String
@@ -213,9 +228,10 @@ struct User: Identifiable, Hashable {
     var gender: String = ""
     var birthday: String = ""
     var region: String = ""
-    var profession: String = ""
-    var school: String = ""
     var backgroundImageName: String = "merch_magazine"
+    var avatarImageData: Data? = nil
+    var backgroundImageData: Data? = nil
+    var lastNicknameChangedAt: Date? = nil
 }
 
 struct GroupBuyPost: Identifiable, Hashable {
@@ -441,7 +457,7 @@ final class MockAppStore: ObservableObject {
         let winterCollectionID = "col-winter-bucky"
         let tourCollectionID = "col-tour-cards"
         users = [
-            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", profession: "选择职业", school: "选择学校", backgroundImageName: "merch_magazine"),
+            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", backgroundImageName: "merch_magazine"),
             User(id: "u-black", nickname: "黑贝果", bio: "原创设计小众饰品，开团前都会补风险说明。", followingCount: 88, followersCount: 12800, postCount: 36, isRestricted: false, canShowContact: true, avatarSymbol: "黑", avatarTint: .rose, redBookID: "BlackBagel2026", region: "上海", backgroundImageName: "merch_jewelry"),
             User(id: "u-moon", nickname: "月光补货站", bio: "演唱会周边、立牌、吧唧团购整理。", followingCount: 54, followersCount: 5320, postCount: 22, isRestricted: false, canShowContact: true, avatarSymbol: "月", avatarTint: .violet, redBookID: "MoonPin0909", region: "广州", backgroundImageName: "merch_badges"),
             User(id: "u-berry", nickname: "莓果小铺", bio: "娃娃衣和棉花娃配件长期团。", followingCount: 91, followersCount: 2401, postCount: 18, isRestricted: false, canShowContact: true, avatarSymbol: "莓", avatarTint: .amber, redBookID: "BerryDollClub", region: "杭州", backgroundImageName: "merch_plush"),
@@ -653,20 +669,48 @@ final class MockAppStore: ObservableObject {
             .sorted { $0.likedCount > $1.likedCount }
     }
 
-    func updateCurrentProfile(nickname: String, redBookID: String, bio: String, gender: String, birthday: String, region: String, profession: String, school: String, avatarSymbol: String, avatarTint: ColorToken, backgroundImageName: String) {
+    func canChangeNickname(for user: User) -> Bool {
+        guard let lastChangedAt = user.lastNicknameChangedAt,
+              let nextAvailableDate = Calendar.current.date(byAdding: .month, value: 4, to: lastChangedAt) else {
+            return true
+        }
+        return Date() >= nextAvailableDate
+    }
+
+    func nextNicknameChangeDate(for user: User) -> Date? {
+        guard let lastChangedAt = user.lastNicknameChangedAt else { return nil }
+        return Calendar.current.date(byAdding: .month, value: 4, to: lastChangedAt)
+    }
+
+    func updateCurrentBio(_ bio: String) {
         guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
-        users[index].nickname = nickname.trimmed.isEmpty ? users[index].nickname : nickname.trimmed
+        users[index].bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
+        showToast("简介已保存")
+    }
+
+    func updateCurrentProfile(nickname: String, redBookID: String, bio: String, gender: String, birthday: String, region: String, avatarSymbol: String, avatarTint: ColorToken, backgroundImageName: String, avatarImageData: Data?, backgroundImageData: Data?) {
+        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
+        var rejectedNicknameChange = false
+        let trimmedNickname = nickname.trimmed
+        if !trimmedNickname.isEmpty && trimmedNickname != users[index].nickname {
+            if canChangeNickname(for: users[index]) {
+                users[index].nickname = trimmedNickname
+                users[index].lastNicknameChangedAt = Date()
+            } else {
+                rejectedNicknameChange = true
+            }
+        }
         users[index].redBookID = redBookID.trimmed
         users[index].bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
         users[index].gender = gender.trimmed
         users[index].birthday = birthday.trimmed
         users[index].region = region.trimmed
-        users[index].profession = profession.trimmed
-        users[index].school = school.trimmed
         users[index].avatarSymbol = avatarSymbol.trimmed.isEmpty ? users[index].avatarSymbol : String(avatarSymbol.trimmed.prefix(1))
         users[index].avatarTint = avatarTint
         users[index].backgroundImageName = backgroundImageName
-        showToast("资料已保存")
+        users[index].avatarImageData = avatarImageData
+        users[index].backgroundImageData = backgroundImageData
+        showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
     }
 
     func setLoginState(_ loggedIn: Bool) {
@@ -2918,6 +2962,8 @@ struct ProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isMenuOpen = false
     @State private var selectedTab = "笔记"
+    @State private var isBioEditorPresented = false
+    @State private var bioDraft = ""
 
     let profileTabs = ["笔记", "拼团合集", "赞过"]
 
@@ -2927,7 +2973,7 @@ struct ProfileView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     ZStack(alignment: .top) {
-                        BundleImage(name: user.backgroundImageName)
+                        UserBackgroundImage(user: user)
                             .scaledToFill()
                             .frame(height: 382)
                             .frame(maxWidth: .infinity)
@@ -2984,7 +3030,8 @@ struct ProfileView: View {
                                 .foregroundStyle(Theme.text)
                             }
 
-                            Spacer(minLength: 36)
+                            Color.clear
+                                .frame(height: 8)
 
                             HStack(alignment: .center, spacing: 18) {
                                 AvatarView(user: user, size: 118)
@@ -3016,13 +3063,21 @@ struct ProfileView: View {
                                 StatInline(value: "\(store.likedPostIDs.count + store.favoritePostIDs.count)", title: "获赞与收藏")
                             }
 
-                            Text(user.bio)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(Theme.text.opacity(0.86))
+                            Button {
+                                bioDraft = user.bio == "点击这里，填写简介" ? "" : user.bio
+                                isBioEditorPresented = true
+                            } label: {
+                                Text(user.bio)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(Theme.text.opacity(0.86))
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
-                        .frame(height: 382)
+                        .frame(height: 382, alignment: .top)
                     }
 
                     VStack(spacing: 0) {
@@ -3076,7 +3131,7 @@ struct ProfileView: View {
                     }
                     .background(Theme.background)
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
-                    .offset(y: -8)
+                    .offset(y: -2)
                 }
                 .padding(.bottom, 88)
             }
@@ -3096,6 +3151,57 @@ struct ProfileView: View {
             }
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $isBioEditorPresented) {
+            ProfileBioEditorSheet(bio: $bioDraft) {
+                store.updateCurrentBio(bioDraft)
+                isBioEditorPresented = false
+            }
+            .presentationDetents([.height(300)])
+        }
+    }
+}
+
+struct ProfileBioEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var bio: String
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button("取消") {
+                    dismiss()
+                }
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(0.62))
+
+                Spacer()
+
+                Text("编辑简介")
+                    .font(.system(size: 19, weight: .black))
+                    .foregroundStyle(Color.black.opacity(0.84))
+
+                Spacer()
+
+                Button("保存") {
+                    onSave()
+                    dismiss()
+                }
+                .font(.system(size: 17, weight: .black))
+                .foregroundStyle(Theme.hotPink)
+            }
+
+            TextEditor(text: $bio)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(0.84))
+                .tint(Theme.hotPink)
+                .scrollContentBackground(.hidden)
+                .padding(12)
+                .frame(height: 150)
+                .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .padding(18)
+        .background(Color.white.ignoresSafeArea())
     }
 }
 
@@ -4016,27 +4122,38 @@ struct EditProfileView: View {
     @State private var gender = ""
     @State private var birthday = ""
     @State private var region = ""
-    @State private var profession = ""
-    @State private var school = ""
     @State private var avatarSymbol = ""
     @State private var avatarTint: ColorToken = .amber
     @State private var backgroundImageName = "merch_magazine"
+    @State private var avatarImageData: Data?
+    @State private var backgroundImageData: Data?
+    @State private var avatarPickerItem: PhotosPickerItem?
+    @State private var backgroundPickerItem: PhotosPickerItem?
 
     let tintChoices: [ColorToken] = [.amber, .rose, .violet, .teal, .blue]
-    let backgroundChoices = ["merch_magazine", "merch_photocards", "merch_jewelry", "merch_plush", "merch_album"]
 
     var body: some View {
+        let currentUser = store.currentUser
+        let canEditNickname = store.canChangeNickname(for: currentUser) || nickname.trimmed == currentUser.nickname
         let previewUser = User(
             id: store.currentUserID,
-            nickname: nickname.isEmpty ? store.currentUser.nickname : nickname,
-            bio: bio.isEmpty ? store.currentUser.bio : bio,
-            followingCount: store.currentUser.followingCount,
-            followersCount: store.currentUser.followersCount,
-            postCount: store.currentUser.postCount,
+            nickname: nickname.isEmpty ? currentUser.nickname : nickname,
+            bio: bio.isEmpty ? currentUser.bio : bio,
+            followingCount: currentUser.followingCount,
+            followersCount: currentUser.followersCount,
+            postCount: currentUser.postCount,
             isRestricted: false,
             canShowContact: true,
-            avatarSymbol: avatarSymbol.isEmpty ? store.currentUser.avatarSymbol : avatarSymbol,
-            avatarTint: avatarTint
+            avatarSymbol: avatarSymbol.isEmpty ? currentUser.avatarSymbol : avatarSymbol,
+            avatarTint: avatarTint,
+            redBookID: redBookID,
+            gender: gender,
+            birthday: birthday,
+            region: region,
+            backgroundImageName: backgroundImageName,
+            avatarImageData: avatarImageData,
+            backgroundImageData: backgroundImageData,
+            lastNicknameChangedAt: currentUser.lastNicknameChangedAt
         )
 
         VStack(spacing: 0) {
@@ -4056,7 +4173,7 @@ struct EditProfileView: View {
                     .foregroundStyle(Color.black.opacity(0.82))
                 Spacer()
                 Button("预览") {
-                    saveProfile(shouldDismiss: false)
+                    store.showToast("下方已实时预览")
                 }
                 .font(.system(size: 19, weight: .black))
                 .foregroundStyle(Color.black.opacity(0.82))
@@ -4068,18 +4185,21 @@ struct EditProfileView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 28) {
                     VStack(spacing: 14) {
-                        ZStack(alignment: .bottomTrailing) {
-                            AvatarView(user: previewUser, size: 126)
-                                .background(.white, in: Circle())
-                            Image(systemName: "camera.fill")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 38, height: 38)
-                                .background(Color.black.opacity(0.72), in: Circle())
-                                .overlay {
-                                    Circle().stroke(.white, lineWidth: 3)
-                                }
+                        PhotosPicker(selection: $avatarPickerItem, matching: .images) {
+                            ZStack(alignment: .bottomTrailing) {
+                                AvatarView(user: previewUser, size: 126)
+                                    .background(.white, in: Circle())
+                                Image(systemName: "camera.fill")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 38, height: 38)
+                                    .background(Color.black.opacity(0.72), in: Circle())
+                                    .overlay {
+                                        Circle().stroke(.white, lineWidth: 3)
+                                    }
+                            }
                         }
+                        .buttonStyle(.plain)
 
                         HStack(spacing: 10) {
                             TextField("头像字", text: $avatarSymbol)
@@ -4103,46 +4223,60 @@ struct EditProfileView: View {
                                 .buttonStyle(.plain)
                             }
                         }
+
+                        Text("点击头像可从相册上传")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.black.opacity(0.42))
                     }
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary)
+                        ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary, isEditable: canEditNickname)
+                        Text(nicknameHint)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.black.opacity(0.42))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 14)
                         ProfileEditField(title: "小红书号", placeholder: "填写小红书号", text: $redBookID, textColor: .primary)
-                        VStack(alignment: .leading, spacing: 14) {
-                            HStack {
+                        PhotosPicker(selection: $backgroundPickerItem, matching: .images) {
+                            HStack(spacing: 18) {
                                 Text("背景图")
                                     .font(.system(size: 21, weight: .semibold))
                                     .foregroundStyle(Color.black.opacity(0.45))
                                     .frame(width: 112, alignment: .leading)
-                                Text(backgroundImageName)
+
+                                ProfileBackgroundPreview(imageData: backgroundImageData, fallbackName: backgroundImageName)
+
+                                Text("从相册选择")
                                     .font(.system(size: 18, weight: .semibold))
                                     .foregroundStyle(Color.black.opacity(0.72))
+
                                 Spacer()
+
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(Color.black.opacity(0.22))
+                                    .font(.system(size: 19, weight: .bold))
+                                    .foregroundStyle(Color.black.opacity(0.18))
                             }
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(backgroundChoices, id: \.self) { image in
-                                        Button {
-                                            backgroundImageName = image
-                                        } label: {
-                                            BundleImage(name: image)
-                                                .scaledToFill()
-                                                .frame(width: 82, height: 58)
-                                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                                .overlay {
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .stroke(backgroundImageName == image ? Theme.hotPink : Color.black.opacity(0.08), lineWidth: backgroundImageName == image ? 2 : 1)
-                                                }
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 18)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 18)
+                        .buttonStyle(.plain)
+
+                        if backgroundImageData != nil {
+                            Button {
+                                backgroundImageData = nil
+                            } label: {
+                                HStack {
+                                    Text("恢复默认背景图")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(Theme.hotPink)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 146)
+                                .padding(.bottom, 16)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
@@ -4157,42 +4291,6 @@ struct EditProfileView: View {
                         ProfileEditField(title: "性别", placeholder: "编辑性别", text: $gender, textColor: Color.black.opacity(0.42))
                         ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Color.black.opacity(0.42))
                         ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Color.black.opacity(0.42))
-                        ProfileEditField(title: "职业", placeholder: "选择职业", text: $profession, textColor: Color.black.opacity(0.42))
-                        ProfileEditField(title: "学校", placeholder: "选择学校", text: $school, textColor: Color.black.opacity(0.42))
-                        HStack(spacing: 18) {
-                            Text("原创信息")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.45))
-                                .frame(width: 112, alignment: .leading)
-                            Text("暂未完成原创认证")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.82))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(Color.black.opacity(0.22))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
-                    }
-                    .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding(.horizontal, 16)
-
-                    VStack(spacing: 0) {
-                        HStack(spacing: 18) {
-                            Text("组件管理")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.45))
-                                .frame(width: 112, alignment: .leading)
-                            Text("主页展示 浏览记录 等 3 个组件")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(Color.black.opacity(0.82))
-                                .lineLimit(2)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(Color.black.opacity(0.22))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
                     }
                     .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
@@ -4218,6 +4316,25 @@ struct EditProfileView: View {
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .onAppear(perform: loadProfile)
+        .onChange(of: avatarPickerItem) { _, item in
+            loadImage(from: item) { data in
+                avatarImageData = data
+            }
+        }
+        .onChange(of: backgroundPickerItem) { _, item in
+            loadImage(from: item) { data in
+                backgroundImageData = data
+            }
+        }
+    }
+
+    private var nicknameHint: String {
+        let user = store.currentUser
+        guard let nextDate = store.nextNicknameChangeDate(for: user),
+              !store.canChangeNickname(for: user) else {
+            return "名字四个月只能修改一次"
+        }
+        return "名字四个月只能修改一次，下次可在 \(nextDate.shortDateOnlyText) 修改"
     }
 
     private func loadProfile() {
@@ -4229,11 +4346,11 @@ struct EditProfileView: View {
         gender = user.gender
         birthday = user.birthday
         region = user.region
-        profession = user.profession
-        school = user.school
         avatarSymbol = user.avatarSymbol
         avatarTint = user.avatarTint
         backgroundImageName = user.backgroundImageName
+        avatarImageData = user.avatarImageData
+        backgroundImageData = user.backgroundImageData
         didLoad = true
     }
 
@@ -4245,14 +4362,49 @@ struct EditProfileView: View {
             gender: gender,
             birthday: birthday,
             region: region,
-            profession: profession,
-            school: school,
             avatarSymbol: avatarSymbol,
             avatarTint: avatarTint,
-            backgroundImageName: backgroundImageName
+            backgroundImageName: backgroundImageName,
+            avatarImageData: avatarImageData,
+            backgroundImageData: backgroundImageData
         )
         if shouldDismiss {
             dismiss()
+        }
+    }
+
+    private func loadImage(from item: PhotosPickerItem?, assign: @escaping (Data?) -> Void) {
+        guard let item else { return }
+        Task {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                await MainActor.run {
+                    assign(data)
+                }
+            }
+        }
+    }
+}
+
+struct ProfileBackgroundPreview: View {
+    let imageData: Data?
+    let fallbackName: String
+
+    var body: some View {
+        Group {
+            if let imageData,
+               let image = UIImage(data: imageData) {
+                Image(uiImage: image)
+                    .resizable()
+            } else {
+                BundleImage(name: fallbackName)
+            }
+        }
+        .scaledToFill()
+        .frame(width: 78, height: 54)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -4262,6 +4414,7 @@ struct ProfileEditField: View {
     let placeholder: String
     @Binding var text: String
     let textColor: Color
+    var isEditable = true
 
     var body: some View {
         HStack(spacing: 18) {
@@ -4273,6 +4426,8 @@ struct ProfileEditField: View {
                 .font(.system(size: 21, weight: .semibold))
                 .foregroundStyle(text.isEmpty ? Color.black.opacity(0.32) : Color.black.opacity(0.82))
                 .tint(Theme.hotPink)
+                .disabled(!isEditable)
+                .opacity(isEditable ? 1 : 0.52)
             Image(systemName: "chevron.right")
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Color.black.opacity(0.18))
@@ -4654,14 +4809,25 @@ struct AvatarView: View {
     let size: CGFloat
 
     var body: some View {
-        Text(user.avatarSymbol)
-            .font(.system(size: size * 0.42, weight: .black))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(user.avatarTint.gradient, in: Circle())
-            .overlay {
-                Circle().stroke(Color.white.opacity(0.16), lineWidth: 1)
+        Group {
+            if let imageData = user.avatarImageData,
+               let image = UIImage(data: imageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Text(user.avatarSymbol)
+                    .font(.system(size: size * 0.42, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(user.avatarTint.gradient, in: Circle())
             }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle().stroke(Color.white.opacity(0.16), lineWidth: 1)
+        }
     }
 }
 
@@ -5127,6 +5293,13 @@ extension Date {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日 HH:mm"
+        return formatter.string(from: self)
+    }
+
+    var shortDateOnlyText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日"
         return formatter.string(from: self)
     }
 
