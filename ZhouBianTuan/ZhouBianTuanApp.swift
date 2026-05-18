@@ -29,6 +29,7 @@ struct ZhouBianTuanApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .tint(Theme.hotPink)
                 .preferredColorScheme(.dark)
         }
     }
@@ -163,6 +164,26 @@ enum Theme {
     static let muted = Color.white.opacity(0.36)
     static let hotPink = Color(red: 1, green: 0.12, blue: 0.27)
     static let softPink = Color(red: 1, green: 0.42, blue: 0.58)
+}
+
+struct BundleImage: View {
+    let name: String
+
+    var body: some View {
+        if let url = Bundle.main.url(forResource: name, withExtension: "png"),
+           let image = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: image)
+                .resizable()
+        } else {
+            Rectangle()
+                .fill(Theme.panelRaised)
+                .overlay {
+                    Image(systemName: "photo")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+        }
+    }
 }
 
 struct User: Identifiable, Hashable {
@@ -755,8 +776,7 @@ struct PostCard: View {
         NavigationLink(value: Route.postDetail(post.id)) {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topTrailing) {
-                    Image(post.imageNames.first ?? "merch_photocards")
-                        .resizable()
+                    BundleImage(name: post.imageNames.first ?? "merch_photocards")
                         .scaledToFill()
                         .frame(maxWidth: .infinity)
                         .aspectRatio(post.imageAspect, contentMode: .fit)
@@ -1189,8 +1209,7 @@ struct PostDetailView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         TabView {
                             ForEach(post.imageNames, id: \.self) { imageName in
-                                Image(imageName)
-                                    .resizable()
+                                BundleImage(name: imageName)
                                     .scaledToFill()
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 480)
@@ -1747,8 +1766,7 @@ struct CreatePostView: View {
                 HeaderTitle(title: "发布团购帖", subtitle: "所有用户可发布，核心字段缺失时不能进入信息流")
                 VStack(alignment: .leading, spacing: 12) {
                     RequiredLabel("产品图片")
-                    Image(selectedImage)
-                        .resizable()
+                    BundleImage(name: selectedImage)
                         .scaledToFill()
                         .frame(height: 260)
                         .frame(maxWidth: .infinity)
@@ -1759,8 +1777,7 @@ struct CreatePostView: View {
                                 Button {
                                     selectedImage = image
                                 } label: {
-                                    Image(image)
-                                        .resizable()
+                                    BundleImage(name: image)
                                         .scaledToFill()
                                         .frame(width: 70, height: 70)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -2160,8 +2177,7 @@ struct SharedPostMessageCard: View {
     var body: some View {
         let author = store.user(id: post.authorID)
         VStack(alignment: .leading, spacing: 0) {
-            Image(post.imageNames.first ?? "merch_photocards")
-                .resizable()
+            BundleImage(name: post.imageNames.first ?? "merch_photocards")
                 .scaledToFill()
                 .frame(width: 250, height: 250)
                 .clipped()
@@ -2212,8 +2228,7 @@ struct ProfileView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     ZStack(alignment: .top) {
-                        Image(user.backgroundImageName)
-                            .resizable()
+                        BundleImage(name: user.backgroundImageName)
                             .scaledToFill()
                             .frame(height: 430)
                             .frame(maxWidth: .infinity)
@@ -2702,8 +2717,7 @@ struct EditProfileView: View {
                                         Button {
                                             backgroundImageName = image
                                         } label: {
-                                            Image(image)
-                                                .resizable()
+                                            BundleImage(name: image)
                                                 .scaledToFill()
                                                 .frame(width: 82, height: 58)
                                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2962,8 +2976,7 @@ struct AdminReportCard: View {
             if let post {
                 NavigationLink(value: Route.postDetail(post.id)) {
                     HStack(spacing: 10) {
-                        Image(post.imageNames.first ?? "merch_photocards")
-                            .resizable()
+                        BundleImage(name: post.imageNames.first ?? "merch_photocards")
                             .scaledToFill()
                             .frame(width: 70, height: 70)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -3020,8 +3033,7 @@ struct TagContentView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     ZStack(alignment: .top) {
-                        Image(heroImageName)
-                            .resizable()
+                        BundleImage(name: heroImageName)
                             .scaledToFill()
                             .frame(height: 345)
                             .frame(maxWidth: .infinity)
@@ -3522,8 +3534,7 @@ struct ReminderLargeCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(post.imageNames.first ?? "merch_photocards")
-                .resizable()
+            BundleImage(name: post.imageNames.first ?? "merch_photocards")
                 .scaledToFill()
                 .frame(width: 80, height: 80)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
