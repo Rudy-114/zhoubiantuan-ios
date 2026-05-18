@@ -3165,6 +3165,7 @@ struct ProfileBioEditorView: View {
     @Binding var bio: String
     let onSave: () -> Void
     private let maxLength = 160
+    private var canSave: Bool { !bio.trimmed.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3188,9 +3189,10 @@ struct ProfileBioEditorView: View {
                     onSave()
                     dismiss()
                 }
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(Color(red: 0.45, green: 0.08, blue: 0.13))
+                .font(.system(size: 20, weight: canSave ? .bold : .medium))
+                .foregroundStyle(canSave ? Theme.hotPink : Color(red: 0.45, green: 0.08, blue: 0.13))
                 .frame(width: 86, height: 48, alignment: .trailing)
+                .animation(.easeInOut(duration: 0.16), value: canSave)
             }
             .padding(.horizontal, 18)
             .padding(.top, 0)
