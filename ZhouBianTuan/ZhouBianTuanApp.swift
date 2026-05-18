@@ -879,14 +879,6 @@ enum HomeFeed: String, CaseIterable, Identifiable {
     case splitGoods = "拼谷"
 
     var id: String { rawValue }
-
-    var subtitle: String {
-        switch self {
-        case .following: "已关注团长"
-        case .followGroup: "自印团"
-        case .splitGoods: "角色余量"
-        }
-    }
 }
 
 struct HomeHeader: View {
@@ -907,13 +899,10 @@ struct HomeHeader: View {
                         Button {
                             feed = item
                         } label: {
-                            VStack(spacing: 4) {
+                            VStack(spacing: 7) {
                                 Text(item.rawValue)
                                     .font(.system(size: 22, weight: feed == item ? .bold : .semibold))
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
-                                Text(item.subtitle)
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(feed == item ? Theme.softPink : Theme.muted)
                                 Capsule()
                                     .fill(feed == item ? Theme.hotPink : Color.clear)
                                     .frame(width: 40, height: 4)
