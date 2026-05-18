@@ -66,6 +66,25 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
 }
 
+enum UserRelationKind: String, Hashable {
+    case following
+    case followers
+
+    var title: String {
+        switch self {
+        case .following: "关注"
+        case .followers: "粉丝"
+        }
+    }
+
+    var emptyText: String {
+        switch self {
+        case .following: "还没有关注卖家"
+        case .followers: "还没有粉丝"
+        }
+    }
+}
+
 enum Route: Hashable {
     case search
     case postDetail(String)
@@ -73,6 +92,7 @@ enum Route: Hashable {
     case tag(String)
     case chat(String)
     case userProfile(String)
+    case userRelations(String, UserRelationKind)
     case editProfile
     case favorites
     case reminders
@@ -148,6 +168,8 @@ extension View {
                 ChatView(threadID: id)
             case .userProfile(let id):
                 UserProfileView(userID: id)
+            case .userRelations(let id, let kind):
+                UserRelationListView(userID: id, kind: kind)
             case .editProfile:
                 EditProfileView()
             case .favorites:
@@ -445,6 +467,7 @@ final class MockAppStore: ObservableObject {
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
+    @Published var followingIDsByUserID: [String: Set<String>]
     @Published var browsingHistoryIDs: [String]
     @Published var searchHistory: [String] {
         didSet {
@@ -516,7 +539,15 @@ final class MockAppStore: ObservableObject {
         ]
         likedPostIDs = ["p-card", "p-plush"]
         favoritePostIDs = ["p-card", "p-album"]
-        followedUserIDs = ["u-echo", "u-black", "u-moon"]
+        let initialFollowedUserIDs: Set<String> = ["u-echo", "u-black"]
+        followedUserIDs = initialFollowedUserIDs
+        followingIDsByUserID = [
+            "u-me": initialFollowedUserIDs,
+            "u-berry": ["u-me"],
+            "u-echo": ["u-moon"],
+            "u-black": ["u-echo"],
+            "u-moon": ["u-black"]
+        ]
         browsingHistoryIDs = ["p-my-pinggu", "p-badge", "p-card", "p-jewelry", "p-concert", "p-magazine"]
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? Self.defaultSearchHistory
     }
@@ -540,6 +571,35 @@ final class MockAppStore: ObservableObject {
     func collection(id: String?) -> GroupCollection? {
         guard let id else { return nil }
         return collections.first(where: { $0.id == id })
+    }
+
+    func registrationID(for userID: String) -> String {
+        let registrationNumber = (users.firstIndex { $0.id == userID } ?? 0) + 1
+        return String(format: "%06d", registrationNumber)
+    }
+
+    func followingUsers(for userID: String) -> [User] {
+        let ids = followingIDs(for: userID)
+        return users
+            .filter { ids.contains($0.id) }
+            .sorted { registrationID(for: $0.id) < registrationID(for: $1.id) }
+    }
+
+    func followerUsers(for userID: String) -> [User] {
+        users
+            .filter { followingIDs(for: $0.id).contains(userID) }
+            .sorted { registrationID(for: $0.id) < registrationID(for: $1.id) }
+    }
+
+    func relationUsers(for userID: String, kind: UserRelationKind) -> [User] {
+        switch kind {
+        case .following: followingUsers(for: userID)
+        case .followers: followerUsers(for: userID)
+        }
+    }
+
+    private func followingIDs(for userID: String) -> Set<String> {
+        userID == currentUserID ? followedUserIDs : (followingIDsByUserID[userID] ?? [])
     }
 
     func collections(ownerID: String) -> [GroupCollection] {
@@ -630,11 +690,27 @@ final class MockAppStore: ObservableObject {
 
     func toggleFollow(userID: String) {
         guard userID != currentUserID else { return }
+        let targetIndex = users.firstIndex(where: { $0.id == userID })
+        let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
         if followedUserIDs.contains(userID) {
             followedUserIDs.remove(userID)
+            followingIDsByUserID[currentUserID] = followedUserIDs
+            if let currentIndex {
+                users[currentIndex].followingCount = followedUserIDs.count
+            }
+            if let targetIndex {
+                users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
+            }
             showToast("已取消关注")
         } else {
             followedUserIDs.insert(userID)
+            followingIDsByUserID[currentUserID] = followedUserIDs
+            if let currentIndex {
+                users[currentIndex].followingCount = followedUserIDs.count
+            }
+            if let targetIndex {
+                users[targetIndex].followersCount += 1
+            }
             showToast("已关注团长")
         }
     }
@@ -2492,6 +2568,7 @@ struct CreatePostView: View {
     @State private var newRoleName = ""
     @State private var newRoleQuantity = "1"
     @State private var roleDrafts: [UnsoldRole] = []
+    @State private var isCollectionPickerPresented = false
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
     let images = ["merch_photocards", "merch_badges", "merch_standees", "merch_plush", "merch_album", "merch_magazine", "merch_jewelry", "merch_concert"]
@@ -2565,16 +2642,12 @@ struct CreatePostView: View {
                         Text("拼团合集")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(Theme.subtext)
-                        Picker("拼团合集", selection: $selectedCollectionID) {
-                            Text("不加入合集").tag(noCollectionID)
-                            ForEach(store.collections(ownerID: store.currentUserID)) { collection in
-                                Text(collection.name).tag(collection.id)
-                            }
+                        Button {
+                            isCollectionPickerPresented = true
+                        } label: {
+                            CollectionPickerSummary(collection: selectedCollection)
                         }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                        .buttonStyle(.plain)
 
                         if let selectedCollection {
                             CollectionSharedInfoCard(collection: selectedCollection)
@@ -2736,6 +2809,17 @@ struct CreatePostView: View {
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationBarHidden(true)
+        .sheet(isPresented: $isCollectionPickerPresented) {
+            CollectionPickerSheet(
+                collections: store.collections(ownerID: store.currentUserID),
+                selectedCollectionID: $selectedCollectionID,
+                noCollectionID: noCollectionID
+            )
+            .presentationDetents([.height(390), .medium])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(Theme.background)
+            .preferredColorScheme(.dark)
+        }
     }
 
     func reset() {
@@ -2765,6 +2849,156 @@ struct CreatePostView: View {
         roleDrafts.append(UnsoldRole(name: trimmed, quantity: quantity))
         newRoleName = ""
         newRoleQuantity = "1"
+    }
+}
+
+struct CollectionPickerSummary: View {
+    let collection: GroupCollection?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(collection == nil ? Theme.panelRaised : Theme.hotPink.opacity(0.18))
+                    .frame(width: 46, height: 46)
+                Image(systemName: collection == nil ? "rectangle.stack.badge.minus" : "rectangle.stack.fill")
+                    .font(.system(size: 20, weight: .black))
+                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.hotPink)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(collection?.name ?? "不加入合集")
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.text)
+                    .lineLimit(1)
+                Text(collection == nil ? "本帖单独填写联系方式与截团时间" : "自动继承合集联系方式、截团时间和默认说明")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 16, weight: .black))
+                .foregroundStyle(Theme.hotPink)
+        }
+        .padding(14)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(collection == nil ? Theme.hairline : Theme.hotPink.opacity(0.48), lineWidth: 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct CollectionPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let collections: [GroupCollection]
+    @Binding var selectedCollectionID: String
+    let noCollectionID: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("选择拼团合集")
+                        .font(.system(size: 24, weight: .black))
+                        .foregroundStyle(Theme.text)
+                    Text("选择后会自动继承合集公共信息")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                }
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 38, height: 38)
+                        .background(Theme.panelRaised, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 10) {
+                    CollectionPickerOption(
+                        title: "不加入合集",
+                        subtitle: "本帖独立填写联系方式、截团时间和说明",
+                        icon: "rectangle.stack.badge.minus",
+                        isSelected: selectedCollectionID == noCollectionID
+                    ) {
+                        selectedCollectionID = noCollectionID
+                        dismiss()
+                    }
+
+                    ForEach(collections) { collection in
+                        CollectionPickerOption(
+                            title: collection.name,
+                            subtitle: "\(collection.deadline.fullDisplay) 截团 · \(collection.postIDs.count) 篇内容",
+                            icon: "rectangle.stack.fill",
+                            isSelected: selectedCollectionID == collection.id
+                        ) {
+                            selectedCollectionID = collection.id
+                            dismiss()
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 24)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+    }
+}
+
+struct CollectionPickerOption: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundStyle(isSelected ? .white : Theme.hotPink)
+                    .frame(width: 42, height: 42)
+                    .background(isSelected ? Theme.hotPink : Theme.hotPink.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+            }
+            .padding(14)
+            .background(isSelected ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isSelected ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -3212,7 +3446,7 @@ struct ProfileView: View {
                                             .foregroundStyle(Theme.subtext)
                                     }
                                     HStack(spacing: 8) {
-                                        Text("小红书号：\(user.redBookID)")
+                                        Text("ID：\(store.registrationID(for: user.id))")
                                         Image(systemName: "qrcode.viewfinder")
                                     }
                                     .font(.system(size: 16, weight: .semibold))
@@ -3224,8 +3458,14 @@ struct ProfileView: View {
                             }
 
                             HStack(spacing: 26) {
-                                StatInline(value: "\(user.followingCount)", title: "关注")
-                                StatInline(value: "\(user.followersCount)", title: "粉丝")
+                                NavigationLink(value: Route.userRelations(user.id, .following)) {
+                                    StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
+                                }
+                                .buttonStyle(.plain)
+                                NavigationLink(value: Route.userRelations(user.id, .followers)) {
+                                    StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
+                                }
+                                .buttonStyle(.plain)
                                 StatInline(value: "\(store.likedPostIDs.count + store.favoritePostIDs.count)", title: "获赞与收藏")
                             }
 
@@ -3422,6 +3662,129 @@ struct StatInline: View {
             Text(title)
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(Theme.text.opacity(0.86))
+        }
+    }
+}
+
+struct UserRelationListView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+    let kind: UserRelationKind
+
+    var relatedUsers: [User] {
+        store.relationUsers(for: userID, kind: kind)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(kind.title)
+                        .font(.system(size: 25, weight: .black))
+                        .foregroundStyle(Theme.text)
+                    Text("\(relatedUsers.count) 位用户")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+            }
+
+            if relatedUsers.isEmpty {
+                VStack(spacing: 16) {
+                    Spacer()
+                    Image(systemName: kind == .following ? "person.crop.circle.badge.plus" : "person.2")
+                        .font(.system(size: 52, weight: .light))
+                        .foregroundStyle(Theme.muted)
+                    Text(kind.emptyText)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 10) {
+                        ForEach(relatedUsers) { user in
+                            UserRelationRow(user: user)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 28)
+                }
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct UserRelationRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let user: User
+
+    var body: some View {
+        HStack(spacing: 12) {
+            NavigationLink(value: Route.userProfile(user.id)) {
+                HStack(spacing: 12) {
+                    AvatarView(user: user, size: 52)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(user.nickname)
+                            .font(.system(size: 17, weight: .black))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Text("ID：\(store.registrationID(for: user.id))")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.hotPink.opacity(0.88))
+                        Text(user.bio)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.subtext)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 8)
+
+            if user.id != store.currentUserID {
+                Button {
+                    store.toggleFollow(userID: user.id)
+                } label: {
+                    Text(store.followedUserIDs.contains(user.id) ? "已关注" : "关注")
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundStyle(store.followedUserIDs.contains(user.id) ? Theme.subtext : .white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
         }
     }
 }
@@ -4465,7 +4828,7 @@ struct EditProfileView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
                             .padding(.bottom, 14)
-                        ProfileEditField(title: "小红书号", placeholder: "填写小红书号", text: $redBookID, textColor: .primary)
+                        ProfileReadOnlyInfoRow(title: "ID", value: store.registrationID(for: currentUser.id))
                         PhotosPicker(selection: $backgroundPickerItem, matching: .images) {
                             HStack(spacing: 18) {
                                 Text("背景图")
@@ -4659,6 +5022,35 @@ struct ProfileEditField: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Color.black.opacity(0.18))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 20)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.black.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.leading, 146)
+        }
+    }
+}
+
+struct ProfileReadOnlyInfoRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Text(title)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(0.45))
+                .frame(width: 112, alignment: .leading)
+            Text(value)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(0.82))
+            Spacer()
+            Image(systemName: "lock.fill")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Color.black.opacity(0.22))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 20)
@@ -4934,7 +5326,10 @@ struct UserProfileView: View {
                         }
                     }
                     HStack {
-                        StatItem(value: "\(user.followersCount)", title: "粉丝")
+                        NavigationLink(value: Route.userRelations(user.id, .followers)) {
+                            StatItem(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
+                        }
+                        .buttonStyle(.plain)
                         StatItem(value: "\(user.postCount)", title: "团购")
                         Spacer()
                         Button {
