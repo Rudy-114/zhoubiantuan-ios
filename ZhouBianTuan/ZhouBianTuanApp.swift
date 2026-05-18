@@ -1022,95 +1022,135 @@ struct PostCard: View {
     @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
 
-    var author: User { store.user(id: post.authorID) }
-
     var body: some View {
-        NavigationLink(value: Route.postDetail(post.id)) {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .topTrailing) {
-                    BundleImage(name: post.imageNames.first ?? "merch_photocards")
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity)
-                        .aspectRatio(post.imageAspect, contentMode: .fit)
-                        .clipped()
-                    HStack {
-                        Label(post.groupType.rawValue, systemImage: post.groupType.icon)
-                            .font(.system(size: 11, weight: .black))
+        let livePost = store.post(id: post.id) ?? post
+        let author = store.user(id: livePost.authorID)
+        ZStack(alignment: .bottomTrailing) {
+            NavigationLink(value: Route.postDetail(livePost.id)) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ZStack(alignment: .topTrailing) {
+                        BundleImage(name: livePost.imageNames.first ?? "merch_photocards")
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(livePost.imageAspect, contentMode: .fit)
+                            .clipped()
+                        HStack {
+                            Label(livePost.groupType.rawValue, systemImage: livePost.groupType.icon)
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(livePost.groupType.accent.opacity(0.92), in: Capsule())
+                            Spacer()
+                        }
+                        .padding(8)
+                        Text(livePost.deadline.shortDeadlineText)
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(post.groupType.accent.opacity(0.92), in: Capsule())
-                        Spacer()
+                            .background(.black.opacity(0.48), in: Capsule())
+                            .padding(8)
                     }
-                    .padding(8)
-                    Text(post.deadline.shortDeadlineText)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(.black.opacity(0.48), in: Capsule())
-                        .padding(8)
-                }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(post.title)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(livePost.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                    if post.groupType == .splitGoods {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(post.pingguAveragePrice.isEmpty ? post.price : post.pingguAveragePrice)
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundStyle(post.groupType.accent)
-                            if !post.pingguNote.isEmpty {
-                                Text(post.pingguNote)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(Theme.subtext)
-                                    .lineLimit(2)
+                        if livePost.groupType == .splitGoods {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(livePost.pingguAveragePrice.isEmpty ? livePost.price : livePost.pingguAveragePrice)
+                                    .font(.system(size: 14, weight: .black))
+                                    .foregroundStyle(livePost.groupType.accent)
+                                if !livePost.pingguNote.isEmpty {
+                                    Text(livePost.pingguNote)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Theme.subtext)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .padding(9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(livePost.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        }
+
+                        HStack(spacing: 6) {
+                            AvatarView(user: author, size: 24)
+                            Text(author.nickname)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.subtext)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Color.clear
+                                .frame(width: 72, height: 32)
+                        }
+
+                        HStack(spacing: 5) {
+                            ForEach(livePost.categoryTags.prefix(2), id: \.self) { tag in
+                                Text(tag)
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Theme.softPink)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.hotPink.opacity(0.13), in: Capsule())
                             }
                         }
-                        .padding(9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(post.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     }
-
-                    HStack(spacing: 6) {
-                        AvatarView(user: author, size: 24)
-                        Text(author.nickname)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.subtext)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Image(systemName: store.favoritePostIDs.contains(post.id) ? "heart.fill" : "heart")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(store.favoritePostIDs.contains(post.id) ? Theme.hotPink : Theme.muted)
-                        Text(post.favoriteCount.formattedCount)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.subtext)
-                    }
-
-                    HStack(spacing: 5) {
-                        ForEach(post.categoryTags.prefix(2), id: \.self) { tag in
-                            Text(tag)
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Theme.softPink)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 4)
-                                .background(Theme.hotPink.opacity(0.13), in: Capsule())
-                        }
-                    }
+                    .padding(10)
                 }
-                .padding(10)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                }
             }
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Theme.hairline, lineWidth: 0.5)
+            .buttonStyle(.plain)
+
+            PostLikeCountButton(postID: livePost.id)
+                .padding(.trailing, 8)
+                .padding(.bottom, 42)
+        }
+    }
+}
+
+struct PostLikeCountButton: View {
+    @EnvironmentObject private var store: MockAppStore
+    let postID: String
+
+    private var post: GroupBuyPost? {
+        store.post(id: postID)
+    }
+
+    private var isLiked: Bool {
+        store.likedPostIDs.contains(postID)
+    }
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
+                store.toggleLike(postID: postID)
             }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isLiked ? "heart.fill" : "heart")
+                    .font(.system(size: 17, weight: .semibold))
+                    .symbolEffect(.bounce, value: isLiked)
+                Text((post?.likedCount ?? 0).formattedCount)
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundStyle(isLiked ? Theme.hotPink : Theme.subtext)
+            .frame(minWidth: 68, minHeight: 32, alignment: .trailing)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isLiked ? "取消点赞" : "点赞")
+        .accessibilityValue((post?.likedCount ?? 0).formattedCount)
     }
 }
 
@@ -2267,6 +2307,9 @@ struct DetailActionBar: View {
     @Binding var commentDraft: String
 
     var body: some View {
+        let livePost = store.post(id: post.id) ?? post
+        let isLiked = store.likedPostIDs.contains(post.id)
+        let isFavorite = store.favoritePostIDs.contains(post.id)
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "pencil")
@@ -2283,10 +2326,12 @@ struct DetailActionBar: View {
             .padding(.vertical, 11)
             .background(Theme.panelRaised, in: Capsule())
 
-            ActionIconButton(icon: store.likedPostIDs.contains(post.id) ? "heart.fill" : "heart", title: post.likedCount.formattedCount, tint: store.likedPostIDs.contains(post.id) ? Theme.hotPink : Theme.text) {
-                store.toggleLike(postID: post.id)
+            ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
+                    store.toggleLike(postID: post.id)
+                }
             }
-            ActionIconButton(icon: store.favoritePostIDs.contains(post.id) ? "star.fill" : "star", title: post.favoriteCount.formattedCount, tint: store.favoritePostIDs.contains(post.id) ? Theme.hotPink : Theme.text) {
+            ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
                 store.toggleFavorite(postID: post.id)
             }
             ActionIconButton(icon: "bubble.left", title: "评论", tint: Theme.text) {
