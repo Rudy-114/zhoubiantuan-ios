@@ -4671,91 +4671,50 @@ struct TagContentView: View {
         }
     }
 
-    var heroImageName: String {
-        posts.first?.imageNames.first ?? "merch_photocards"
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    ZStack(alignment: .top) {
-                        BundleImage(name: heroImageName)
-                            .scaledToFill()
-                            .frame(height: 345)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                            .blur(radius: 10)
-                            .overlay(.black.opacity(0.62))
-                            .overlay(
-                                LinearGradient(colors: [.clear, Theme.background], startPoint: .top, endPoint: .bottom)
-                            )
-
-                        VStack(alignment: .leading, spacing: 22) {
-                            HStack {
-                                Button {
-                                    dismiss()
-                                } label: {
-                                    Image(systemName: "chevron.left")
-                                        .font(.system(size: 27, weight: .medium))
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
-                                Spacer()
-                                NavigationLink(value: Route.search) {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 27, weight: .medium))
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
-                                Button {
-                                    store.showToast("已打开标签分享占位")
-                                } label: {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 27, weight: .medium))
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
-                            }
-
-                            Spacer(minLength: 42)
-
-                            HStack(alignment: .bottom) {
-                                VStack(alignment: .leading, spacing: 14) {
-                                    Text("# \(tag)")
-                                        .font(.system(size: 30, weight: .black))
-                                        .foregroundStyle(Theme.text)
-                                    Text("682.1亿浏览  |  2.4亿讨论")
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(Theme.text.opacity(0.86))
-                                    Text("红薯们最近买了什么超赞的好东西？快来拍一波种草分享视频！")
-                                        .font(.system(size: 17, weight: .semibold))
-                                        .lineSpacing(4)
-                                        .foregroundStyle(Theme.subtext)
-                                }
-                                Spacer()
-                                Button {
-                                    store.showToast("已关注话题")
-                                } label: {
-                                    Text("关注")
-                                        .font(.system(size: 18, weight: .black))
-                                        .foregroundStyle(Theme.hotPink)
-                                        .padding(.horizontal, 28)
-                                        .padding(.vertical, 12)
-                                        .overlay {
-                                            Capsule().stroke(Theme.hotPink, lineWidth: 1.4)
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                            }
+                    HStack(spacing: 8) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 27, weight: .medium))
+                                .frame(width: 44, height: 44)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .frame(height: 345)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.text)
+
+                        Text("# \(tag)")
+                            .font(.system(size: 23, weight: .black))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        NavigationLink(value: Route.search) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 27, weight: .medium))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.text)
+
+                        Button {
+                            store.showToast("已打开标签分享占位")
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 27, weight: .medium))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.text)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                    .background(Theme.background)
 
                     HStack(spacing: 38) {
                         ForEach(["最热", "最新"], id: \.self) { item in
