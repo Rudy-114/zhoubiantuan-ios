@@ -47,7 +47,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .home: "首页"
-        case .market: "市集"
+        case .market: "关注"
         case .create: "发布"
         case .messages: "消息"
         case .profile: "我"
@@ -57,7 +57,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: "house.fill"
-        case .market: "bag.fill"
+        case .market: "fanblades"
         case .create: "plus.app.fill"
         case .messages: "bubble.left.and.bubble.right.fill"
         case .profile: "person.fill"
@@ -834,14 +834,10 @@ final class MockAppStore: ObservableObject {
 
 struct HomeView: View {
     @EnvironmentObject private var store: MockAppStore
-    @State private var feed: HomeFeed = .following
+    @State private var feed: HomeFeed = .followGroup
 
     var posts: [GroupBuyPost] {
         switch feed {
-        case .following:
-            store.activePosts
-                .filter { store.followedUserIDs.contains($0.authorID) }
-                .sorted { $0.createdAt > $1.createdAt }
         case .followGroup:
             store.activePosts
                 .filter { $0.groupType == .followGroup }
@@ -857,14 +853,10 @@ struct HomeView: View {
         VStack(spacing: 0) {
             HomeHeader(feed: $feed)
             ScrollView(showsIndicators: false) {
-                if feed == .following {
-                    FollowingFeedView(posts: posts)
-                } else {
-                    WaterfallGrid(posts: posts)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
-                        .padding(.bottom, 28)
-                }
+                WaterfallGrid(posts: posts)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 28)
             }
         }
         .background(Theme.background.ignoresSafeArea())
@@ -874,7 +866,6 @@ struct HomeView: View {
 }
 
 enum HomeFeed: String, CaseIterable, Identifiable {
-    case following = "关注"
     case followGroup = "跟团"
     case splitGoods = "拼谷"
 
@@ -1091,52 +1082,38 @@ struct PostCard: View {
 
 struct MarketView: View {
     @EnvironmentObject private var store: MockAppStore
-    @State private var selectedTag = "全部"
-    @State private var sort = "即将截团"
 
-    let tags = ["全部", "小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "现货"]
-    let sorts = ["即将截团", "热度", "最新"]
-
-    var filteredPosts: [GroupBuyPost] {
-        var result = store.activePosts
-        if selectedTag != "全部" {
-            result = result.filter { $0.categoryTags.contains(selectedTag) || $0.fandomTags.contains(selectedTag) }
-        }
-        switch sort {
-        case "热度":
-            return result.sorted { $0.likedCount > $1.likedCount }
-        case "最新":
-            return result.sorted { $0.createdAt > $1.createdAt }
-        default:
-            return result.sorted { $0.deadline < $1.deadline }
-        }
+    var posts: [GroupBuyPost] {
+        store.activePosts
+            .filter { store.followedUserIDs.contains($0.authorID) }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 18) {
-                HeaderTitle(title: "市集", subtitle: "只看正在进行的团购，按截团和品类快速筛")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(tags, id: \.self) { tag in
-                            SelectChip(title: tag, isSelected: selectedTag == tag) {
-                                selectedTag = tag
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
+        VStack(spacing: 0) {
+            HStack {
+                Text("关注")
+                    .font(.system(size: 28, weight: .black))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                NavigationLink(value: Route.search) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 44, height: 44)
                 }
-                HStack(spacing: 8) {
-                    ForEach(sorts, id: \.self) { item in
-                        SelectChip(title: item, isSelected: sort == item) {
-                            sort = item
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                WaterfallGrid(posts: filteredPosts)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 28)
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+            }
+
+            ScrollView(showsIndicators: false) {
+                FollowingFeedView(posts: posts)
+                    .padding(.top, 2)
             }
         }
         .background(Theme.background.ignoresSafeArea())
