@@ -427,6 +427,7 @@ struct DirectMessage: Identifiable, Hashable {
     var body: String
     var createdAt: Date
     var sharedPostID: String? = nil
+    var sharedProfileUserID: String? = nil
 }
 
 struct Report: Identifiable, Hashable {
@@ -865,6 +866,22 @@ final class MockAppStore: ObservableObject {
         showToast("已分享给站内好友")
     }
 
+    func shareProfileToThread(userID: String, threadID: String) {
+        guard let user = users.first(where: { $0.id == userID }),
+              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        threads[index].messages.append(
+            DirectMessage(
+                id: "m-\(UUID().uuidString)",
+                senderID: currentUserID,
+                body: "分享了主页：\(user.nickname)",
+                createdAt: Date(),
+                sharedProfileUserID: userID
+            )
+        )
+        threads[index].updatedAt = Date()
+        showToast("已分享给站内好友")
+    }
+
     func sendMessage(threadID: String, body: String) {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -1171,7 +1188,7 @@ struct PostCard: View {
                         PostImageView(post: livePost)
                             .scaledToFill()
                             .frame(maxWidth: .infinity)
-                            .aspectRatio(livePost.imageAspect, contentMode: .fit)
+                            .aspectRatio(1, contentMode: .fit)
                             .clipped()
                         HStack {
                             Label(livePost.groupType.rawValue, systemImage: livePost.groupType.icon)
@@ -1853,26 +1870,28 @@ struct PostDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var commentDraft = ""
     @State private var isShareSheetPresented = false
+    @State private var selectedImageIndex = 0
     let postID: String
 
     var body: some View {
         if let post = store.post(id: postID) {
             let author = store.user(id: post.authorID)
             let imageCount = max(1, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count)
+            let safeImageIndex = min(selectedImageIndex, imageCount - 1)
+            let detailImageHeight = imageHeight(for: post, index: safeImageIndex)
             VStack(spacing: 0) {
                 DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
-                        TabView {
+                        TabView(selection: $selectedImageIndex) {
                             ForEach(0..<imageCount, id: \.self) { index in
                                 PostImageView(post: post, index: index)
-                                    .scaledToFill()
+                                    .scaledToFit()
                                     .frame(maxWidth: .infinity)
-                                    .frame(height: 480)
-                                    .clipped()
+                                    .tag(index)
                             }
                         }
-                        .frame(height: 480)
+                        .frame(height: detailImageHeight)
                         .tabViewStyle(.page(indexDisplayMode: .automatic))
 
                         VStack(alignment: .leading, spacing: 18) {
@@ -1917,10 +1936,29 @@ struct PostDetailView: View {
             .navigationBarBackButtonHidden(true)
             .navigationBarHidden(true)
             .toolbar(.hidden, for: .tabBar)
+            .onChange(of: imageCount) {
+                selectedImageIndex = min(selectedImageIndex, max(0, imageCount - 1))
+            }
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
         }
+    }
+
+    private func imageHeight(for post: GroupBuyPost, index: Int) -> CGFloat {
+        let screenWidth = UIScreen.main.bounds.width
+        let aspect = imageAspect(for: post, index: index)
+        return screenWidth / max(0.28, aspect)
+    }
+
+    private func imageAspect(for post: GroupBuyPost, index: Int) -> CGFloat {
+        if post.uploadedImageData.indices.contains(index),
+           let image = UIImage(data: post.uploadedImageData[index]),
+           image.size.width > 0,
+           image.size.height > 0 {
+            return image.size.width / image.size.height
+        }
+        return CGFloat(max(0.28, post.imageAspect))
     }
 }
 
@@ -2121,6 +2159,141 @@ struct ShareSheetView: View {
                     }
                     ShareUtilityButton(title: "保存图片", icon: "square.and.arrow.down") {
                         store.showToast("已保存分享图占位")
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+    }
+}
+
+struct ProfileShareSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    let user: User
+
+    var stationThreads: [MessageThread] {
+        Array(store.threads.prefix(3))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Theme.hairline)
+                .frame(width: 44, height: 5)
+                .padding(.top, 10)
+
+            HStack {
+                Spacer()
+                Text("分享至")
+                    .font(.system(size: 24, weight: .black))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 22) {
+                    ForEach(stationThreads) { thread in
+                        let friend = store.user(id: thread.publisherUserID)
+                        Button {
+                            store.shareProfileToThread(userID: user.id, threadID: thread.id)
+                            dismiss()
+                        } label: {
+                            VStack(spacing: 8) {
+                                AvatarView(user: friend, size: 66)
+                                Text(friend.nickname)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Theme.subtext)
+                                    .lineLimit(1)
+                                    .frame(width: 82)
+                                Text("20分钟内在线")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Theme.muted)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button {
+                        store.showToast("已打开邀请好友占位")
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 32, weight: .semibold))
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 66, height: 66)
+                                .background(Theme.panelRaised, in: Circle())
+                            Text("邀请好友")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                                .frame(width: 82)
+                            Text(" ")
+                                .font(.system(size: 12))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 10)
+                .padding(.bottom, 18)
+            }
+
+            Divider().overlay(Theme.hairline)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 26) {
+                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
+                        if let first = stationThreads.first {
+                            store.shareProfileToThread(userID: user.id, threadID: first.id)
+                        }
+                        dismiss()
+                    }
+                    ShareOptionButton(title: "微信好友", icon: "bubble.left.and.bubble.right.fill", color: Color(red: 0.05, green: 0.76, blue: 0.32)) {
+                        store.showToast("已唤起微信分享占位")
+                    }
+                    ShareOptionButton(title: "朋友圈", icon: "camera.aperture", color: Color(red: 0.35, green: 0.84, blue: 0.05)) {
+                        store.showToast("已唤起朋友圈分享占位")
+                    }
+                    ShareOptionButton(title: "QQ 好友", icon: "person.crop.circle.fill", color: Color(red: 0.09, green: 0.68, blue: 0.9)) {
+                        store.showToast("已唤起 QQ 分享占位")
+                    }
+                    ShareOptionButton(title: "QQ 空间", icon: "star.fill", color: Color(red: 1, green: 0.79, blue: 0.03)) {
+                        store.showToast("已唤起 QQ 空间占位")
+                    }
+                    ShareOptionButton(title: "微博", icon: "eye.fill", color: Color(red: 0.93, green: 0.06, blue: 0.04)) {
+                        store.showToast("已唤起微博分享占位")
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+            }
+
+            Divider().overlay(Theme.hairline)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 26) {
+                    ShareUtilityButton(title: "复制链接", icon: "link") {
+                        store.copyToPasteboard("zhoubiantuan://profile/\(user.id)", label: "主页链接")
+                    }
+                    ShareUtilityButton(title: "生成分享图", icon: "photo") {
+                        store.showToast("已生成主页分享图占位")
+                    }
+                    ShareUtilityButton(title: "保存图片", icon: "square.and.arrow.down") {
+                        store.showToast("已保存主页分享图占位")
                     }
                 }
                 .padding(.horizontal, 24)
@@ -3637,6 +3810,9 @@ struct ChatView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     @State private var draft = ""
+    @State private var isAttachmentPanelOpen = false
+    @State private var isMessageFieldFocused = false
+    @State private var prefersEmojiKeyboard = false
     let threadID: String
 
     var body: some View {
@@ -3727,74 +3903,60 @@ struct ChatView: View {
                     }
                 }
 
-                ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
                     HStack(spacing: 12) {
-                        ForEach(["棒", "笑哭了", "心心眼", "呢", "抽泣"], id: \.self) { label in
-                            Button {
-                                draft = label
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: label == "棒" ? "hand.thumbsup.fill" : "face.smiling")
-                                        .font(.system(size: 18, weight: .bold))
-                                    Text(label)
-                                        .font(.system(size: 18, weight: .bold))
-                                }
+                        EmojiMessageTextField(
+                            text: $draft,
+                            isFocused: $isMessageFieldFocused,
+                            prefersEmojiKeyboard: $prefersEmojiKeyboard,
+                            placeholder: "发消息...",
+                            onSubmit: send
+                        )
+                        .frame(height: 52)
+                        .padding(.horizontal, 16)
+                        .background(Theme.panelRaised, in: Capsule())
+
+                        Button {
+                            isAttachmentPanelOpen = false
+                            prefersEmojiKeyboard = true
+                            isMessageFieldFocused = true
+                        } label: {
+                            Image(systemName: "face.smiling")
+                                .font(.system(size: 29, weight: .medium))
                                 .foregroundStyle(Theme.text)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
+                                .frame(width: 42, height: 42)
                         }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            if draft.trimmed.isEmpty {
+                                prefersEmojiKeyboard = false
+                                isMessageFieldFocused = false
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+                                    isAttachmentPanelOpen.toggle()
+                                }
+                            } else {
+                                send()
+                            }
+                        } label: {
+                            Image(systemName: draft.trimmed.isEmpty ? "plus.circle" : "paperplane.fill")
+                                .font(.system(size: 31, weight: .medium))
+                                .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.hotPink)
+                                .frame(width: 42, height: 42)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                }
+                    .padding(.top, 10)
+                    .padding(.bottom, 14)
 
-                HStack(spacing: 12) {
-                    Button {
-                        store.showToast("语音输入占位")
-                    } label: {
-                        Image(systemName: "waveform.circle")
-                            .font(.system(size: 34, weight: .medium))
-                            .foregroundStyle(Theme.text)
-                    }
-                    .buttonStyle(.plain)
-
-                    TextField("发消息...", text: $draft)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .background(Theme.panelRaised, in: Capsule())
-                        .submitLabel(.send)
-                        .onSubmit(send)
-
-                    Button {
-                        store.showToast("表情面板占位")
-                    } label: {
-                        Image(systemName: "face.smiling")
-                            .font(.system(size: 28, weight: .medium))
-                            .foregroundStyle(Theme.text)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        if draft.trimmed.isEmpty {
-                            store.showToast("更多聊天功能占位")
-                        } else {
-                            send()
+                    if isAttachmentPanelOpen {
+                        ChatAttachmentPanel { option in
+                            store.showToast("已打开\(option)占位")
                         }
-                    } label: {
-                        Image(systemName: draft.trimmed.isEmpty ? "plus.circle" : "paperplane.fill")
-                            .font(.system(size: 30, weight: .medium))
-                            .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.hotPink)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 14)
                 .background(Theme.background)
             }
             .background(Theme.background.ignoresSafeArea())
@@ -3812,6 +3974,128 @@ struct ChatView: View {
     private func send() {
         store.sendMessage(threadID: threadID, body: draft)
         draft = ""
+        isAttachmentPanelOpen = false
+    }
+}
+
+final class EmojiUITextField: UITextField {
+    var prefersEmojiKeyboard = false
+
+    override var textInputMode: UITextInputMode? {
+        if prefersEmojiKeyboard,
+           let emojiMode = UITextInputMode.activeInputModes.first(where: { $0.primaryLanguage == "emoji" }) {
+            return emojiMode
+        }
+        return super.textInputMode
+    }
+}
+
+struct EmojiMessageTextField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    @Binding var prefersEmojiKeyboard: Bool
+    let placeholder: String
+    let onSubmit: () -> Void
+
+    func makeUIView(context: Context) -> EmojiUITextField {
+        let textField = EmojiUITextField()
+        textField.delegate = context.coordinator
+        textField.borderStyle = .none
+        textField.backgroundColor = .clear
+        textField.textColor = UIColor.white
+        textField.tintColor = UIColor(red: 1, green: 0.12, blue: 0.27, alpha: 1)
+        textField.font = UIFont.systemFont(ofSize: 19, weight: .semibold)
+        textField.returnKeyType = .send
+        textField.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor.secondaryLabel]
+        )
+        textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        return textField
+    }
+
+    func updateUIView(_ uiView: EmojiUITextField, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+        uiView.prefersEmojiKeyboard = prefersEmojiKeyboard
+        if isFocused && !uiView.isFirstResponder {
+            uiView.becomeFirstResponder()
+        } else if !isFocused && uiView.isFirstResponder {
+            uiView.resignFirstResponder()
+        }
+        uiView.reloadInputViews()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: EmojiMessageTextField
+
+        init(_ parent: EmojiMessageTextField) {
+            self.parent = parent
+        }
+
+        @objc func textDidChange(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSubmit()
+            return false
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.isFocused = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            parent.isFocused = false
+        }
+    }
+}
+
+struct ChatAttachmentPanel: View {
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 28) {
+            ChatAttachmentOption(title: "拍照", icon: "camera.fill") {
+                onSelect("拍照")
+            }
+            ChatAttachmentOption(title: "相册", icon: "photo.on.rectangle") {
+                onSelect("相册")
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 26)
+        .padding(.bottom, 34)
+        .background(Theme.panel)
+    }
+}
+
+struct ChatAttachmentOption: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 31, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 82, height: 82)
+                    .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Text(title)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.subtext)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -3831,6 +4115,23 @@ struct ChatBubble: View {
                 }
                 NavigationLink(value: Route.postDetail(post.id)) {
                     SharedPostMessageCard(post: post)
+                }
+                .buttonStyle(.plain)
+                if isMine {
+                    AvatarView(user: store.currentUser, size: 36)
+                } else {
+                    Spacer(minLength: 34)
+                }
+            }
+        } else if let sharedProfileUserID = message.sharedProfileUserID,
+                  let user = store.users.first(where: { $0.id == sharedProfileUserID }) {
+            HStack(alignment: .top, spacing: 10) {
+                if isMine { Spacer(minLength: 34) }
+                if !isMine {
+                    AvatarView(user: store.user(id: message.senderID), size: 36)
+                }
+                NavigationLink(value: Route.userProfile(user.id)) {
+                    SharedProfileMessageCard(user: user)
                 }
                 .buttonStyle(.plain)
                 if isMine {
@@ -3906,11 +4207,68 @@ struct SharedPostMessageCard: View {
     }
 }
 
+struct SharedProfileMessageCard: View {
+    @EnvironmentObject private var store: MockAppStore
+    let user: User
+
+    var body: some View {
+        let noteCount = store.posts.filter { $0.authorID == user.id && $0.status == .active }.count
+        VStack(spacing: 0) {
+            UserBackgroundImage(user: user)
+                .scaledToFill()
+                .frame(width: 280, height: 126)
+                .clipped()
+                .overlay(.black.opacity(0.16))
+
+            VStack(spacing: 10) {
+                AvatarView(user: user, size: 72)
+                    .background(Theme.panel, in: Circle())
+                    .padding(.top, -42)
+
+                Text(user.nickname)
+                    .font(.system(size: 24, weight: .black))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+
+                Text("笔记 · \(noteCount)  |  粉丝 · \(store.followerUsers(for: user.id).count)")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.subtext)
+
+                Text(user.bio == "点击这里，填写简介" ? "这个人还没有填写简介" : user.bio)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+
+                Text("去看看")
+                    .font(.system(size: 17, weight: .black))
+                    .foregroundStyle(Theme.hotPink)
+                    .padding(.horizontal, 26)
+                    .padding(.vertical, 9)
+                    .overlay {
+                        Capsule().stroke(Theme.hotPink, lineWidth: 1)
+                    }
+                    .padding(.top, 4)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 18)
+            .frame(width: 280)
+            .background(Theme.panel)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Theme.hairline, lineWidth: 0.5)
+        }
+    }
+}
+
 struct ProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isMenuOpen = false
     @State private var selectedTab = "笔记"
     @State private var isBioEditorPresented = false
+    @State private var isShareSheetPresented = false
     @State private var bioDraft = ""
 
     let profileTabs = ["笔记", "拼团合集", "收藏", "赞过"]
@@ -3958,17 +4316,7 @@ struct ProfileView: View {
                                 .buttonStyle(.plain)
 
                                 Button {
-                                    store.showToast("已打开扫一扫占位")
-                                } label: {
-                                    Image(systemName: "viewfinder")
-                                        .font(.system(size: 27, weight: .semibold))
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
-
-                                Button {
-                                    store.showToast("已打开主页分享占位")
+                                    isShareSheetPresented = true
                                 } label: {
                                     Image(systemName: "square.and.arrow.up")
                                         .font(.system(size: 27, weight: .semibold))
@@ -4107,6 +4455,11 @@ struct ProfileView: View {
             }
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $isShareSheetPresented) {
+            ProfileShareSheetView(user: user)
+                .presentationDetents([.height(440), .large])
+                .presentationDragIndicator(.hidden)
+        }
         .fullScreenCover(isPresented: $isBioEditorPresented) {
             ProfileBioEditorView(bio: $bioDraft) {
                 store.updateCurrentBio(bioDraft)
