@@ -221,6 +221,40 @@ struct BundleImage: View {
     }
 }
 
+struct UploadedImageView: View {
+    let data: Data
+
+    var body: some View {
+        if let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+        } else {
+            Rectangle()
+                .fill(Theme.panelRaised)
+                .overlay {
+                    Image(systemName: "photo")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+        }
+    }
+}
+
+struct PostImageView: View {
+    let post: GroupBuyPost
+    var index = 0
+
+    var body: some View {
+        if post.uploadedImageData.indices.contains(index) {
+            UploadedImageView(data: post.uploadedImageData[index])
+        } else {
+            let fallbackIndex = max(0, index - post.uploadedImageData.count)
+            let imageName = post.imageNames.indices.contains(fallbackIndex) ? post.imageNames[fallbackIndex] : "merch_photocards"
+            BundleImage(name: imageName)
+        }
+    }
+}
+
 struct UserBackgroundImage: View {
     let user: User
 
@@ -260,6 +294,7 @@ struct GroupBuyPost: Identifiable, Hashable {
     let id: String
     var title: String
     var imageNames: [String]
+    var uploadedImageData: [Data] = []
     var authorID: String
     var groupType: GroupBuyType = .followGroup
     var collectionID: String? = nil
@@ -907,7 +942,7 @@ final class MockAppStore: ObservableObject {
         showToast("已删除角色")
     }
 
-    func createPost(title: String, groupType: GroupBuyType, collectionID: String?, imageName: String, tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, risk: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
+    func createPost(title: String, groupType: GroupBuyType, collectionID: String?, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, risk: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
         let inherited = collection(id: collectionID)
         let postID = "p-\(UUID().uuidString)"
         var normalizedTags = tags
@@ -920,7 +955,8 @@ final class MockAppStore: ObservableObject {
         let post = GroupBuyPost(
             id: postID,
             title: title,
-            imageNames: [imageName],
+            imageNames: imageNames.isEmpty ? ["merch_photocards"] : imageNames,
+            uploadedImageData: uploadedImageData,
             authorID: currentUserID,
             groupType: groupType,
             collectionID: collectionID,
@@ -1130,7 +1166,7 @@ struct PostCard: View {
             NavigationLink(value: Route.postDetail(livePost.id)) {
                 VStack(alignment: .leading, spacing: 0) {
                     ZStack(alignment: .topTrailing) {
-                        BundleImage(name: livePost.imageNames.first ?? "merch_photocards")
+                        PostImageView(post: livePost)
                             .scaledToFill()
                             .frame(maxWidth: .infinity)
                             .aspectRatio(livePost.imageAspect, contentMode: .fit)
@@ -1820,13 +1856,14 @@ struct PostDetailView: View {
     var body: some View {
         if let post = store.post(id: postID) {
             let author = store.user(id: post.authorID)
+            let imageCount = max(1, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count)
             VStack(spacing: 0) {
                 DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         TabView {
-                            ForEach(post.imageNames, id: \.self) { imageName in
-                                BundleImage(name: imageName)
+                            ForEach(0..<imageCount, id: \.self) { index in
+                                PostImageView(post: post, index: index)
                                     .scaledToFill()
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 480)
@@ -2165,7 +2202,8 @@ struct GroupBuyInfoCard: View {
                 InfoRow(title: "合集说明", value: collection.defaultNote)
             }
             InfoRow(title: "成团状态", value: post.isFormed ? "已成团" : "待成团")
-            InfoRow(title: "价格 / 定金", value: "\(post.price) · \(post.deposit)")
+            InfoRow(title: "商品价格", value: post.price)
+            InfoRow(title: "定金比例", value: post.deposit)
             InfoRow(title: "截团时间", value: (collection?.deadline ?? post.deadline).fullDisplay)
             InfoRow(title: "成团条件", value: post.condition)
             InfoRow(title: "外部表单", value: post.externalLink.isEmpty ? "无，联系团长登记" : post.externalLink)
@@ -2553,9 +2591,13 @@ struct CreatePostView: View {
     @State private var selectedGroupType: GroupBuyType?
     @State private var selectedCollectionID = "none"
     @State private var selectedImage = "merch_photocards"
+    @State private var selectedImageNames = ["merch_photocards"]
+    @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var uploadedImageData: [Data] = []
     @State private var selectedTags: Set<String> = ["预售"]
-    @State private var price = ""
-    @State private var deposit = ""
+    @State private var priceLowerBound = ""
+    @State private var priceUpperBound = ""
+    @State private var depositPercent = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date()
     @State private var condition = ""
     @State private var wechat = ""
@@ -2589,13 +2631,27 @@ struct CreatePostView: View {
     var canPublish: Bool {
         selectedGroupType != nil &&
         !title.trimmed.isEmpty &&
-        !price.trimmed.isEmpty &&
+        !priceLowerBound.trimmed.isEmpty &&
+        !priceUpperBound.trimmed.isEmpty &&
         !condition.trimmed.isEmpty &&
         (usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) &&
         !description.trimmed.isEmpty &&
         !risk.trimmed.isEmpty &&
         !selectedTags.isEmpty &&
         (!isSplitGoods || (!pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty && !roleDrafts.filter(\.isAvailable).isEmpty))
+    }
+
+    var priceRangeText: String {
+        let lower = priceLowerBound.trimmed
+        let upper = priceUpperBound.trimmed
+        if lower.isEmpty && upper.isEmpty { return "" }
+        if upper.isEmpty || lower == upper { return "¥\(lower)" }
+        return "¥\(lower)-¥\(upper)"
+    }
+
+    var depositText: String {
+        let value = depositPercent.trimmed
+        return value.isEmpty ? "无定金" : "定金 \(value)%"
     }
 
     var body: some View {
@@ -2658,16 +2714,65 @@ struct CreatePostView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     RequiredLabel("产品图片")
-                    BundleImage(name: selectedImage)
+                    CreatePostPreviewImage(imageName: selectedImage, uploadedImageData: uploadedImageData.first)
                         .scaledToFill()
                         .frame(height: 260)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
+                            PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 9, matching: .images) {
+                                VStack(spacing: 7) {
+                                    Image(systemName: "photo.badge.plus")
+                                        .font(.system(size: 22, weight: .black))
+                                    Text("上传")
+                                        .font(.system(size: 12, weight: .black))
+                                }
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 70, height: 70)
+                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(uploadedImageData.isEmpty ? Theme.hairline : Theme.hotPink, lineWidth: uploadedImageData.isEmpty ? 1 : 2)
+                                }
+                            }
+                            .buttonStyle(.plain)
+
+                            ForEach(Array(uploadedImageData.enumerated()), id: \.offset) { index, data in
+                                ZStack(alignment: .topTrailing) {
+                                    Button {
+                                        selectedImage = selectedImageNames.first ?? "merch_photocards"
+                                    } label: {
+                                        UploadedImageView(data: data)
+                                            .scaledToFill()
+                                            .frame(width: 70, height: 70)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            .overlay {
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .stroke(index == 0 ? Theme.hotPink : Theme.hairline, lineWidth: index == 0 ? 2 : 1)
+                                            }
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button {
+                                        uploadedImageData.remove(at: index)
+                                        photoPickerItems = []
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 18, weight: .bold))
+                                            .foregroundStyle(.white, .black.opacity(0.58))
+                                            .padding(3)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
                             ForEach(images, id: \.self) { image in
                                 Button {
                                     selectedImage = image
+                                    if !selectedImageNames.contains(image) {
+                                        selectedImageNames.append(image)
+                                    }
                                 } label: {
                                     BundleImage(name: image)
                                         .scaledToFill()
@@ -2688,10 +2793,17 @@ struct CreatePostView: View {
                 VStack(spacing: 12) {
                     PrototypeTextField(title: "标题", placeholder: "例如：巡演限定小卡套组二开", text: $title, required: true)
                     TagEditor(tags: allTags, selection: $selectedTags)
-                    HStack(spacing: 10) {
-                        PrototypeTextField(title: "价格或定金", placeholder: "¥42/套", text: $price, required: true)
-                        PrototypeTextField(title: "定金", placeholder: "¥15", text: $deposit, required: false)
+                    VStack(alignment: .leading, spacing: 10) {
+                        RequiredLabel("商品价格范围")
+                        HStack(spacing: 10) {
+                            PrototypeTextField(title: "下限", placeholder: "35", text: $priceLowerBound, required: true)
+                                .keyboardType(.decimalPad)
+                            PrototypeTextField(title: "上限", placeholder: "68", text: $priceUpperBound, required: true)
+                                .keyboardType(.decimalPad)
+                        }
                     }
+                    PrototypeTextField(title: "定金比例", placeholder: "例如：30", text: $depositPercent, required: false)
+                        .keyboardType(.numberPad)
                     if selectedCollection == nil {
                         DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
                             .datePickerStyle(.compact)
@@ -2775,7 +2887,7 @@ struct CreatePostView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ValidationRow(isValid: selectedGroupType != nil, text: "已选择拼团类型")
                     ValidationRow(isValid: !title.trimmed.isEmpty, text: "已填写标题")
-                    ValidationRow(isValid: !price.trimmed.isEmpty, text: "已填写价格或定金")
+                    ValidationRow(isValid: !priceLowerBound.trimmed.isEmpty && !priceUpperBound.trimmed.isEmpty, text: "已填写商品价格范围")
                     ValidationRow(isValid: !condition.trimmed.isEmpty, text: "已填写成团条件")
                     ValidationRow(isValid: usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty, text: usesCollection ? "已继承合集联系方式" : "已填写微信或 QQ")
                     ValidationRow(isValid: !description.trimmed.isEmpty && !risk.trimmed.isEmpty, text: "已填写说明和风险提示")
@@ -2790,7 +2902,7 @@ struct CreatePostView: View {
 
                 Button {
                     if let selectedGroupType {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageName: selectedImage, tags: Array(selectedTags), price: price, deposit: deposit.isEmpty ? "全款" : deposit, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
+                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageNames: selectedImageNames.isEmpty ? [selectedImage] : selectedImageNames, uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
                         reset()
                     }
                 } label: {
@@ -2809,6 +2921,11 @@ struct CreatePostView: View {
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationBarHidden(true)
+        .onChange(of: photoPickerItems) { _, items in
+            Task {
+                await loadUploadedImages(from: items)
+            }
+        }
         .sheet(isPresented: $isCollectionPickerPresented) {
             CollectionPickerSheet(
                 collections: store.collections(ownerID: store.currentUserID),
@@ -2822,13 +2939,30 @@ struct CreatePostView: View {
         }
     }
 
+    @MainActor
+    private func loadUploadedImages(from items: [PhotosPickerItem]) async {
+        var imageData: [Data] = []
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               UIImage(data: data) != nil {
+                imageData.append(data)
+            }
+        }
+        uploadedImageData = Array(imageData.prefix(9))
+    }
+
     func reset() {
         title = ""
         selectedGroupType = nil
         selectedCollectionID = noCollectionID
+        selectedImage = "merch_photocards"
+        selectedImageNames = ["merch_photocards"]
+        photoPickerItems = []
+        uploadedImageData = []
         selectedTags = ["预售"]
-        price = ""
-        deposit = ""
+        priceLowerBound = ""
+        priceUpperBound = ""
+        depositPercent = ""
         condition = ""
         wechat = ""
         qq = ""
@@ -2849,6 +2983,19 @@ struct CreatePostView: View {
         roleDrafts.append(UnsoldRole(name: trimmed, quantity: quantity))
         newRoleName = ""
         newRoleQuantity = "1"
+    }
+}
+
+struct CreatePostPreviewImage: View {
+    let imageName: String
+    let uploadedImageData: Data?
+
+    var body: some View {
+        if let uploadedImageData {
+            UploadedImageView(data: uploadedImageData)
+        } else {
+            BundleImage(name: imageName)
+        }
     }
 }
 
@@ -3320,7 +3467,7 @@ struct SharedPostMessageCard: View {
     var body: some View {
         let author = store.user(id: post.authorID)
         VStack(alignment: .leading, spacing: 0) {
-            BundleImage(name: post.imageNames.first ?? "merch_photocards")
+            PostImageView(post: post)
                 .scaledToFill()
                 .frame(width: 250, height: 250)
                 .clipped()
@@ -4130,7 +4277,7 @@ struct CollectionPostManager: View {
             ForEach(manageablePosts) { post in
                 let isIncluded = collection.postIDs.contains(post.id)
                 HStack(spacing: 10) {
-                    BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                    PostImageView(post: post)
                         .scaledToFill()
                         .frame(width: 52, height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -4379,7 +4526,7 @@ struct HistoryCard: View {
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
-                BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                PostImageView(post: post)
                     .scaledToFill()
                     .frame(maxWidth: .infinity)
                     .aspectRatio(post.imageAspect, contentMode: .fit)
@@ -5161,7 +5308,7 @@ struct AdminReportCard: View {
             if let post {
                 NavigationLink(value: Route.postDetail(post.id)) {
                     HStack(spacing: 10) {
-                        BundleImage(name: post.imageNames.first ?? "merch_photocards")
+                        PostImageView(post: post)
                             .scaledToFill()
                             .frame(width: 70, height: 70)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -5695,7 +5842,7 @@ struct ReminderLargeCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            BundleImage(name: post.imageNames.first ?? "merch_photocards")
+            PostImageView(post: post)
                 .scaledToFill()
                 .frame(width: 80, height: 80)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
