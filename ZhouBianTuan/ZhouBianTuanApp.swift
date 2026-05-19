@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
+import Photos
 import PhotosUI
+import UniformTypeIdentifiers
 
 @main
 struct ZhouBianTuanApp: App {
@@ -2590,9 +2592,6 @@ struct CreatePostView: View {
     @State private var title = ""
     @State private var selectedGroupType: GroupBuyType?
     @State private var selectedCollectionID = "none"
-    @State private var selectedImage = "merch_photocards"
-    @State private var selectedImageNames = ["merch_photocards"]
-    @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var uploadedImageData: [Data] = []
     @State private var selectedTags: Set<String> = ["预售"]
     @State private var priceLowerBound = ""
@@ -2611,9 +2610,9 @@ struct CreatePostView: View {
     @State private var newRoleQuantity = "1"
     @State private var roleDrafts: [UnsoldRole] = []
     @State private var isCollectionPickerPresented = false
+    @State private var isPhotoLibraryPresented = false
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
-    let images = ["merch_photocards", "merch_badges", "merch_standees", "merch_plush", "merch_album", "merch_magazine", "merch_jewelry", "merch_concert"]
     let noCollectionID = "none"
 
     var selectedCollection: GroupCollection? {
@@ -2631,6 +2630,7 @@ struct CreatePostView: View {
     var canPublish: Bool {
         selectedGroupType != nil &&
         !title.trimmed.isEmpty &&
+        !uploadedImageData.isEmpty &&
         !priceLowerBound.trimmed.isEmpty &&
         !priceUpperBound.trimmed.isEmpty &&
         !condition.trimmed.isEmpty &&
@@ -2714,79 +2714,12 @@ struct CreatePostView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     RequiredLabel("产品图片")
-                    CreatePostPreviewImage(imageName: selectedImage, uploadedImageData: uploadedImageData.first)
-                        .scaledToFill()
-                        .frame(height: 260)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 9, matching: .images) {
-                                VStack(spacing: 7) {
-                                    Image(systemName: "photo.badge.plus")
-                                        .font(.system(size: 22, weight: .black))
-                                    Text("上传")
-                                        .font(.system(size: 12, weight: .black))
-                                }
-                                .foregroundStyle(Theme.text)
-                                .frame(width: 70, height: 70)
-                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(uploadedImageData.isEmpty ? Theme.hairline : Theme.hotPink, lineWidth: uploadedImageData.isEmpty ? 1 : 2)
-                                }
-                            }
-                            .buttonStyle(.plain)
-
-                            ForEach(Array(uploadedImageData.enumerated()), id: \.offset) { index, data in
-                                ZStack(alignment: .topTrailing) {
-                                    Button {
-                                        selectedImage = selectedImageNames.first ?? "merch_photocards"
-                                    } label: {
-                                        UploadedImageView(data: data)
-                                            .scaledToFill()
-                                            .frame(width: 70, height: 70)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                                            .overlay {
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(index == 0 ? Theme.hotPink : Theme.hairline, lineWidth: index == 0 ? 2 : 1)
-                                            }
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    Button {
-                                        uploadedImageData.remove(at: index)
-                                        photoPickerItems = []
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundStyle(.white, .black.opacity(0.58))
-                                            .padding(3)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-
-                            ForEach(images, id: \.self) { image in
-                                Button {
-                                    selectedImage = image
-                                    if !selectedImageNames.contains(image) {
-                                        selectedImageNames.append(image)
-                                    }
-                                } label: {
-                                    BundleImage(name: image)
-                                        .scaledToFill()
-                                        .frame(width: 70, height: 70)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(selectedImage == image ? Theme.hotPink : Theme.hairline, lineWidth: selectedImage == image ? 2 : 1)
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                    ImageUploadComposer(images: $uploadedImageData) {
+                        isPhotoLibraryPresented = true
                     }
+                    Text(uploadedImageData.isEmpty ? "点击加号从相册导入图片。" : "拖动图片调整顺序，第一张会作为信息流封面。")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.muted)
                 }
                 .padding(.horizontal, 16)
 
@@ -2887,6 +2820,7 @@ struct CreatePostView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ValidationRow(isValid: selectedGroupType != nil, text: "已选择拼团类型")
                     ValidationRow(isValid: !title.trimmed.isEmpty, text: "已填写标题")
+                    ValidationRow(isValid: !uploadedImageData.isEmpty, text: "已上传产品图片")
                     ValidationRow(isValid: !priceLowerBound.trimmed.isEmpty && !priceUpperBound.trimmed.isEmpty, text: "已填写商品价格范围")
                     ValidationRow(isValid: !condition.trimmed.isEmpty, text: "已填写成团条件")
                     ValidationRow(isValid: usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty, text: usesCollection ? "已继承合集联系方式" : "已填写微信或 QQ")
@@ -2902,7 +2836,7 @@ struct CreatePostView: View {
 
                 Button {
                     if let selectedGroupType {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageNames: selectedImageNames.isEmpty ? [selectedImage] : selectedImageNames, uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
+                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
                         reset()
                     }
                 } label: {
@@ -2921,11 +2855,6 @@ struct CreatePostView: View {
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationBarHidden(true)
-        .onChange(of: photoPickerItems) { _, items in
-            Task {
-                await loadUploadedImages(from: items)
-            }
-        }
         .sheet(isPresented: $isCollectionPickerPresented) {
             CollectionPickerSheet(
                 collections: store.collections(ownerID: store.currentUserID),
@@ -2937,27 +2866,19 @@ struct CreatePostView: View {
             .presentationBackground(Theme.background)
             .preferredColorScheme(.dark)
         }
-    }
-
-    @MainActor
-    private func loadUploadedImages(from items: [PhotosPickerItem]) async {
-        var imageData: [Data] = []
-        for item in items {
-            if let data = try? await item.loadTransferable(type: Data.self),
-               UIImage(data: data) != nil {
-                imageData.append(data)
+        .fullScreenCover(isPresented: $isPhotoLibraryPresented) {
+            PhotoLibraryImportView(maxSelection: max(1, 16 - uploadedImageData.count)) { importedData in
+                uploadedImageData.append(contentsOf: importedData)
+                uploadedImageData = Array(uploadedImageData.prefix(16))
             }
+            .preferredColorScheme(.dark)
         }
-        uploadedImageData = Array(imageData.prefix(9))
     }
 
     func reset() {
         title = ""
         selectedGroupType = nil
         selectedCollectionID = noCollectionID
-        selectedImage = "merch_photocards"
-        selectedImageNames = ["merch_photocards"]
-        photoPickerItems = []
         uploadedImageData = []
         selectedTags = ["预售"]
         priceLowerBound = ""
@@ -2986,15 +2907,495 @@ struct CreatePostView: View {
     }
 }
 
-struct CreatePostPreviewImage: View {
-    let imageName: String
-    let uploadedImageData: Data?
+struct ImageUploadComposer: View {
+    @Binding var images: [Data]
+    let onAdd: () -> Void
+    @State private var draggingIndex: Int?
 
     var body: some View {
-        if let uploadedImageData {
-            UploadedImageView(data: uploadedImageData)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(Array(images.indices), id: \.self) { index in
+                    UploadedImageTile(
+                        data: images[index],
+                        index: index,
+                        isCover: index == 0,
+                        images: $images,
+                        draggingIndex: $draggingIndex
+                    )
+                }
+
+                Button(action: onAdd) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 38, weight: .light))
+                        Text(images.isEmpty ? "上传图片" : "继续添加")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.subtext)
+                    .frame(width: 132, height: 132)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Theme.hairline, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("从相册上传产品图片")
+            }
+            .padding(.vertical, 2)
+        }
+    }
+}
+
+struct UploadedImageTile: View {
+    let data: Data
+    let index: Int
+    let isCover: Bool
+    @Binding var images: [Data]
+    @Binding var draggingIndex: Int?
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            UploadedImageView(data: data)
+                .scaledToFill()
+                .frame(width: 132, height: 132)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(alignment: .topLeading) {
+                    Text(isCover ? "封面" : "\(index + 1)")
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background((isCover ? Theme.hotPink : Color.black.opacity(0.58)), in: Capsule())
+                        .padding(8)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isCover ? Theme.hotPink : Theme.hairline, lineWidth: isCover ? 2 : 1)
+                }
+
+            Button {
+                guard images.indices.contains(index) else { return }
+                images.remove(at: index)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(Color.black.opacity(0.68), in: Circle())
+                    .padding(7)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("删除第 \(index + 1) 张图片")
+        }
+        .opacity(draggingIndex == index ? 0.55 : 1)
+        .onDrag {
+            draggingIndex = index
+            return NSItemProvider(object: "\(index)" as NSString)
+        }
+        .onDrop(of: [UTType.text], delegate: UploadedImageDropDelegate(targetIndex: index, images: $images, draggingIndex: $draggingIndex))
+    }
+}
+
+struct UploadedImageDropDelegate: DropDelegate {
+    let targetIndex: Int
+    @Binding var images: [Data]
+    @Binding var draggingIndex: Int?
+
+    func dropEntered(info: DropInfo) {
+        guard let fromIndex = draggingIndex,
+              fromIndex != targetIndex,
+              images.indices.contains(fromIndex),
+              images.indices.contains(targetIndex) else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+            let item = images.remove(at: fromIndex)
+            images.insert(item, at: targetIndex)
+            draggingIndex = targetIndex
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingIndex = nil
+        return true
+    }
+}
+
+struct PhotoAssetPreview: Identifiable {
+    let id: String
+    let asset: PHAsset
+    var thumbnail: UIImage?
+}
+
+struct PhotoLibraryImportView: View {
+    @Environment(\.dismiss) private var dismiss
+    let maxSelection: Int
+    let onImport: ([Data]) -> Void
+    @State private var authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    @State private var assets: [PhotoAssetPreview] = []
+    @State private var selectedIDs: [String] = []
+    @State private var isLoadingAssets = false
+    @State private var isImporting = false
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Theme.background.ignoresSafeArea()
+            VStack(spacing: 0) {
+                photoPickerHeader
+                photoPickerContent
+            }
+
+            if !selectedIDs.isEmpty {
+                photoPickerBottomBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.26, dampingFraction: 0.86), value: selectedIDs)
+        .onAppear(perform: requestPhotoAccess)
+    }
+
+    private var photoPickerHeader: some View {
+        HStack {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("关闭相册选择")
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                Text("最近项目")
+                    .font(.system(size: 28, weight: .bold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 18, weight: .bold))
+            }
+            .foregroundStyle(Theme.text)
+
+            Spacer()
+
+            Color.clear
+                .frame(width: 52, height: 52)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 22)
+        .background(Theme.background)
+    }
+
+    @ViewBuilder
+    private var photoPickerContent: some View {
+        switch authorizationStatus {
+        case .authorized, .limited:
+            if isLoadingAssets && assets.isEmpty {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .tint(Theme.hotPink)
+                    Text("正在读取相册")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Theme.muted)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if assets.isEmpty {
+                VStack(spacing: 14) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                    Text("相册里还没有可选图片")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVGrid(columns: columns, spacing: 2) {
+                        ForEach(assets) { item in
+                            PhotoLibraryGridCell(
+                                item: item,
+                                selectionIndex: selectionIndex(for: item.id),
+                                isSelectionDisabled: selectedIDs.count >= maxSelection && selectionIndex(for: item.id) == nil
+                            ) {
+                                toggleSelection(item.id)
+                            }
+                        }
+                    }
+                    .padding(.bottom, selectedIDs.isEmpty ? 18 : 244)
+                }
+            }
+        case .notDetermined:
+            permissionPrompt(title: "允许访问相册", message: "发帖上传图片前，需要先允许周边团读取你的照片。", buttonTitle: "继续")
+        default:
+            permissionPrompt(title: "无法访问相册", message: "请在系统设置中允许周边团访问照片后再上传。", buttonTitle: "重新检查权限")
+        }
+    }
+
+    private var photoPickerBottomBar: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(selectedIDs, id: \.self) { id in
+                        if let item = assets.first(where: { $0.id == id }) {
+                            ZStack(alignment: .topTrailing) {
+                                PhotoLibraryThumbnailImage(image: item.thumbnail)
+                                    .scaledToFill()
+                                    .frame(width: 74, height: 74)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                Button {
+                                    toggleSelection(id)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 24, height: 24)
+                                        .background(Color.black.opacity(0.72), in: Circle())
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 6, y: -6)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
+            HStack {
+                Text("可选择\(maxSelection)张图片")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Button {
+                    Task { await importSelectedAssets() }
+                } label: {
+                    HStack(spacing: 10) {
+                        if isImporting {
+                            ProgressView()
+                                .tint(.white)
+                        }
+                        Text(isImporting ? "导入中" : "下一步")
+                            .font(.system(size: 20, weight: .black))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(width: 170, height: 62)
+                    .background(Theme.hotPink, in: Capsule())
+                    .overlay(alignment: .topLeading) {
+                        Text("\(selectedIDs.count)")
+                            .font(.system(size: 17, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(Theme.hotPink, in: Circle())
+                            .overlay {
+                                Circle().stroke(.white, lineWidth: 3)
+                            }
+                            .offset(x: -196, y: -88)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isImporting)
+            }
+            .padding(.horizontal, 26)
+        }
+        .padding(.top, 20)
+        .padding(.bottom, 34)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Theme.panel)
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    private func permissionPrompt(title: String, message: String, buttonTitle: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "photo.badge.plus")
+                .font(.system(size: 46, weight: .semibold))
+                .foregroundStyle(Theme.hotPink)
+            Text(title)
+                .font(.system(size: 24, weight: .black))
+                .foregroundStyle(Theme.text)
+            Text(message)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 34)
+            Button(buttonTitle) {
+                requestPhotoAccess()
+            }
+            .font(.system(size: 17, weight: .black))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 26)
+            .padding(.vertical, 13)
+            .background(Theme.hotPink, in: Capsule())
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func requestPhotoAccess() {
+        let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        authorizationStatus = currentStatus
+        switch currentStatus {
+        case .authorized, .limited:
+            loadAssets()
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                Task { @MainActor in
+                    authorizationStatus = newStatus
+                    if newStatus == .authorized || newStatus == .limited {
+                        loadAssets()
+                    }
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    private func loadAssets() {
+        guard !isLoadingAssets else { return }
+        isLoadingAssets = true
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let result = PHAsset.fetchAssets(with: .image, options: options)
+        var loaded: [PhotoAssetPreview] = []
+        result.enumerateObjects { asset, _, _ in
+            loaded.append(PhotoAssetPreview(id: asset.localIdentifier, asset: asset, thumbnail: nil))
+        }
+        assets = loaded
+        isLoadingAssets = false
+        loaded.forEach { requestThumbnail(for: $0.asset, id: $0.id) }
+    }
+
+    private func requestThumbnail(for asset: PHAsset, id: String) {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+        PHImageManager.default().requestImage(
+            for: asset,
+            targetSize: CGSize(width: 320, height: 320),
+            contentMode: .aspectFill,
+            options: options
+        ) { image, _ in
+            guard let image else { return }
+            Task { @MainActor in
+                if let index = assets.firstIndex(where: { $0.id == id }) {
+                    assets[index].thumbnail = image
+                }
+            }
+        }
+    }
+
+    private func toggleSelection(_ id: String) {
+        if let index = selectedIDs.firstIndex(of: id) {
+            selectedIDs.remove(at: index)
+        } else if selectedIDs.count < maxSelection {
+            selectedIDs.append(id)
+        }
+    }
+
+    private func selectionIndex(for id: String) -> Int? {
+        selectedIDs.firstIndex(of: id).map { $0 + 1 }
+    }
+
+    @MainActor
+    private func importSelectedAssets() async {
+        guard !isImporting else { return }
+        isImporting = true
+        var imported: [Data] = []
+        for id in selectedIDs {
+            guard let asset = assets.first(where: { $0.id == id })?.asset,
+                  let data = await imageData(for: asset) else { continue }
+            imported.append(data)
+        }
+        onImport(imported)
+        isImporting = false
+        dismiss()
+    }
+
+    private func imageData(for asset: PHAsset) async -> Data? {
+        await withCheckedContinuation { continuation in
+            let options = PHImageRequestOptions()
+            options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = true
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
+                continuation.resume(returning: data)
+            }
+        }
+    }
+}
+
+struct PhotoLibraryGridCell: View {
+    let item: PhotoAssetPreview
+    let selectionIndex: Int?
+    let isSelectionDisabled: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            GeometryReader { proxy in
+                ZStack(alignment: .topTrailing) {
+                    PhotoLibraryThumbnailImage(image: item.thumbnail)
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.width)
+                        .clipped()
+                        .overlay {
+                            if selectionIndex != nil {
+                                Color.black.opacity(0.18)
+                            } else if isSelectionDisabled {
+                                Color.black.opacity(0.52)
+                            }
+                        }
+
+                    selectionCircle
+                        .padding(10)
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+        }
+        .buttonStyle(.plain)
+        .disabled(isSelectionDisabled)
+    }
+
+    @ViewBuilder
+    private var selectionCircle: some View {
+        if let selectionIndex {
+            Text("\(selectionIndex)")
+                .font(.system(size: 15, weight: .black))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Theme.hotPink, in: Circle())
+                .overlay {
+                    Circle().stroke(.white, lineWidth: 2.5)
+                }
         } else {
-            BundleImage(name: imageName)
+            Circle()
+                .stroke(.white, lineWidth: 2.5)
+                .frame(width: 34, height: 34)
+                .background(Color.black.opacity(0.08), in: Circle())
+        }
+    }
+}
+
+struct PhotoLibraryThumbnailImage: View {
+    let image: UIImage?
+
+    var body: some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+        } else {
+            Rectangle()
+                .fill(Theme.panelRaised)
+                .overlay {
+                    ProgressView()
+                        .tint(Theme.hotPink)
+                }
         }
     }
 }
