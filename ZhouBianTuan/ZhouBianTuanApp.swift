@@ -11,19 +11,19 @@ struct ZhouBianTuanApp: App {
     init() {
         let tabAppearance = UITabBarAppearance()
         tabAppearance.configureWithOpaqueBackground()
-        tabAppearance.backgroundColor = UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1)
+        tabAppearance.backgroundColor = Theme.barBackgroundUIColor
         tabAppearance.stackedLayoutAppearance.normal.iconColor = UIColor.secondaryLabel
         tabAppearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.secondaryLabel]
         tabAppearance.stackedLayoutAppearance.selected.iconColor = UIColor(red: 1, green: 0.12, blue: 0.27, alpha: 1)
-        tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.white]
+        tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: Theme.primaryTextUIColor]
         UITabBar.appearance().standardAppearance = tabAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabAppearance
 
         let navAppearance = UINavigationBarAppearance()
         navAppearance.configureWithOpaqueBackground()
-        navAppearance.backgroundColor = UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1)
-        navAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
-        navAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        navAppearance.backgroundColor = Theme.barBackgroundUIColor
+        navAppearance.titleTextAttributes = [.foregroundColor: Theme.primaryTextUIColor]
+        navAppearance.largeTitleTextAttributes = [.foregroundColor: Theme.primaryTextUIColor]
         UINavigationBar.appearance().standardAppearance = navAppearance
         UINavigationBar.appearance().scrollEdgeAppearance = navAppearance
     }
@@ -33,7 +33,7 @@ struct ZhouBianTuanApp: App {
             RootView()
                 .environmentObject(store)
                 .tint(Theme.hotPink)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
         }
     }
 }
@@ -101,11 +101,20 @@ enum Route: Hashable {
     case drafts
     case browsingHistory
     case settings
+    case accountSecuritySettings
+    case generalSettings
+    case notificationSettings
     case admin
 }
 
 struct RootView: View {
+    @EnvironmentObject private var store: MockAppStore
+    @AppStorage("zhoubiantuan.isLoggedIn") private var persistedIsLoggedIn = true
     @State private var selectedTab: AppTab = .home
+
+    private var isAuthenticated: Bool {
+        store.isLoggedIn && persistedIsLoggedIn
+    }
 
     var body: some View {
         ZStack {
@@ -119,37 +128,76 @@ struct RootView: View {
                 .tag(AppTab.home)
 
                 NavigationStack {
-                    MarketView()
+                    AuthenticatedTabContent {
+                        MarketView()
+                    }
                         .withAppDestinations()
                 }
                 .tabItem { Label(AppTab.market.title, systemImage: AppTab.market.icon) }
                 .tag(AppTab.market)
 
                 NavigationStack {
-                    CreatePostView()
+                    AuthenticatedTabContent {
+                        CreatePostView()
+                    }
                         .withAppDestinations()
                 }
                 .tabItem { Label(AppTab.create.title, systemImage: AppTab.create.icon) }
                 .tag(AppTab.create)
 
                 NavigationStack {
-                    MessagesView()
+                    AuthenticatedTabContent {
+                        MessagesView()
+                    }
                         .withAppDestinations()
                 }
                 .tabItem { Label(AppTab.messages.title, systemImage: AppTab.messages.icon) }
                 .tag(AppTab.messages)
 
                 NavigationStack {
-                    ProfileView()
+                    AuthenticatedTabContent {
+                        ProfileView()
+                    }
                         .withAppDestinations()
                 }
                 .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
                 .tag(AppTab.profile)
             }
+            .id("\(store.authSessionVersion)-\(isAuthenticated)")
             .tint(Theme.hotPink)
             .overlay(alignment: .top) {
                 ToastHost()
             }
+            .fullScreenCover(isPresented: $store.isAuthPromptPresented) {
+                GuestAuthView(onClose: {
+                    store.isAuthPromptPresented = false
+                })
+                .environmentObject(store)
+                .preferredColorScheme(.dark)
+            }
+            .onChange(of: store.isLoggedIn) {
+                if store.isLoggedIn {
+                    store.isAuthPromptPresented = false
+                }
+            }
+        }
+    }
+}
+
+struct AuthenticatedTabContent<Content: View>: View {
+    @EnvironmentObject private var store: MockAppStore
+    @AppStorage("zhoubiantuan.isLoggedIn") private var persistedIsLoggedIn = true
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if store.isLoggedIn && persistedIsLoggedIn {
+            content
+        } else {
+            GuestAuthView()
         }
     }
 }
@@ -184,6 +232,12 @@ extension View {
                 BrowsingHistoryView()
             case .settings:
                 SettingsView()
+            case .accountSecuritySettings:
+                AccountSecuritySettingsView()
+            case .generalSettings:
+                GeneralSettingsView()
+            case .notificationSettings:
+                NotificationSettingsView()
             case .admin:
                 AdminReportView()
             }
@@ -192,15 +246,59 @@ extension View {
 }
 
 enum Theme {
-    static let background = Color(red: 0.055, green: 0.055, blue: 0.075)
-    static let panel = Color(red: 0.095, green: 0.095, blue: 0.12)
-    static let panelRaised = Color(red: 0.13, green: 0.13, blue: 0.16)
-    static let hairline = Color.white.opacity(0.08)
-    static let text = Color.white.opacity(0.92)
-    static let subtext = Color.white.opacity(0.58)
-    static let muted = Color.white.opacity(0.36)
+    static let background = Color(adaptiveUIColor(
+        dark: UIColor(red: 0.055, green: 0.055, blue: 0.075, alpha: 1),
+        light: UIColor.white
+    ))
+    static let panel = Color(adaptiveUIColor(
+        dark: UIColor(red: 0.095, green: 0.095, blue: 0.12, alpha: 1),
+        light: UIColor(red: 0.965, green: 0.965, blue: 0.975, alpha: 1)
+    ))
+    static let panelRaised = Color(adaptiveUIColor(
+        dark: UIColor(red: 0.13, green: 0.13, blue: 0.16, alpha: 1),
+        light: UIColor(red: 0.92, green: 0.92, blue: 0.94, alpha: 1)
+    ))
+    static let hairline = Color(adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.08),
+        light: UIColor.black.withAlphaComponent(0.10)
+    ))
+    static let text = Color(adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.92),
+        light: UIColor.black.withAlphaComponent(0.88)
+    ))
+    static let subtext = Color(adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.58),
+        light: UIColor.black.withAlphaComponent(0.58)
+    ))
+    static let muted = Color(adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.36),
+        light: UIColor.black.withAlphaComponent(0.36)
+    ))
+    static let floatingBadgeBackground = Color(adaptiveUIColor(
+        dark: UIColor.black.withAlphaComponent(0.54),
+        light: UIColor.white.withAlphaComponent(0.78)
+    ))
+    static let floatingBadgeText = Color(adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.92),
+        light: UIColor.black.withAlphaComponent(0.78)
+    ))
     static let hotPink = Color(red: 1, green: 0.12, blue: 0.27)
     static let softPink = Color(red: 1, green: 0.42, blue: 0.58)
+
+    static let barBackgroundUIColor = adaptiveUIColor(
+        dark: UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1),
+        light: UIColor.white
+    )
+    static let primaryTextUIColor = adaptiveUIColor(
+        dark: UIColor.white.withAlphaComponent(0.92),
+        light: UIColor.black.withAlphaComponent(0.88)
+    )
+
+    private static func adaptiveUIColor(dark: UIColor, light: UIColor) -> UIColor {
+        UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark ? dark : light
+        }
+    }
 }
 
 struct BundleImage: View {
@@ -290,6 +388,8 @@ struct User: Identifiable, Hashable {
     var avatarImageData: Data? = nil
     var backgroundImageData: Data? = nil
     var lastNicknameChangedAt: Date? = nil
+    var phoneNumber: String = ""
+    var password: String = ""
 }
 
 struct GroupBuyPost: Identifiable, Hashable {
@@ -312,7 +412,6 @@ struct GroupBuyPost: Identifiable, Hashable {
     var qq: String
     var groupInfo: String
     var externalLink: String
-    var riskNotice: String
     var createdAt: Date
     var likedCount: Int
     var favoriteCount: Int
@@ -323,6 +422,10 @@ struct GroupBuyPost: Identifiable, Hashable {
     var pingguAveragePrice: String = ""
     var pingguNote: String = ""
     var unsoldRoles: [UnsoldRole] = []
+
+    var isEnded: Bool {
+        deadline <= Date()
+    }
 }
 
 enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
@@ -387,6 +490,10 @@ struct GroupCollection: Identifiable, Hashable {
     var defaultNote: String
     var postIDs: [String]
     var createdAt: Date
+
+    var isEnded: Bool {
+        deadline <= Date()
+    }
 }
 
 struct ReviewPost: Identifiable, Hashable {
@@ -415,7 +522,7 @@ struct MessageThread: Identifiable, Hashable {
     let id: String
     var buyerUserID: String
     var publisherUserID: String
-    var relatedPostID: String
+    var relatedPostID: String?
     var messages: [DirectMessage]
     var unreadCount: Int
     var updatedAt: Date
@@ -459,6 +566,7 @@ enum ContentStatus: String, Hashable {
     case active = "公开"
     case hidden = "已隐藏"
     case removed = "已下架"
+    case deleted = "已删除"
 }
 
 enum ReportStatus: String, Hashable {
@@ -513,40 +621,72 @@ final class MockAppStore: ObservableObject {
         }
     }
     @Published var toastMessage: String?
-    @Published var isLoggedIn = true
+    @Published var isAuthPromptPresented = false
+    @Published var isLoggedIn: Bool {
+        didSet {
+            UserDefaults.standard.set(isLoggedIn, forKey: Self.loginDefaultsKey)
+        }
+    }
+    @Published var currentUserID = "u-me"
+    @Published var authSessionVersion = UUID()
+    @Published var isDarkModeEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
+        }
+    }
+    @Published var limitsUnrepliedMessages: Bool {
+        didSet {
+            UserDefaults.standard.set(limitsUnrepliedMessages, forKey: Self.messageLimitDefaultsKey)
+        }
+    }
 
-    let currentUserID = "u-me"
+    private static let demoUserID = "u-me"
+    private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
+    private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
+    private static let messageLimitDefaultsKey = "zhoubiantuan.limitsUnrepliedMessages"
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let defaultSearchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
+    private static let demoLikedPostIDs: Set<String> = ["p-card", "p-plush"]
+    private static let demoFavoritePostIDs: Set<String> = ["p-card", "p-album"]
 
     init() {
+        let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? true
+        isLoggedIn = startsLoggedIn
+        isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
+        limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
         let now = Date()
         let myCollectionID = "col-my-winter"
         let winterCollectionID = "col-winter-bucky"
         let tourCollectionID = "col-tour-cards"
+        let berryCollectionID = "col-berry-doll"
+        let blackCollectionID = "col-black-jewelry"
+        let moonMagazineCollectionID = "col-moon-magazine"
         users = [
-            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", backgroundImageName: "merch_magazine"),
-            User(id: "u-black", nickname: "黑贝果", bio: "原创设计小众饰品，开团前都会补风险说明。", followingCount: 88, followersCount: 12800, postCount: 36, isRestricted: false, canShowContact: true, avatarSymbol: "黑", avatarTint: .rose, redBookID: "BlackBagel2026", region: "上海", backgroundImageName: "merch_jewelry"),
+            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", backgroundImageName: "merch_magazine", phoneNumber: "+861391237122", password: "123456"),
+            User(id: "u-black", nickname: "黑贝果", bio: "原创设计小众饰品，开团前都会补细节说明。", followingCount: 88, followersCount: 12800, postCount: 36, isRestricted: false, canShowContact: true, avatarSymbol: "黑", avatarTint: .rose, redBookID: "BlackBagel2026", region: "上海", backgroundImageName: "merch_jewelry"),
             User(id: "u-moon", nickname: "月光补货站", bio: "演唱会周边、立牌、吧唧团购整理。", followingCount: 54, followersCount: 5320, postCount: 22, isRestricted: false, canShowContact: true, avatarSymbol: "月", avatarTint: .violet, redBookID: "MoonPin0909", region: "广州", backgroundImageName: "merch_badges"),
             User(id: "u-berry", nickname: "莓果小铺", bio: "娃娃衣和棉花娃配件长期团。", followingCount: 91, followersCount: 2401, postCount: 18, isRestricted: false, canShowContact: true, avatarSymbol: "莓", avatarTint: .amber, redBookID: "BerryDollClub", region: "杭州", backgroundImageName: "merch_plush"),
             User(id: "u-echo", nickname: "Echo周边记录", bio: "专辑、杂志、明信片成团信息搬运。", followingCount: 37, followersCount: 901, postCount: 11, isRestricted: false, canShowContact: true, avatarSymbol: "E", avatarTint: .blue, redBookID: "EchoGB2026", region: "成都", backgroundImageName: "merch_album")
         ]
         let initialPosts = [
-            GroupBuyPost(id: "p-card", title: "巡演限定小卡套组二开，余量 30 份", imageNames: ["merch_photocards", "merch_magazine"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["小卡", "预售", "自印团"], fandomTags: ["欧美巡演", "收藏卡"], price: "¥42/套", deposit: "¥15 定金", deadline: Self.date(days: 1, hour: 22), condition: "满 60 套开团，未成团原路退定", isFormed: true, description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", externalLink: "https://forms.example/cards", riskNotice: "非官方周边，制作周期约 25-35 天；运输压痕由团内统一登记处理。", createdAt: now.addingTimeInterval(-3600 * 2), likedCount: 9618, favoriteCount: 1280, commentCount: 86, reportCount: 0, status: .active, imageAspect: 1.12),
-            GroupBuyPost(id: "p-badge", title: "2026冬兵生日团吧唧拼谷，今晚截团", imageNames: ["merch_badges", "merch_jewelry"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["吧唧", "现货", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes"], price: "¥35/吧唧", deposit: "全款", deadline: Self.date(days: 0, hour: 23), condition: "主角团角色位优先成团，余量实时更新", isFormed: true, description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "", riskNotice: "金属制品可能存在极轻微针眼和色差，介意慎拍。", createdAt: now.addingTimeInterval(-3600 * 5), likedCount: 880, favoriteCount: 282, commentCount: 24, reportCount: 1, status: .active, imageAspect: 0.86, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)]),
-            GroupBuyPost(id: "p-stand", title: "2026冬兵生日团亚克力立牌角色位", imageNames: ["merch_standees", "merch_album"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["立牌", "预售", "拼谷"], fandomTags: ["Bucky Barnes", "Sam Wilson"], price: "¥68/立牌", deposit: "¥20 定金", deadline: Self.date(days: 3, hour: 20), condition: "满 120 套开模，角色位未满可继续认领", isFormed: true, description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "https://forms.example/standee", riskNotice: "亚克力保护膜需自行撕开，运输过程如断裂按团规补件。", createdAt: now.addingTimeInterval(-3600 * 20), likedCount: 2301, favoriteCount: 911, commentCount: 51, reportCount: 0, status: .active, imageAspect: 1.24, pingguAveragePrice: "均价68元/立牌", pingguNote: "Bucky 和 Sam 位还可拼", unsoldRoles: [UnsoldRole(name: "Bucky Barnes", quantity: 2), UnsoldRole(name: "Sam Wilson", quantity: 1), UnsoldRole(name: "Natasha Romanoff", quantity: 2)]),
-            GroupBuyPost(id: "p-plush", title: "棉花娃睡衣和小配件自印团，粉色猫耳款", imageNames: ["merch_plush", "merch_concert"], authorID: "u-berry", categoryTags: ["娃娃", "饰品", "自印团"], fandomTags: ["棉花娃", "娃衣"], price: "¥35 起", deposit: "¥10 定金", deadline: Self.date(days: 5, hour: 21), condition: "满 50 件成团，可混款", isFormed: false, description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "", riskNotice: "手工娃衣存在 1-2cm 误差；不同娃体上身效果不同。", createdAt: now.addingTimeInterval(-3600 * 8), likedCount: 1490, favoriteCount: 507, commentCount: 39, reportCount: 0, status: .active, imageAspect: 1.06),
-            GroupBuyPost(id: "p-album", title: "巡演黑胶专辑 + 明信片补款提醒，明晚截止", imageNames: ["merch_album", "merch_photocards"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["专辑", "明信片", "补款"], fandomTags: ["黑胶", "欧美音乐"], price: "¥118/套", deposit: "已收 ¥30", deadline: Self.date(days: 1, hour: 20), condition: "已成团，补款后统一打包", isFormed: true, description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "原补款群内公告", externalLink: "https://forms.example/album", riskNotice: "黑胶运输默认加固，海外段可能慢；站内不承接售后，仅展示团购信息。", createdAt: now.addingTimeInterval(-3600 * 30), likedCount: 620, favoriteCount: 308, commentCount: 17, reportCount: 0, status: .active, imageAspect: 0.98),
-            GroupBuyPost(id: "p-magazine", title: "杂志切页 + 拍立得风卡册自印团", imageNames: ["merch_magazine", "merch_badges"], authorID: "u-moon", categoryTags: ["杂志", "小卡", "自印团"], fandomTags: ["切页", "卡册"], price: "¥26 起", deposit: "全款", deadline: Self.date(days: 2, hour: 18), condition: "满 30 本拆页，当前 21 本", isFormed: false, description: "杂志切页和拍立得风卡册拼团，可选单页/整套。开团后按编号排单。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "QQ群 204 118 776", externalLink: "", riskNotice: "拆页类商品边角无法做到完全无痕，介意不要上车。", createdAt: now.addingTimeInterval(-3600 * 6), likedCount: 402, favoriteCount: 122, commentCount: 11, reportCount: 2, status: .active, imageAspect: 1.18),
-            GroupBuyPost(id: "p-jewelry", title: "银色星心挂件拼谷，Loki 位有余量", imageNames: ["merch_jewelry", "merch_badges"], authorID: "u-black", groupType: .splitGoods, categoryTags: ["饰品", "孤品", "拼谷"], fandomTags: ["Loki", "Mobius"], price: "¥39-79", deposit: "全款", deadline: Self.date(days: 4, hour: 22), condition: "现货余量 18 件，拍完即止", isFormed: true, description: "星心元素挂件、项链、手链，适合挂包或日常佩戴。孤品数量少，不支持长时间占位。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "微信群，复制微信备注：星心", externalLink: "", riskNotice: "合金饰品非纯银，避免接触水和香水。", createdAt: now.addingTimeInterval(-3600 * 12), likedCount: 734, favoriteCount: 241, commentCount: 29, reportCount: 0, status: .active, imageAspect: 0.92, pingguAveragePrice: "均价49元/挂件", pingguNote: "Loki 位还有少量可拼", unsoldRoles: [UnsoldRole(name: "Loki", quantity: 4), UnsoldRole(name: "Mobius", quantity: 1)]),
-            GroupBuyPost(id: "p-concert", title: "演唱会痛包挂件 + 应援棒收纳套", imageNames: ["merch_concert", "merch_standees"], authorID: "u-berry", categoryTags: ["演唱会周边", "痛包", "自印团"], fandomTags: ["应援", "收纳"], price: "¥58/套", deposit: "¥20 定金", deadline: Self.date(days: 6, hour: 20), condition: "满 100 套生产，当前 73 套", isFormed: false, description: "黑粉色痛包挂件、证件卡套、应援棒收纳套组合。适合巡演现场携带。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "https://forms.example/concertbag", riskNotice: "预售周期较长，预计 45 天左右；正式交易在外部平台完成。", createdAt: now.addingTimeInterval(-3600 * 3), likedCount: 1188, favoriteCount: 609, commentCount: 41, reportCount: 0, status: .active, imageAspect: 1.08),
-            GroupBuyPost(id: "p-my-pinggu", title: "2026冬兵生日团角色余量更新", imageNames: ["merch_badges", "merch_standees"], authorID: "u-me", groupType: .splitGoods, collectionID: myCollectionID, categoryTags: ["吧唧", "立牌", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes", "Tony Stark"], price: "¥35-68", deposit: "全款/定金", deadline: Self.date(days: 4, hour: 22), condition: "角色位有余量即可认领，售罄后从列表隐藏", isFormed: true, description: "这里是团长本人可维护的拼谷演示帖，可以在详情页实时编辑未售角色和数量。", wechat: "PanPanGroup", qq: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", externalLink: "", riskNotice: "原型演示帖，实际交易仍需在外部平台完成。", createdAt: now.addingTimeInterval(-1800), likedCount: 126, favoriteCount: 48, commentCount: 3, reportCount: 0, status: .active, imageAspect: 1.04, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)])
+            GroupBuyPost(id: "p-card", title: "巡演限定小卡套组二开，余量 30 份", imageNames: ["merch_photocards", "merch_magazine"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["小卡", "预售", "自印团"], fandomTags: ["欧美巡演", "收藏卡"], price: "¥42/套", deposit: "¥15 定金", deadline: Self.date(days: 1, hour: 22), condition: "满 60 套开团，未成团原路退定", isFormed: true, description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", externalLink: "https://forms.example/cards", createdAt: now.addingTimeInterval(-3600 * 2), likedCount: 9618, favoriteCount: 1280, commentCount: 86, reportCount: 0, status: .active, imageAspect: 1.12),
+            GroupBuyPost(id: "p-badge", title: "2026冬兵生日团吧唧拼谷，今晚截团", imageNames: ["merch_badges", "merch_jewelry"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["吧唧", "现货", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes"], price: "¥35/吧唧", deposit: "全款", deadline: Self.date(days: 0, hour: 23), condition: "主角团角色位优先成团，余量实时更新", isFormed: true, description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 5), likedCount: 880, favoriteCount: 282, commentCount: 24, reportCount: 1, status: .active, imageAspect: 0.86, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)]),
+            GroupBuyPost(id: "p-stand", title: "2026冬兵生日团亚克力立牌角色位", imageNames: ["merch_standees", "merch_album"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["立牌", "预售", "拼谷"], fandomTags: ["Bucky Barnes", "Sam Wilson"], price: "¥68/立牌", deposit: "¥20 定金", deadline: Self.date(days: 3, hour: 20), condition: "满 120 套开模，角色位未满可继续认领", isFormed: true, description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "https://forms.example/standee", createdAt: now.addingTimeInterval(-3600 * 20), likedCount: 2301, favoriteCount: 911, commentCount: 51, reportCount: 0, status: .active, imageAspect: 1.24, pingguAveragePrice: "均价68元/立牌", pingguNote: "Bucky 和 Sam 位还可拼", unsoldRoles: [UnsoldRole(name: "Bucky Barnes", quantity: 2), UnsoldRole(name: "Sam Wilson", quantity: 1), UnsoldRole(name: "Natasha Romanoff", quantity: 2)]),
+            GroupBuyPost(id: "p-plush", title: "棉花娃睡衣和小配件自印团，粉色猫耳款", imageNames: ["merch_plush", "merch_concert"], authorID: "u-berry", collectionID: berryCollectionID, categoryTags: ["娃娃", "饰品", "自印团"], fandomTags: ["棉花娃", "娃衣"], price: "¥35 起", deposit: "¥10 定金", deadline: Self.date(days: 5, hour: 21), condition: "满 50 件成团，可混款", isFormed: false, description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 8), likedCount: 1490, favoriteCount: 507, commentCount: 39, reportCount: 0, status: .active, imageAspect: 1.06),
+            GroupBuyPost(id: "p-album", title: "巡演黑胶专辑 + 明信片补款提醒，明晚截止", imageNames: ["merch_album", "merch_photocards"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["专辑", "明信片", "补款"], fandomTags: ["黑胶", "欧美音乐"], price: "¥118/套", deposit: "已收 ¥30", deadline: Self.date(days: 1, hour: 20), condition: "已成团，补款后统一打包", isFormed: true, description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "原补款群内公告", externalLink: "https://forms.example/album", createdAt: now.addingTimeInterval(-3600 * 30), likedCount: 620, favoriteCount: 308, commentCount: 17, reportCount: 0, status: .active, imageAspect: 0.98),
+            GroupBuyPost(id: "p-magazine", title: "杂志切页 + 拍立得风卡册自印团", imageNames: ["merch_magazine", "merch_badges"], authorID: "u-moon", collectionID: moonMagazineCollectionID, categoryTags: ["杂志", "小卡", "自印团"], fandomTags: ["切页", "卡册"], price: "¥26 起", deposit: "全款", deadline: Self.date(days: 2, hour: 18), condition: "满 30 本拆页，当前 21 本", isFormed: false, description: "杂志切页和拍立得风卡册拼团，可选单页/整套。开团后按编号排单。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "QQ群 204 118 776", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 6), likedCount: 402, favoriteCount: 122, commentCount: 11, reportCount: 2, status: .active, imageAspect: 1.18),
+            GroupBuyPost(id: "p-jewelry", title: "银色星心挂件拼谷，Loki 位有余量", imageNames: ["merch_jewelry", "merch_badges"], authorID: "u-black", groupType: .splitGoods, collectionID: blackCollectionID, categoryTags: ["饰品", "孤品", "拼谷"], fandomTags: ["Loki", "Mobius"], price: "¥39-79", deposit: "全款", deadline: Self.date(days: 4, hour: 22), condition: "现货余量 18 件，拍完即止", isFormed: true, description: "星心元素挂件、项链、手链，适合挂包或日常佩戴。孤品数量少，不支持长时间占位。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "微信群，复制微信备注：星心", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 12), likedCount: 734, favoriteCount: 241, commentCount: 29, reportCount: 0, status: .active, imageAspect: 0.92, pingguAveragePrice: "均价49元/挂件", pingguNote: "Loki 位还有少量可拼", unsoldRoles: [UnsoldRole(name: "Loki", quantity: 4), UnsoldRole(name: "Mobius", quantity: 1)]),
+            GroupBuyPost(id: "p-concert", title: "演唱会痛包挂件 + 应援棒收纳套", imageNames: ["merch_concert", "merch_standees"], authorID: "u-berry", collectionID: berryCollectionID, categoryTags: ["演唱会周边", "痛包", "自印团"], fandomTags: ["应援", "收纳"], price: "¥58/套", deposit: "¥20 定金", deadline: Self.date(days: 6, hour: 20), condition: "满 100 套生产，当前 73 套", isFormed: false, description: "黑粉色痛包挂件、证件卡套、应援棒收纳套组合。适合巡演现场携带。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "https://forms.example/concertbag", createdAt: now.addingTimeInterval(-3600 * 3), likedCount: 1188, favoriteCount: 609, commentCount: 41, reportCount: 0, status: .active, imageAspect: 1.08),
+            GroupBuyPost(id: "p-my-pinggu", title: "2026冬兵生日团角色余量更新", imageNames: ["merch_badges", "merch_standees"], authorID: "u-me", groupType: .splitGoods, collectionID: myCollectionID, categoryTags: ["吧唧", "立牌", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes", "Tony Stark"], price: "¥35-68", deposit: "全款/定金", deadline: Self.date(days: 4, hour: 22), condition: "角色位有余量即可认领，售罄后从列表隐藏", isFormed: true, description: "这里是团长本人可维护的拼谷演示帖，可以在详情页实时编辑未售角色和数量。", wechat: "PanPanGroup", qq: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", externalLink: "", createdAt: now.addingTimeInterval(-1800), likedCount: 126, favoriteCount: 48, commentCount: 3, reportCount: 0, status: .active, imageAspect: 1.04, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)])
         ]
         posts = initialPosts
         collections = [
             GroupCollection(id: myCollectionID, ownerID: "u-me", name: "2026冬兵生日团", contactWechat: "PanPanGroup", contactQQ: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", deadline: Self.date(days: 4, hour: 22), defaultNote: "同一拼谷团内的宣传、进度、角色余量更新共用联系方式和截团时间。", postIDs: ["p-my-pinggu"], createdAt: now.addingTimeInterval(-3600 * 3)),
             GroupCollection(id: winterCollectionID, ownerID: "u-moon", name: "2026冬兵生日团", contactWechat: "MoonPin0909", contactQQ: "190443821", groupInfo: "微信群复制微信后拉群，备注：冬兵生日团", deadline: Self.date(days: 3, hour: 23), defaultNote: "同一生日团内宣传、进度和余量更新共用联系方式与截团时间。", postIDs: ["p-badge", "p-stand"], createdAt: now.addingTimeInterval(-3600 * 26)),
-            GroupCollection(id: tourCollectionID, ownerID: "u-echo", name: "巡演补款小卡团", contactWechat: "EchoGB2026", contactQQ: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", deadline: Self.date(days: 1, hour: 22), defaultNote: "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。", postIDs: ["p-card", "p-album"], createdAt: now.addingTimeInterval(-3600 * 42))
+            GroupCollection(id: tourCollectionID, ownerID: "u-echo", name: "巡演补款小卡团", contactWechat: "EchoGB2026", contactQQ: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", deadline: Self.date(days: 1, hour: 22), defaultNote: "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。", postIDs: ["p-card", "p-album"], createdAt: now.addingTimeInterval(-3600 * 42)),
+            GroupCollection(id: berryCollectionID, ownerID: "u-berry", name: "棉花娃衣配件团", contactWechat: "BerryDollClub", contactQQ: "448102930", groupInfo: "QQ群 518 221 974", deadline: Self.date(days: 6, hour: 20), defaultNote: "棉花娃娃衣、痛包配件和收纳周边统一更新余量与截团时间。", postIDs: ["p-plush", "p-concert"], createdAt: now.addingTimeInterval(-3600 * 18)),
+            GroupCollection(id: blackCollectionID, ownerID: "u-black", name: "星心饰品拼谷团", contactWechat: "BlackBagel2026", contactQQ: "60092118", groupInfo: "微信群，复制微信备注：星心", deadline: Self.date(days: 4, hour: 22), defaultNote: "小众饰品和孤品拼谷信息统一放在这里，余量按帖子更新。", postIDs: ["p-jewelry"], createdAt: now.addingTimeInterval(-3600 * 16)),
+            GroupCollection(id: moonMagazineCollectionID, ownerID: "u-moon", name: "杂志切页自印团", contactWechat: "MoonPin0909", contactQQ: "190443821", groupInfo: "QQ群 204 118 776", deadline: Self.date(days: 2, hour: 18), defaultNote: "杂志切页、卡册和相关自印内容统一登记，进度与补款后续在合集内更新。", postIDs: ["p-magazine"], createdAt: now.addingTimeInterval(-3600 * 10))
         ]
         reviews = [
             ReviewPost(id: "r-1", imageName: "merch_badges", body: "上一团吧唧到货，电镀质感比预期好。", groupBuyPostID: "p-badge", publisherID: "u-moon", authorID: "u-me", likedCount: 88, commentCount: 9, createdAt: now.addingTimeInterval(-86400 * 3))
@@ -575,15 +715,15 @@ final class MockAppStore: ObservableObject {
             Reminder(id: "re-card", userID: "u-me", postID: "p-card", deadline: initialPosts[0].deadline, remindAt: initialPosts[0].deadline.addingTimeInterval(-3600 * 3), hasReminded: false),
             Reminder(id: "re-album", userID: "u-me", postID: "p-album", deadline: initialPosts[4].deadline, remindAt: initialPosts[4].deadline.addingTimeInterval(-3600 * 6), hasReminded: true)
         ]
-        likedPostIDs = ["p-card", "p-plush"]
-        favoritePostIDs = ["p-card", "p-album"]
         let initialFollowedUserIDs: Set<String> = ["u-echo", "u-black"]
-        followedUserIDs = initialFollowedUserIDs
+        likedPostIDs = startsLoggedIn ? Self.demoLikedPostIDs : []
+        favoritePostIDs = startsLoggedIn ? Self.demoFavoritePostIDs : []
+        followedUserIDs = startsLoggedIn ? initialFollowedUserIDs : []
         followingIDsByUserID = [
             "u-me": initialFollowedUserIDs,
             "u-berry": ["u-me"],
-            "u-echo": ["u-moon"],
-            "u-black": ["u-echo"],
+            "u-echo": ["u-moon", "u-me"],
+            "u-black": ["u-echo", "u-me"],
             "u-moon": ["u-black"]
         ]
         browsingHistoryIDs = ["p-my-pinggu", "p-badge", "p-card", "p-jewelry", "p-concert", "p-magazine"]
@@ -596,6 +736,10 @@ final class MockAppStore: ObservableObject {
 
     var activePosts: [GroupBuyPost] {
         posts.filter { $0.status == .active }
+    }
+
+    var messageThreads: [MessageThread] {
+        threads.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func user(id: String) -> User {
@@ -629,6 +773,16 @@ final class MockAppStore: ObservableObject {
             .sorted { registrationID(for: $0.id) < registrationID(for: $1.id) }
     }
 
+    func mutualFriendUsers() -> [User] {
+        users
+            .filter { user in
+                user.id != currentUserID &&
+                followedUserIDs.contains(user.id) &&
+                followingIDs(for: user.id).contains(currentUserID)
+            }
+            .sorted { registrationID(for: $0.id) < registrationID(for: $1.id) }
+    }
+
     func relationUsers(for userID: String, kind: UserRelationKind) -> [User] {
         switch kind {
         case .following: followingUsers(for: userID)
@@ -643,25 +797,46 @@ final class MockAppStore: ObservableObject {
     func collections(ownerID: String) -> [GroupCollection] {
         collections
             .filter { $0.ownerID == ownerID }
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted { lhs, rhs in
+                if lhs.isEnded != rhs.isEnded {
+                    return !lhs.isEnded
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+    }
+
+    func unfinishedCollectionCount(ownerID: String) -> Int {
+        collections.filter { $0.ownerID == ownerID && !$0.isEnded }.count
+    }
+
+    func completedGroupTotal(for userID: String) -> Int {
+        user(id: userID).postCount
     }
 
     func posts(in collectionID: String) -> [GroupBuyPost] {
         guard let collection = collection(id: collectionID) else { return [] }
-        return collection.postIDs.compactMap(post).filter { $0.status == .active }
+        return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active })
+    }
+
+    func sortedFeedPosts(_ posts: [GroupBuyPost]) -> [GroupBuyPost] {
+        posts.sorted { lhs, rhs in
+            if lhs.isEnded != rhs.isEnded {
+                return !lhs.isEnded
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
     }
 
     func splitGoodsPosts(matchingRole keyword: String) -> [GroupBuyPost] {
         let trimmed = keyword.trimmed
         guard !trimmed.isEmpty else { return [] }
-        return activePosts
+        return sortedFeedPosts(activePosts
             .filter { post in
                 post.groupType == .splitGoods &&
                 post.unsoldRoles.contains { role in
                     role.isAvailable && role.name.localizedCaseInsensitiveContains(trimmed)
                 }
-            }
-            .sorted { $0.createdAt > $1.createdAt }
+            })
     }
 
     func availableRoles(for postID: String) -> [UnsoldRole] {
@@ -669,7 +844,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func browsingHistoryPosts() -> [GroupBuyPost] {
-        browsingHistoryIDs.compactMap(post).filter { $0.status == .active }
+        sortedFeedPosts(browsingHistoryIDs.compactMap(post).filter { $0.status == .active })
     }
 
     func recordBrowse(postID: String) {
@@ -699,7 +874,18 @@ final class MockAppStore: ObservableObject {
         comments.filter { $0.postID == postID && $0.status == .active }.sorted { $0.createdAt < $1.createdAt }
     }
 
+    @discardableResult
+    func requireLogin(prompt: String = "登录后才能使用该功能") -> Bool {
+        guard isLoggedIn else {
+            showToast(prompt)
+            isAuthPromptPresented = true
+            return false
+        }
+        return true
+    }
+
     func toggleLike(postID: String) {
+        guard requireLogin(prompt: "登录后才能点赞") else { return }
         guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
         if likedPostIDs.contains(postID) {
             likedPostIDs.remove(postID)
@@ -711,6 +897,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func toggleFavorite(postID: String) {
+        guard requireLogin(prompt: "登录后才能收藏") else { return }
         guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
         if favoritePostIDs.contains(postID) {
             favoritePostIDs.remove(postID)
@@ -727,6 +914,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func toggleFollow(userID: String) {
+        guard requireLogin(prompt: "登录后才能关注") else { return }
         guard userID != currentUserID else { return }
         let targetIndex = users.firstIndex(where: { $0.id == userID })
         let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
@@ -754,6 +942,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func addComment(postID: String, body: String) {
+        guard requireLogin(prompt: "登录后才能评论") else { return }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         comments.append(Comment(id: "c-\(UUID().uuidString)", body: trimmed, authorID: currentUserID, postID: postID, replyToID: nil, createdAt: Date(), status: .active))
@@ -764,6 +953,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func reportPost(postID: String, reason: String = "用户举报") {
+        guard requireLogin(prompt: "登录后才能举报") else { return }
         reports.append(Report(id: "rp-\(UUID().uuidString)", target: .post(postID), reason: reason, detail: "来自详情页的原型举报。", reporterID: currentUserID, status: .pending, adminResult: nil, handledAt: nil))
         if let index = posts.firstIndex(where: { $0.id == postID }) {
             posts[index].reportCount += 1
@@ -791,14 +981,15 @@ final class MockAppStore: ObservableObject {
     }
 
     func copyToPasteboard(_ value: String, label: String) {
+        guard requireLogin(prompt: "登录后才能复制内容") else { return }
         UIPasteboard.general.string = value
         showToast("已复制\(label)")
     }
 
     func posts(tagged tag: String) -> [GroupBuyPost] {
-        activePosts
+        sortedFeedPosts(activePosts
             .filter { $0.categoryTags.contains(tag) || $0.fandomTags.contains(tag) || $0.title.localizedCaseInsensitiveContains(tag) }
-            .sorted { $0.likedCount > $1.likedCount }
+        )
     }
 
     func canChangeNickname(for user: User) -> Bool {
@@ -846,11 +1037,107 @@ final class MockAppStore: ObservableObject {
     }
 
     func setLoginState(_ loggedIn: Bool) {
-        isLoggedIn = loggedIn
-        showToast(loggedIn ? "已登录原型账号" : "已退出当前账号")
+        if loggedIn {
+            logInDemoAccount(provider: "账号")
+        } else {
+            logOut()
+        }
+    }
+
+    func logOut() {
+        isLoggedIn = false
+        isAuthPromptPresented = false
+        likedPostIDs.removeAll()
+        favoritePostIDs.removeAll()
+        followedUserIDs.removeAll()
+        authSessionVersion = UUID()
+        showToast("已退出当前账号")
+    }
+
+    func logInDemoAccount(provider: String) {
+        switchCurrentUser(to: Self.demoUserID)
+        showToast("已通过\(provider)登录")
+    }
+
+    @discardableResult
+    func registerAccount(nickname: String, phone: String, password: String) -> Bool {
+        let trimmedNickname = nickname.trimmed
+        let trimmedPhone = phone.trimmed
+        let trimmedPassword = password.trimmed
+
+        guard !trimmedNickname.isEmpty else {
+            showToast("请填写昵称")
+            return false
+        }
+        guard trimmedPhone.count >= 6 else {
+            showToast("请填写有效手机号")
+            return false
+        }
+        guard trimmedPassword.count >= 6 else {
+            showToast("密码至少 6 位")
+            return false
+        }
+        guard !users.contains(where: { $0.phoneNumber == trimmedPhone }) else {
+            showToast("该手机号已注册")
+            return false
+        }
+
+        let userID = "u-\(UUID().uuidString)"
+        let avatarSymbol = String(trimmedNickname.prefix(1))
+        let user = User(
+            id: userID,
+            nickname: trimmedNickname,
+            bio: "点击这里，填写简介",
+            followingCount: 0,
+            followersCount: 0,
+            postCount: 0,
+            isRestricted: false,
+            canShowContact: true,
+            avatarSymbol: avatarSymbol.isEmpty ? "新" : avatarSymbol,
+            avatarTint: .rose,
+            redBookID: String(trimmedPhone.suffix(8)),
+            gender: "未设置",
+            birthday: "选择生日",
+            region: "未设置",
+            backgroundImageName: "merch_magazine",
+            phoneNumber: trimmedPhone,
+            password: trimmedPassword
+        )
+
+        users.append(user)
+        followingIDsByUserID[userID] = []
+        switchCurrentUser(to: userID)
+        showToast("注册成功，已登录")
+        return true
+    }
+
+    @discardableResult
+    func loginWithPhone(phone: String, password: String) -> Bool {
+        let trimmedPhone = phone.trimmed
+        let trimmedPassword = password.trimmed
+        guard let user = users.first(where: { $0.phoneNumber == trimmedPhone && $0.password == trimmedPassword }) else {
+            showToast("手机号或密码不正确")
+            return false
+        }
+        switchCurrentUser(to: user.id)
+        showToast("登录成功")
+        return true
+    }
+
+    private func switchCurrentUser(to userID: String) {
+        guard users.contains(where: { $0.id == userID }) else { return }
+        currentUserID = userID
+        followedUserIDs = followingIDsByUserID[userID] ?? []
+        followingIDsByUserID[userID] = followedUserIDs
+        likedPostIDs = userID == Self.demoUserID ? Self.demoLikedPostIDs : []
+        favoritePostIDs = userID == Self.demoUserID ? Self.demoFavoritePostIDs : []
+        isLoggedIn = true
+        isAuthPromptPresented = false
+        authSessionVersion = UUID()
     }
 
     func sharePostToThread(postID: String, threadID: String) {
+        guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let post = post(id: postID),
               let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         threads[index].messages.append(
@@ -866,7 +1153,14 @@ final class MockAppStore: ObservableObject {
         showToast("已分享给站内好友")
     }
 
+    func sharePostToUser(postID: String, userID: String) {
+        guard requireLogin(prompt: "登录后才能私信分享") else { return }
+        guard let threadID = threadID(forRecipient: userID, relatedPostID: postID) else { return }
+        sharePostToThread(postID: postID, threadID: threadID)
+    }
+
     func shareProfileToThread(userID: String, threadID: String) {
+        guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let user = users.first(where: { $0.id == userID }),
               let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         threads[index].messages.append(
@@ -882,13 +1176,83 @@ final class MockAppStore: ObservableObject {
         showToast("已分享给站内好友")
     }
 
-    func sendMessage(threadID: String, body: String) {
+    func shareProfileToUser(profileUserID: String, recipientUserID: String) {
+        guard requireLogin(prompt: "登录后才能私信分享") else { return }
+        guard let threadID = threadID(forRecipient: recipientUserID, relatedPostID: profileUserID) else { return }
+        shareProfileToThread(userID: profileUserID, threadID: threadID)
+    }
+
+    func consultationThreadID(for postID: String) -> String? {
+        guard requireLogin(prompt: "登录后才能发私信") else { return nil }
+        guard let post = post(id: postID) else { return nil }
+        return threadID(forRecipient: post.authorID, relatedPostID: postID)
+    }
+
+    func directMessageThreadID(for userID: String) -> String? {
+        guard requireLogin(prompt: "登录后才能发私信") else { return nil }
+        return threadID(forRecipient: userID, relatedPostID: nil)
+    }
+
+    func ensureMutualFriendThreads() {
+        for friend in mutualFriendUsers() where !threads.contains(where: { $0.publisherUserID == friend.id && $0.relatedPostID == nil }) {
+            let threadID = "t-\(UUID().uuidString)"
+            let thread = MessageThread(
+                id: threadID,
+                buyerUserID: currentUserID,
+                publisherUserID: friend.id,
+                relatedPostID: nil,
+                messages: [],
+                unreadCount: 0,
+                updatedAt: Date.distantPast
+            )
+            threads.append(thread)
+        }
+    }
+
+    private func threadID(forRecipient userID: String, relatedPostID: String?) -> String? {
+        guard requireLogin(prompt: "登录后才能发私信") else { return nil }
+        guard userID != currentUserID else { return nil }
+        if let existing = threads.first(where: { $0.publisherUserID == userID && $0.relatedPostID == relatedPostID }) {
+            return existing.id
+        }
+        if let existing = threads.first(where: { $0.publisherUserID == userID }) {
+            return existing.id
+        }
+        let threadID = "t-\(UUID().uuidString)"
+        let thread = MessageThread(
+            id: threadID,
+            buyerUserID: currentUserID,
+            publisherUserID: userID,
+            relatedPostID: relatedPostID,
+            messages: [],
+            unreadCount: 0,
+            updatedAt: Date()
+        )
+        threads.insert(thread, at: 0)
+        return threadID
+    }
+
+    func sendMessage(threadID: String, body: String) -> Bool {
+        guard requireLogin(prompt: "登录后才能发私信") else { return false }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+              let index = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+        guard canSendMessage(in: threads[index]) else {
+            showToast("对方未关注你时，回复前最多发送两条消息")
+            return false
+        }
         threads[index].messages.append(DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date()))
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
+        return true
+    }
+
+    private func canSendMessage(in thread: MessageThread) -> Bool {
+        guard limitsUnrepliedMessages else { return true }
+        let peerFollowsCurrentUser = followingIDs(for: thread.publisherUserID).contains(currentUserID)
+        guard !peerFollowsCurrentUser else { return true }
+        let trailingOwnMessages = thread.messages.reversed().prefix { $0.senderID == currentUserID }.count
+        return trailingOwnMessages < 2
     }
 
     func markThreadRead(threadID: String) {
@@ -897,11 +1261,12 @@ final class MockAppStore: ObservableObject {
         threads[index].unreadCount = 0
     }
 
-    func createCollection(name: String, wechat: String, qq: String, groupInfo: String, deadline: Date, defaultNote: String) {
+    @discardableResult
+    func createCollection(name: String, wechat: String, qq: String, groupInfo: String, deadline: Date, defaultNote: String) -> String? {
         let trimmedName = name.trimmed
         guard !trimmedName.isEmpty else {
             showToast("请先填写合集名称")
-            return
+            return nil
         }
         let collection = GroupCollection(
             id: "col-\(UUID().uuidString)",
@@ -917,11 +1282,15 @@ final class MockAppStore: ObservableObject {
         )
         collections.insert(collection, at: 0)
         showToast("已创建拼团合集")
+        return collection.id
     }
 
     func addPost(_ postID: String, to collectionID: String) {
         guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
               let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
+        for index in collections.indices where collections[index].id != collectionID {
+            collections[index].postIDs.removeAll { $0 == postID }
+        }
         if !collections[collectionIndex].postIDs.contains(postID) {
             collections[collectionIndex].postIDs.append(postID)
         }
@@ -932,11 +1301,26 @@ final class MockAppStore: ObservableObject {
     func removePost(_ postID: String, from collectionID: String) {
         guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
               let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
-        collections[collectionIndex].postIDs.removeAll { $0 == postID }
         if posts[postIndex].collectionID == collectionID {
-            posts[postIndex].collectionID = nil
+            showToast("帖子必须保留在一个合集里")
+            return
         }
+        collections[collectionIndex].postIDs.removeAll { $0 == postID }
         showToast("已移出合集")
+    }
+
+    func deleteOwnPost(postID: String) {
+        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
+              posts[postIndex].authorID == currentUserID else { return }
+        posts[postIndex].status = .deleted
+        likedPostIDs.remove(postID)
+        favoritePostIDs.remove(postID)
+        reminders.removeAll { $0.postID == postID }
+        browsingHistoryIDs.removeAll { $0 == postID }
+        for collectionIndex in collections.indices {
+            collections[collectionIndex].postIDs.removeAll { $0 == postID }
+        }
+        showToast("帖子已删除")
     }
 
     func addUnsoldRole(postID: String, name: String, quantity: Int) {
@@ -961,16 +1345,12 @@ final class MockAppStore: ObservableObject {
         showToast("已删除角色")
     }
 
-    func createPost(title: String, groupType: GroupBuyType, collectionID: String?, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, risk: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
-        let inherited = collection(id: collectionID)
+    func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
+        guard let inherited = collection(id: collectionID) else {
+            showToast("请先选择拼团合集")
+            return
+        }
         let postID = "p-\(UUID().uuidString)"
-        var normalizedTags = tags
-        if !normalizedTags.contains(groupType.rawValue) {
-            normalizedTags.append(groupType.rawValue)
-        }
-        if groupType == .followGroup && !normalizedTags.contains("自印团") {
-            normalizedTags.append("自印团")
-        }
         let post = GroupBuyPost(
             id: postID,
             title: title,
@@ -978,20 +1358,19 @@ final class MockAppStore: ObservableObject {
             uploadedImageData: uploadedImageData,
             authorID: currentUserID,
             groupType: groupType,
-            collectionID: collectionID,
-            categoryTags: normalizedTags,
-            fandomTags: ["新发布"],
+            collectionID: inherited.id,
+            categoryTags: tags,
+            fandomTags: [],
             price: price,
             deposit: deposit,
-            deadline: inherited?.deadline ?? deadline,
+            deadline: inherited.deadline,
             condition: condition,
             isFormed: false,
             description: description,
-            wechat: inherited?.contactWechat ?? wechat,
-            qq: inherited?.contactQQ ?? qq,
-            groupInfo: inherited?.groupInfo ?? groupInfo,
+            wechat: inherited.contactWechat,
+            qq: inherited.contactQQ,
+            groupInfo: inherited.groupInfo,
             externalLink: "",
-            riskNotice: risk,
             createdAt: Date(),
             likedCount: 0,
             favoriteCount: 0,
@@ -1004,8 +1383,7 @@ final class MockAppStore: ObservableObject {
             unsoldRoles: groupType == .splitGoods ? unsoldRoles.filter(\.isAvailable) : []
         )
         posts.insert(post, at: 0)
-        if let collectionID,
-           let index = collections.firstIndex(where: { $0.id == collectionID }) {
+        if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
             collections[index].postIDs.insert(postID, at: 0)
         }
         showToast("发布成功，已进入\(groupType.moduleTitle)模块")
@@ -1033,13 +1411,9 @@ struct HomeView: View {
     var posts: [GroupBuyPost] {
         switch feed {
         case .followGroup:
-            store.activePosts
-                .filter { $0.groupType == .followGroup }
-                .sorted { $0.createdAt > $1.createdAt }
+            store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .followGroup })
         case .splitGoods:
-            store.activePosts
-                .filter { $0.groupType == .splitGoods }
-                .sorted { $0.createdAt > $1.createdAt }
+            store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .splitGoods })
         }
     }
 
@@ -1149,6 +1523,11 @@ struct FollowingFeedView: View {
 
 struct WaterfallGrid: View {
     let posts: [GroupBuyPost]
+    private let spacing: CGFloat = FeedCardMetrics.columnSpacing
+
+    private var columnWidth: CGFloat {
+        FeedCardMetrics.columnWidth(screenWidth: UIScreen.main.bounds.width)
+    }
 
     private var leftPosts: [GroupBuyPost] {
         posts.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
@@ -1162,50 +1541,57 @@ struct WaterfallGrid: View {
         HStack(alignment: .top, spacing: 12) {
             LazyVStack(spacing: 14) {
                 ForEach(leftPosts) { post in
-                    PostCard(post: post)
+                    PostCard(post: post, cardWidth: columnWidth)
                 }
             }
             LazyVStack(spacing: 14) {
                 ForEach(rightPosts) { post in
-                    PostCard(post: post)
+                    PostCard(post: post, cardWidth: columnWidth)
                 }
             }
         }
     }
 }
 
+enum FeedCardMetrics {
+    static let horizontalPadding: CGFloat = 12
+    static let columnSpacing: CGFloat = 12
+    static let imageAspect: CGFloat = 0.75
+
+    static func columnWidth(screenWidth: CGFloat) -> CGFloat {
+        (screenWidth - horizontalPadding * 2 - columnSpacing) / 2
+    }
+
+    static func imageHeight(for width: CGFloat) -> CGFloat {
+        width / imageAspect
+    }
+}
+
 struct PostCard: View {
     @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
+    let cardWidth: CGFloat
 
     var body: some View {
         let livePost = store.post(id: post.id) ?? post
         let author = store.user(id: livePost.authorID)
+        let isEnded = livePost.isEnded
         ZStack(alignment: .bottomTrailing) {
             NavigationLink(value: Route.postDetail(livePost.id)) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ZStack(alignment: .topTrailing) {
+                    ZStack {
                         PostImageView(post: livePost)
                             .scaledToFill()
-                            .frame(maxWidth: .infinity)
-                            .aspectRatio(1, contentMode: .fit)
+                            .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
                             .clipped()
-                        HStack {
-                            Label(livePost.groupType.rawValue, systemImage: livePost.groupType.icon)
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(livePost.groupType.accent.opacity(0.92), in: Capsule())
-                            Spacer()
-                        }
-                        .padding(8)
-                        Text(livePost.deadline.shortDeadlineText)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(.black.opacity(0.48), in: Capsule())
+                    }
+                    .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
+                    .overlay(alignment: .topLeading) {
+                        PostCardTypeBadge(post: livePost)
+                            .padding(8)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        PostCardDeadlineBadge(text: livePost.deadline.shortDeadlineText)
                             .padding(8)
                     }
 
@@ -1262,13 +1648,58 @@ struct PostCard: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 }
+                .frame(width: cardWidth)
             }
             .buttonStyle(.plain)
+            .saturation(isEnded ? 0 : 1)
+            .opacity(isEnded ? 0.58 : 1)
+            .overlay(alignment: .topLeading) {
+                if isEnded {
+                    Text("已结团")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Theme.subtext)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Theme.panelRaised.opacity(0.92), in: Capsule())
+                        .padding(8)
+                }
+            }
 
-            PostLikeCountButton(postID: livePost.id)
-                .padding(.trailing, 8)
-                .padding(.bottom, 42)
+            if !isEnded {
+                PostLikeCountButton(postID: livePost.id)
+                    .padding(.trailing, 8)
+                    .padding(.bottom, 42)
+            }
         }
+        .frame(width: cardWidth)
+    }
+}
+
+struct PostCardTypeBadge: View {
+    let post: GroupBuyPost
+
+    var body: some View {
+        Label(post.groupType.rawValue, systemImage: post.groupType.icon)
+            .font(.system(size: 11, weight: .black))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .frame(width: 64, height: 28)
+            .background(post.groupType.accent.opacity(0.94), in: Capsule())
+    }
+}
+
+struct PostCardDeadlineBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(Theme.floatingBadgeText)
+            .lineLimit(1)
+            .minimumScaleFactor(0.78)
+            .frame(width: 74, height: 28)
+            .background(Theme.floatingBadgeBackground, in: Capsule())
     }
 }
 
@@ -1310,43 +1741,410 @@ struct PostLikeCountButton: View {
     }
 }
 
-struct MarketView: View {
+struct GuestAuthView: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var hasAcceptedTerms = false
+    @State private var isRegisterPresented = false
+    let onClose: (() -> Void)?
 
-    var posts: [GroupBuyPost] {
-        store.activePosts
-            .filter { store.followedUserIDs.contains($0.authorID) }
-            .sorted { $0.createdAt > $1.createdAt }
+    init(onClose: (() -> Void)? = nil) {
+        self.onClose = onClose
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.015, green: 0.016, blue: 0.022)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack {
+                    if let onClose {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(Color.white.opacity(0.72))
+                                .frame(width: 44, height: 44)
+                                .background(Color.white.opacity(0.08), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 34)
+                .frame(height: 78)
+
+                Spacer(minLength: 80)
+
+                GuestBrandLogo()
+
+                Spacer()
+
+                VStack(spacing: 28) {
+                    VStack(spacing: 18) {
+                        Button {
+                            logIn(provider: "微信")
+                        } label: {
+                            Label("微信登录", systemImage: "bubble.left.and.bubble.right.fill")
+                                .font(.system(size: 23, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 64)
+                                .background(Color(red: 0.03, green: 0.78, blue: 0.36), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            logIn(provider: "Apple")
+                        } label: {
+                            Label("通过 Apple 登录", systemImage: "apple.logo")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 62)
+                                .overlay {
+                                    Capsule().stroke(Color.white.opacity(0.32), lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            isRegisterPresented = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("其他登录方式")
+                                    .underline()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 17, weight: .bold))
+                            }
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(Color(red: 0.78, green: 0.85, blue: 0.94))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button {
+                        hasAcceptedTerms.toggle()
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: hasAcceptedTerms ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(hasAcceptedTerms ? Theme.hotPink : Color.white.opacity(0.36))
+                                .padding(.top, 1)
+                            Text("我已阅读并同意《用户协议》《隐私政策》《未成年人个人信息保护规则》")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
+                                .lineSpacing(7)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 34)
+                .padding(.bottom, 34)
+            }
+        }
+        .navigationBarHidden(true)
+        .preferredColorScheme(.dark)
+        .fullScreenCover(isPresented: $isRegisterPresented) {
+            PhoneAuthView()
+                .environmentObject(store)
+                .preferredColorScheme(.dark)
+        }
+    }
+
+    private func logIn(provider: String) {
+        guard hasAcceptedTerms else {
+            store.showToast("请先勾选并同意协议")
+            return
+        }
+        store.logInDemoAccount(provider: provider)
+    }
+}
+
+struct GuestBrandLogo: View {
+    private var logoGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                .white,
+                Color(red: 1, green: 0.78, blue: 0.82),
+                Theme.hotPink
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    logoGradient,
+                    style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 78, height: 78)
+
+            Text("才")
+                .font(.system(size: 58, weight: .black, design: .rounded))
+                .foregroundStyle(logoGradient)
+                .offset(x: -1, y: 2)
+        }
+        .frame(width: 92, height: 92)
+            .shadow(color: Theme.hotPink.opacity(0.26), radius: 14, x: 0, y: 6)
+            .accessibilityLabel("团")
+    }
+}
+
+enum PhoneAuthMode: String, CaseIterable, Identifiable {
+    case register = "注册"
+    case login = "登录"
+
+    var id: String { rawValue }
+}
+
+struct PhoneAuthView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var mode: PhoneAuthMode = .register
+    @State private var nickname = ""
+    @State private var phone = ""
+    @State private var password = ""
+    @State private var confirmPassword = ""
+    @State private var hasAcceptedTerms = false
+
+    var canSubmit: Bool {
+        switch mode {
+        case .register:
+            !nickname.trimmed.isEmpty &&
+            phone.trimmed.count >= 6 &&
+            password.trimmed.count >= 6 &&
+            password == confirmPassword &&
+            hasAcceptedTerms
+        case .login:
+            phone.trimmed.count >= 6 &&
+            !password.trimmed.isEmpty &&
+            hasAcceptedTerms
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("关注")
-                    .font(.system(size: 28, weight: .black))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                NavigationLink(value: Route.search) {
-                    Image(systemName: "magnifyingglass")
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
                         .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.white)
+                        .frame(width: 48, height: 48)
                 }
                 .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(mode == .register ? "注册账号" : "账号登录")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                Color.clear.frame(width: 48, height: 48)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
             .padding(.top, 10)
-            .padding(.bottom, 8)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            }
 
             ScrollView(showsIndicators: false) {
-                FollowingFeedView(posts: posts)
-                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 26) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(mode == .register ? "手机号注册" : "手机号登录")
+                            .font(.system(size: 34, weight: .black))
+                            .foregroundStyle(.white)
+                        Text(mode == .register ? "创建账号后会自动进入个人主页。" : "输入已注册手机号和密码继续。")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.56))
+                    }
+                    .padding(.top, 18)
+
+                    HStack(spacing: 8) {
+                        ForEach(PhoneAuthMode.allCases) { item in
+                            Button {
+                                mode = item
+                            } label: {
+                                Text(item.rawValue)
+                                    .font(.system(size: 16, weight: .black))
+                                    .foregroundStyle(mode == item ? .white : Color.white.opacity(0.52))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    VStack(spacing: 14) {
+                        if mode == .register {
+                            AuthTextField(title: "昵称", placeholder: "设置你的昵称", text: $nickname)
+                        }
+                        AuthTextField(title: "手机号", placeholder: "输入手机号", text: $phone, keyboardType: .phonePad)
+                        AuthSecureField(title: "密码", placeholder: "至少 6 位", text: $password)
+                        if mode == .register {
+                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword)
+                        }
+                    }
+
+                    Button {
+                        submit()
+                    } label: {
+                        Text(mode == .register ? "注册并登录" : "登录")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(canSubmit ? Theme.hotPink : Color.white.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmit)
+
+                    Button {
+                        hasAcceptedTerms.toggle()
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: hasAcceptedTerms ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(hasAcceptedTerms ? Theme.hotPink : Color.white.opacity(0.36))
+                            Text("我已阅读并同意《用户协议》《隐私政策》")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 22)
+                .padding(.bottom, 28)
             }
         }
-        .background(Theme.background.ignoresSafeArea())
+        .background(Color(red: 0.015, green: 0.016, blue: 0.022).ignoresSafeArea())
+    }
+
+    private func submit() {
+        guard hasAcceptedTerms else {
+            store.showToast("请先勾选并同意协议")
+            return
+        }
+        switch mode {
+        case .register:
+            guard password == confirmPassword else {
+                store.showToast("两次输入的密码不一致")
+                return
+            }
+            if store.registerAccount(nickname: nickname, phone: phone, password: password) {
+                dismiss()
+            }
+        case .login:
+            if store.loginWithPhone(phone: phone, password: password) {
+                dismiss()
+            }
+        }
+    }
+}
+
+struct AuthTextField: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    var keyboardType: UIKeyboardType = .default
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.56))
+            TextField(placeholder, text: $text)
+                .keyboardType(keyboardType)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .tint(Theme.hotPink)
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                }
+        }
+    }
+}
+
+struct AuthSecureField: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.56))
+            SecureField(placeholder, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .tint(Theme.hotPink)
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                }
+        }
+    }
+}
+
+struct MarketView: View {
+    @EnvironmentObject private var store: MockAppStore
+
+    var posts: [GroupBuyPost] {
+        store.sortedFeedPosts(store.activePosts.filter { store.followedUserIDs.contains($0.authorID) })
+    }
+
+    var body: some View {
+        Group {
+            if store.isLoggedIn {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("关注")
+                            .font(.system(size: 28, weight: .black))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        NavigationLink(value: Route.search) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 28, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                    }
+
+                    ScrollView(showsIndicators: false) {
+                        FollowingFeedView(posts: posts)
+                            .padding(.top, 2)
+                    }
+                }
+                .background(Theme.background.ignoresSafeArea())
+            } else {
+                GuestAuthView()
+            }
+        }
         .navigationBarHidden(true)
     }
 }
@@ -1435,9 +2233,14 @@ struct SearchView: View {
         }
         switch selectedFilter {
         case "最新":
-            return result.sorted { $0.createdAt > $1.createdAt }
+            return store.sortedFeedPosts(result)
         default:
-            return result.sorted { $0.likedCount > $1.likedCount }
+            return result.sorted { lhs, rhs in
+                if lhs.isEnded != rhs.isEnded {
+                    return !lhs.isEnded
+                }
+                return lhs.likedCount > rhs.likedCount
+            }
         }
     }
 
@@ -1877,18 +2680,20 @@ struct PostDetailView: View {
         if let post = store.post(id: postID) {
             let author = store.user(id: post.authorID)
             let imageCount = max(1, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count)
-            let safeImageIndex = min(selectedImageIndex, imageCount - 1)
-            let detailImageHeight = imageHeight(for: post, index: safeImageIndex)
+            let detailImageHeight = imageHeight(for: post, index: 0)
             VStack(spacing: 0) {
                 DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         TabView(selection: $selectedImageIndex) {
                             ForEach(0..<imageCount, id: \.self) { index in
-                                PostImageView(post: post, index: index)
-                                    .scaledToFit()
-                                    .frame(maxWidth: .infinity)
-                                    .tag(index)
+                                PostDetailImagePage(
+                                    post: post,
+                                    index: index,
+                                    canvasWidth: UIScreen.main.bounds.width,
+                                    canvasHeight: detailImageHeight
+                                )
+                                .tag(index)
                             }
                         }
                         .frame(height: detailImageHeight)
@@ -1913,7 +2718,6 @@ struct PostDetailView: View {
                                 PingguRoleAvailabilityCard(postID: post.id)
                             }
                             ContactCard(post: post)
-                            RiskNoticeCard(postID: post.id, text: post.riskNotice)
                             CommentSection(postID: post.id, commentDraft: $commentDraft)
                         }
                         .padding(18)
@@ -1962,6 +2766,25 @@ struct PostDetailView: View {
     }
 }
 
+struct PostDetailImagePage: View {
+    let post: GroupBuyPost
+    let index: Int
+    let canvasWidth: CGFloat
+    let canvasHeight: CGFloat
+
+    var body: some View {
+        ZStack {
+            Theme.background
+            PostImageView(post: post, index: index)
+                .scaledToFit()
+                .frame(width: canvasWidth, height: canvasHeight)
+        }
+        .frame(width: canvasWidth, height: canvasHeight)
+        .clipped()
+        .background(Theme.background)
+    }
+}
+
 struct DetailTopBar: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
@@ -2007,7 +2830,9 @@ struct DetailTopBar: View {
             .buttonStyle(.plain)
 
             Button {
-                isShareSheetPresented = true
+                if store.requireLogin(prompt: "登录后才能分享") {
+                    isShareSheetPresented = true
+                }
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 24, weight: .semibold))
@@ -2028,6 +2853,7 @@ struct DetailTopBar: View {
 struct ShareSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    @State private var isRecipientPickerPresented = false
     let post: GroupBuyPost
 
     var stationThreads: [MessageThread] {
@@ -2113,10 +2939,7 @@ struct ShareSheetView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
                     ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
-                        if let first = stationThreads.first {
-                            store.sharePostToThread(postID: post.id, threadID: first.id)
-                        }
-                        dismiss()
+                        isRecipientPickerPresented = true
                     }
                     ShareOptionButton(title: "微信好友", icon: "bubble.left.and.bubble.right.fill", color: Color(red: 0.05, green: 0.76, blue: 0.32)) {
                         store.showToast("已唤起微信分享占位")
@@ -2166,12 +2989,174 @@ struct ShareSheetView: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .fullScreenCover(isPresented: $isRecipientPickerPresented) {
+            ShareRecipientPickerView(primaryUserID: post.authorID) { user in
+                store.sharePostToUser(postID: post.id, userID: user.id)
+                dismiss()
+            }
+        }
+    }
+}
+
+struct ShareRecipientSection: Identifiable {
+    let title: String
+    let users: [User]
+
+    var id: String { title }
+}
+
+struct ShareRecipientPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var query = ""
+    let primaryUserID: String?
+    let onSelect: (User) -> Void
+
+    var sections: [ShareRecipientSection] {
+        let following = store.followingUsers(for: store.currentUserID)
+        let mutual = following.filter { user in
+            store.followingUsers(for: user.id).contains { $0.id == store.currentUserID }
+        }
+        let recent = uniqueUsers(
+            store.threads
+                .sorted { $0.updatedAt > $1.updatedAt }
+                .map { store.user(id: $0.publisherUserID) }
+        )
+        let allFollowed = uniqueUsers(following)
+        var groups: [ShareRecipientSection] = []
+
+        if let primaryUserID {
+            let primary = uniqueUsers([store.user(id: primaryUserID)])
+            groups.append(ShareRecipientSection(title: "作者", users: primary))
+        }
+        groups.append(ShareRecipientSection(title: "最近聊天", users: recent))
+        groups.append(ShareRecipientSection(title: "互相关注", users: uniqueUsers(mutual)))
+        groups.append(ShareRecipientSection(title: "全部关注", users: allFollowed))
+
+        return groups
+            .map { ShareRecipientSection(title: $0.title, users: filtered($0.users)) }
+            .filter { !$0.users.isEmpty }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("取消")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 72, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+                Text("分享至")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Color.clear.frame(width: 72, height: 1)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 20)
+            .padding(.bottom, 18)
+
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(Theme.muted)
+                TextField("搜索", text: $query)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .textInputAutocapitalization(.never)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 52)
+            .background(Theme.panel, in: Capsule())
+            .padding(.horizontal, 18)
+            .padding(.bottom, 22)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(sections) { section in
+                        Text(section.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Theme.muted)
+                            .padding(.horizontal, 18)
+                            .padding(.top, 18)
+                            .padding(.bottom, 10)
+                        ForEach(section.users) { user in
+                            Button {
+                                onSelect(user)
+                                dismiss()
+                            } label: {
+                                ShareRecipientRow(user: user)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.bottom, 40)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+    }
+
+    private func filtered(_ users: [User]) -> [User] {
+        let trimmedQuery = query.trimmed
+        guard !trimmedQuery.isEmpty else { return users }
+        return users.filter {
+            $0.nickname.localizedCaseInsensitiveContains(trimmedQuery) ||
+            store.registrationID(for: $0.id).contains(trimmedQuery)
+        }
+    }
+
+    private func uniqueUsers(_ users: [User]) -> [User] {
+        var seen = Set<String>()
+        return users.filter { user in
+            guard user.id != store.currentUserID else { return false }
+            return seen.insert(user.id).inserted
+        }
+    }
+}
+
+struct ShareRecipientRow: View {
+    let user: User
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Circle()
+                .stroke(Theme.subtext.opacity(0.5), lineWidth: 2)
+                .frame(width: 32, height: 32)
+            AvatarView(user: user, size: 58)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(user.nickname)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Text("20 分钟内在线")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Theme.hairline)
+                .frame(height: 0.5)
+                .padding(.leading, 126)
+        }
     }
 }
 
 struct ProfileShareSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    @State private var isRecipientPickerPresented = false
     let user: User
 
     var stationThreads: [MessageThread] {
@@ -2257,10 +3242,7 @@ struct ProfileShareSheetView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
                     ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
-                        if let first = stationThreads.first {
-                            store.shareProfileToThread(userID: user.id, threadID: first.id)
-                        }
-                        dismiss()
+                        isRecipientPickerPresented = true
                     }
                     ShareOptionButton(title: "微信好友", icon: "bubble.left.and.bubble.right.fill", color: Color(red: 0.05, green: 0.76, blue: 0.32)) {
                         store.showToast("已唤起微信分享占位")
@@ -2301,6 +3283,12 @@ struct ProfileShareSheetView: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .fullScreenCover(isPresented: $isRecipientPickerPresented) {
+            ShareRecipientPickerView(primaryUserID: user.id) { recipient in
+                store.shareProfileToUser(profileUserID: user.id, recipientUserID: recipient.id)
+                dismiss()
+            }
+        }
     }
 }
 
@@ -2569,6 +3557,7 @@ struct EditableRoleRow: View {
 
 struct ContactCard: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var chatThreadID: String?
     let post: GroupBuyPost
 
     var body: some View {
@@ -2605,41 +3594,33 @@ struct ContactCard: View {
                         store.copyToPasteboard(groupInfo, label: "群聊信息")
                     }
                     ContactButton(title: "私信咨询", icon: "bubble.left.and.text.bubble.right.fill") {
-                        store.showToast("可在消息页继续咨询团长")
+                        chatThreadID = store.consultationThreadID(for: post.id)
                     }
                 }
             }
         }
         .padding(16)
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-struct RiskNoticeCard: View {
-    @EnvironmentObject private var store: MockAppStore
-    let postID: String
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("风险提示", systemImage: "exclamationmark.shield.fill")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.text)
-            Text(text)
-                .font(.system(size: 14))
-                .lineSpacing(4)
-                .foregroundStyle(Theme.subtext)
-            Button(role: .destructive) {
-                store.reportPost(postID: postID)
-            } label: {
-                Label("举报此内容", systemImage: "flag.fill")
-                    .font(.system(size: 15, weight: .bold))
+        .background {
+            NavigationLink(
+                destination: Group {
+                    if let chatThreadID {
+                        ChatView(threadID: chatThreadID)
+                    }
+                },
+                isActive: Binding(
+                    get: { chatThreadID != nil },
+                    set: { isActive in
+                        if !isActive {
+                            chatThreadID = nil
+                        }
+                    }
+                )
+            ) {
+                EmptyView()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.hotPink)
+            .hidden()
         }
-        .padding(16)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -2717,21 +3698,43 @@ struct DetailActionBar: View {
         let livePost = store.post(id: post.id) ?? post
         let isLiked = store.likedPostIDs.contains(post.id)
         let isFavorite = store.favoritePostIDs.contains(post.id)
+        let commentTitle = livePost.commentCount == 0 ? "评论" : livePost.commentCount.formattedCount
         HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "pencil")
-                    .foregroundStyle(Theme.muted)
-                TextField("暂不支持发评", text: $commentDraft)
-                    .foregroundStyle(Theme.text)
-                    .submitLabel(.send)
-                    .onSubmit {
-                        store.addComment(postID: post.id, body: commentDraft)
-                        commentDraft = ""
+            if store.isLoggedIn {
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil")
+                        .foregroundStyle(Theme.muted)
+                    TextField("发评论", text: $commentDraft)
+                        .foregroundStyle(Theme.text)
+                        .submitLabel(.send)
+                        .onSubmit {
+                            store.addComment(postID: post.id, body: commentDraft)
+                            commentDraft = ""
+                        }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.panelRaised, in: Capsule())
+            } else {
+                Button {
+                    store.requireLogin(prompt: "登录后才能评论")
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil")
+                            .foregroundStyle(Theme.muted)
+                        Text("登录后评论")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.subtext)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.panelRaised, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .background(Theme.panelRaised, in: Capsule())
 
             ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
@@ -2741,7 +3744,8 @@ struct DetailActionBar: View {
             ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
                 store.toggleFavorite(postID: post.id)
             }
-            ActionIconButton(icon: "bubble.left", title: "评论", tint: Theme.text) {
+            ActionIconButton(icon: "bubble.left", title: commentTitle, tint: Theme.text) {
+                guard store.requireLogin(prompt: "登录后才能评论") else { return }
                 if commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     store.showToast("输入内容后按回车发布评论")
                 } else {
@@ -2766,7 +3770,7 @@ struct CreatePostView: View {
     @State private var selectedGroupType: GroupBuyType?
     @State private var selectedCollectionID = "none"
     @State private var uploadedImageData: [Data] = []
-    @State private var selectedTags: Set<String> = ["预售"]
+    @State private var selectedTags: Set<String> = []
     @State private var priceLowerBound = ""
     @State private var priceUpperBound = ""
     @State private var depositPercent = ""
@@ -2776,13 +3780,13 @@ struct CreatePostView: View {
     @State private var qq = ""
     @State private var groupInfo = ""
     @State private var description = ""
-    @State private var risk = ""
     @State private var pingguAveragePrice = ""
     @State private var pingguNote = ""
     @State private var newRoleName = ""
     @State private var newRoleQuantity = "1"
     @State private var roleDrafts: [UnsoldRole] = []
     @State private var isCollectionPickerPresented = false
+    @State private var isCreatingCollection = false
     @State private var isPhotoLibraryPresented = false
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
@@ -2807,10 +3811,8 @@ struct CreatePostView: View {
         !priceLowerBound.trimmed.isEmpty &&
         !priceUpperBound.trimmed.isEmpty &&
         !condition.trimmed.isEmpty &&
-        (usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) &&
+        usesCollection &&
         !description.trimmed.isEmpty &&
-        !risk.trimmed.isEmpty &&
-        !selectedTags.isEmpty &&
         (!isSplitGoods || (!pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty && !roleDrafts.filter(\.isAvailable).isEmpty))
     }
 
@@ -2823,26 +3825,21 @@ struct CreatePostView: View {
     }
 
     var depositText: String {
-        let value = depositPercent.trimmed
+        let value = finalizedDepositPercent(depositPercent)
         return value.isEmpty ? "无定金" : "定金 \(value)%"
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                HeaderTitle(title: "发布团购帖", subtitle: "所有用户可发布，核心字段缺失时不能进入信息流")
+        if store.isLoggedIn {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    HeaderTitle(title: "发布团购帖", subtitle: "每个帖子必须归入一个拼团合集")
                 VStack(alignment: .leading, spacing: 14) {
                     RequiredLabel("拼团类型")
                     HStack(spacing: 10) {
                         ForEach(GroupBuyType.allCases) { type in
                             Button {
                                 selectedGroupType = type
-                                if type == .splitGoods {
-                                    selectedTags.insert("拼谷")
-                                } else {
-                                    selectedTags.insert("自印团")
-                                    selectedTags.remove("拼谷")
-                                }
                             } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Label(type.rawValue, systemImage: type.icon)
@@ -2866,24 +3863,44 @@ struct CreatePostView: View {
                 }
                 .padding(.horizontal, 16)
 
-                if !store.collections(ownerID: store.currentUserID).isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("拼团合集")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Theme.subtext)
+                VStack(alignment: .leading, spacing: 10) {
+                    RequiredLabel("拼团合集")
+                    if store.collections(ownerID: store.currentUserID).isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("发布前必须先创建一个合集", systemImage: "rectangle.stack.badge.plus")
+                                .font(.system(size: 16, weight: .black))
+                                .foregroundStyle(Theme.text)
+                            Text("合集会统一保存联系方式、截团时间和默认说明；帖子发布时只能选择已有合集。")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                            Button {
+                                isCreatingCollection = true
+                            } label: {
+                                Label("创建合集", systemImage: "plus")
+                                    .font(.system(size: 15, weight: .black))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 18)
+                                    .padding(.vertical, 11)
+                                    .background(Theme.hotPink, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(14)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    } else {
                         Button {
                             isCollectionPickerPresented = true
                         } label: {
                             CollectionPickerSummary(collection: selectedCollection)
                         }
                         .buttonStyle(.plain)
-
-                        if let selectedCollection {
-                            CollectionSharedInfoCard(collection: selectedCollection)
-                        }
                     }
-                    .padding(.horizontal, 16)
+
+                    if let selectedCollection {
+                        CollectionSharedInfoCard(collection: selectedCollection)
+                    }
                 }
+                .padding(.horizontal, 16)
 
                 VStack(alignment: .leading, spacing: 12) {
                     RequiredLabel("产品图片")
@@ -2909,24 +3926,15 @@ struct CreatePostView: View {
                         }
                     }
                     PrototypeTextField(title: "定金比例", placeholder: "例如：30", text: $depositPercent, required: false)
-                        .keyboardType(.numberPad)
-                    if selectedCollection == nil {
-                        DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
-                            .datePickerStyle(.compact)
-                            .foregroundStyle(Theme.text)
-                            .padding(14)
-                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true)
-                    if selectedCollection == nil {
-                        HStack(spacing: 10) {
-                            PrototypeTextField(title: "微信", placeholder: "至少填微信或 QQ", text: $wechat, required: qq.trimmed.isEmpty)
-                            PrototypeTextField(title: "QQ", placeholder: "至少填微信或 QQ", text: $qq, required: wechat.trimmed.isEmpty)
+                        .keyboardType(.decimalPad)
+                        .onChange(of: depositPercent) {
+                            let sanitized = sanitizeDepositPercentInput(depositPercent)
+                            if sanitized != depositPercent {
+                                depositPercent = sanitized
+                            }
                         }
-                        PrototypeTextField(title: "群聊信息", placeholder: "QQ群号 / 微信拉群说明", text: $groupInfo, required: false)
-                    }
+                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true)
                     PrototypeTextEditor(title: "团购说明", placeholder: "写清商品内容、规格、余量、表单和周期", text: $description, required: true)
-                    PrototypeTextEditor(title: "风险说明", placeholder: "写清非官方周边、色差、周期、售后边界", text: $risk, required: true)
                 }
                 .padding(.horizontal, 16)
 
@@ -2992,12 +4000,12 @@ struct CreatePostView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     ValidationRow(isValid: selectedGroupType != nil, text: "已选择拼团类型")
+                    ValidationRow(isValid: usesCollection, text: "已选择拼团合集")
                     ValidationRow(isValid: !title.trimmed.isEmpty, text: "已填写标题")
                     ValidationRow(isValid: !uploadedImageData.isEmpty, text: "已上传产品图片")
                     ValidationRow(isValid: !priceLowerBound.trimmed.isEmpty && !priceUpperBound.trimmed.isEmpty, text: "已填写商品价格范围")
                     ValidationRow(isValid: !condition.trimmed.isEmpty, text: "已填写成团条件")
-                    ValidationRow(isValid: usesCollection || !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty, text: usesCollection ? "已继承合集联系方式" : "已填写微信或 QQ")
-                    ValidationRow(isValid: !description.trimmed.isEmpty && !risk.trimmed.isEmpty, text: "已填写说明和风险提示")
+                    ValidationRow(isValid: !description.trimmed.isEmpty, text: "已填写团购说明")
                     if isSplitGoods {
                         ValidationRow(isValid: !pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty, text: "已填写拼谷均价和描述")
                         ValidationRow(isValid: !roleDrafts.filter(\.isAvailable).isEmpty, text: "已录入可售角色和数量")
@@ -3008,8 +4016,8 @@ struct CreatePostView: View {
                 .padding(.horizontal, 16)
 
                 Button {
-                    if let selectedGroupType {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection?.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, risk: risk, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
+                    if let selectedGroupType, let selectedCollection {
+                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
                         reset()
                     }
                 } label: {
@@ -3024,27 +4032,34 @@ struct CreatePostView: View {
                 .disabled(!canPublish)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
+                }
             }
-        }
-        .background(Theme.background.ignoresSafeArea())
-        .navigationBarHidden(true)
-        .sheet(isPresented: $isCollectionPickerPresented) {
-            CollectionPickerSheet(
-                collections: store.collections(ownerID: store.currentUserID),
-                selectedCollectionID: $selectedCollectionID,
-                noCollectionID: noCollectionID
-            )
-            .presentationDetents([.height(390), .medium])
-            .presentationDragIndicator(.hidden)
-            .presentationBackground(Theme.background)
-            .preferredColorScheme(.dark)
-        }
-        .fullScreenCover(isPresented: $isPhotoLibraryPresented) {
-            PhotoLibraryImportView(maxSelection: max(1, 16 - uploadedImageData.count)) { importedData in
-                uploadedImageData.append(contentsOf: importedData)
-                uploadedImageData = Array(uploadedImageData.prefix(16))
+            .background(Theme.background.ignoresSafeArea())
+            .navigationBarHidden(true)
+            .sheet(isPresented: $isCollectionPickerPresented) {
+                CollectionPickerSheet(
+                    collections: store.collections(ownerID: store.currentUserID),
+                    selectedCollectionID: $selectedCollectionID
+                )
+                .presentationDetents([.height(390), .medium])
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Theme.background)
             }
-            .preferredColorScheme(.dark)
+            .sheet(isPresented: $isCreatingCollection) {
+                CreateCollectionSheet(onCreated: { collectionID in
+                    selectedCollectionID = collectionID
+                })
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+            .fullScreenCover(isPresented: $isPhotoLibraryPresented) {
+                PhotoLibraryImportView(maxSelection: max(1, 16 - uploadedImageData.count)) { importedData in
+                    uploadedImageData.append(contentsOf: importedData)
+                    uploadedImageData = Array(uploadedImageData.prefix(16))
+                }
+            }
+        } else {
+            GuestAuthView()
         }
     }
 
@@ -3053,7 +4068,7 @@ struct CreatePostView: View {
         selectedGroupType = nil
         selectedCollectionID = noCollectionID
         uploadedImageData = []
-        selectedTags = ["预售"]
+        selectedTags = []
         priceLowerBound = ""
         priceUpperBound = ""
         depositPercent = ""
@@ -3062,7 +4077,6 @@ struct CreatePostView: View {
         qq = ""
         groupInfo = ""
         description = ""
-        risk = ""
         pingguAveragePrice = ""
         pingguNote = ""
         newRoleName = ""
@@ -3582,17 +4596,17 @@ struct CollectionPickerSummary: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(collection == nil ? Theme.panelRaised : Theme.hotPink.opacity(0.18))
                     .frame(width: 46, height: 46)
-                Image(systemName: collection == nil ? "rectangle.stack.badge.minus" : "rectangle.stack.fill")
+                Image(systemName: "rectangle.stack.fill")
                     .font(.system(size: 20, weight: .black))
                     .foregroundStyle(collection == nil ? Theme.subtext : Theme.hotPink)
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(collection?.name ?? "不加入合集")
+                Text(collection?.name ?? "请选择合集")
                     .font(.system(size: 18, weight: .black))
                     .foregroundStyle(collection == nil ? Theme.subtext : Theme.text)
                     .lineLimit(1)
-                Text(collection == nil ? "本帖单独填写联系方式与截团时间" : "自动继承合集联系方式、截团时间和默认说明")
+                Text(collection == nil ? "每个帖子必须归入一个拼团合集" : "自动继承合集联系方式、截团时间和默认说明")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
@@ -3616,9 +4630,9 @@ struct CollectionPickerSummary: View {
 
 struct CollectionPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var isCreatingCollection = false
     let collections: [GroupCollection]
     @Binding var selectedCollectionID: String
-    let noCollectionID: String
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3627,7 +4641,7 @@ struct CollectionPickerSheet: View {
                     Text("选择拼团合集")
                         .font(.system(size: 24, weight: .black))
                         .foregroundStyle(Theme.text)
-                    Text("选择后会自动继承合集公共信息")
+                    Text("发布前必须选择一个合集")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Theme.subtext)
                 }
@@ -3649,33 +4663,67 @@ struct CollectionPickerSheet: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
-                    CollectionPickerOption(
-                        title: "不加入合集",
-                        subtitle: "本帖独立填写联系方式、截团时间和说明",
-                        icon: "rectangle.stack.badge.minus",
-                        isSelected: selectedCollectionID == noCollectionID
-                    ) {
-                        selectedCollectionID = noCollectionID
-                        dismiss()
-                    }
-
                     ForEach(collections) { collection in
                         CollectionPickerOption(
                             title: collection.name,
-                            subtitle: "\(collection.deadline.fullDisplay) 截团 · \(collection.postIDs.count) 篇内容",
+                            subtitle: "\(collection.deadline.fullDisplay) 截团 · \(collection.isEnded ? "已结团" : "\(collection.postIDs.count) 篇内容")",
                             icon: "rectangle.stack.fill",
-                            isSelected: selectedCollectionID == collection.id
+                            isSelected: selectedCollectionID == collection.id,
+                            isEnded: collection.isEnded
                         ) {
                             selectedCollectionID = collection.id
                             dismiss()
                         }
                     }
+
+                    Button {
+                        isCreatingCollection = true
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 22, weight: .black))
+                                .foregroundStyle(.white)
+                                .frame(width: 56, height: 56)
+                                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("新建拼团合集")
+                                    .font(.system(size: 19, weight: .black))
+                                    .foregroundStyle(Theme.text)
+                                Text("创建后自动选中，用于发布这篇帖子")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(Theme.subtext)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 16, weight: .black))
+                                .foregroundStyle(Theme.hotPink)
+                        }
+                        .padding(14)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Theme.hotPink.opacity(0.42), lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .sheet(isPresented: $isCreatingCollection) {
+            CreateCollectionSheet(onCreated: { collectionID in
+                selectedCollectionID = collectionID
+                dismiss()
+            })
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
     }
 }
 
@@ -3684,6 +4732,7 @@ struct CollectionPickerOption: View {
     let subtitle: String
     let icon: String
     let isSelected: Bool
+    let isEnded: Bool
     let action: () -> Void
 
     var body: some View {
@@ -3720,6 +4769,8 @@ struct CollectionPickerOption: View {
             }
         }
         .buttonStyle(.plain)
+        .saturation(isEnded ? 0 : 1)
+        .opacity(isEnded ? 0.56 : 1)
     }
 }
 
@@ -3727,41 +4778,50 @@ struct MessagesView: View {
     @EnvironmentObject private var store: MockAppStore
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 18) {
-                HeaderTitle(title: "消息", subtitle: "站内咨询、截团提醒和治理通知")
-                VStack(spacing: 10) {
-                    ForEach(store.reminders.prefix(3)) { reminder in
-                        if let post = store.post(id: reminder.postID) {
-                            NavigationLink(value: Route.postDetail(post.id)) {
-                                ReminderMiniCard(post: post, reminder: reminder)
+        Group {
+            if store.isLoggedIn {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HeaderTitle(title: "消息", subtitle: "站内咨询、截团提醒和治理通知")
+                        VStack(spacing: 10) {
+                            ForEach(store.reminders.prefix(3)) { reminder in
+                                if let post = store.post(id: reminder.postID) {
+                                    NavigationLink(value: Route.postDetail(post.id)) {
+                                        ReminderMiniCard(post: post, reminder: reminder)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
-                    }
-                }
-                .padding(.horizontal, 16)
+                        .padding(.horizontal, 16)
 
-                Text("私信咨询")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 16)
+                        Text("私信咨询")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .padding(.horizontal, 16)
 
-                VStack(spacing: 0) {
-                    ForEach(store.threads) { thread in
-                        NavigationLink(value: Route.chat(thread.id)) {
-                            ThreadRow(thread: thread)
+                        VStack(spacing: 0) {
+                            ForEach(store.messageThreads) { thread in
+                                NavigationLink(value: Route.chat(thread.id)) {
+                                    ThreadRow(thread: thread)
+                                }
+                                .buttonStyle(.plain)
+                                Divider().overlay(Theme.hairline).padding(.leading, 74)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        Divider().overlay(Theme.hairline).padding(.leading, 74)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 16)
                     }
+                    .padding(.bottom, 28)
                 }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 16)
+                .background(Theme.background.ignoresSafeArea())
+                .onAppear {
+                    store.ensureMutualFriendThreads()
+                }
+            } else {
+                GuestAuthView()
             }
-            .padding(.bottom, 28)
         }
-        .background(Theme.background.ignoresSafeArea())
         .navigationBarHidden(true)
     }
 }
@@ -3772,7 +4832,7 @@ struct ThreadRow: View {
 
     var body: some View {
         let user = store.user(id: thread.publisherUserID)
-        let post = store.post(id: thread.relatedPostID)
+        let post = thread.relatedPostID.flatMap(store.post)
         HStack(spacing: 12) {
             AvatarView(user: user, size: 46)
             VStack(alignment: .leading, spacing: 5) {
@@ -3785,11 +4845,11 @@ struct ThreadRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.muted)
                 }
-                Text(post?.title ?? "团购咨询")
+                Text(post?.title ?? "好友私聊")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.softPink)
                     .lineLimit(1)
-                Text(thread.messages.last?.body ?? "")
+                Text(thread.messages.last?.body ?? "互相关注，开始聊天")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(1)
@@ -3816,8 +4876,7 @@ struct ChatView: View {
     let threadID: String
 
     var body: some View {
-        if let thread = store.threads.first(where: { $0.id == threadID }),
-           let post = store.post(id: thread.relatedPostID) {
+        if let thread = store.threads.first(where: { $0.id == threadID }) {
             let peer = store.user(id: thread.publisherUserID)
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
@@ -3830,7 +4889,6 @@ struct ChatView: View {
                             .frame(width: 42, height: 48)
                     }
                     .buttonStyle(.plain)
-
                     AvatarView(user: peer, size: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(peer.nickname)
@@ -3841,15 +4899,6 @@ struct ChatView: View {
                             .foregroundStyle(Theme.subtext)
                     }
                     Spacer()
-                    Button {
-                        store.showToast("已打开聊天资料卡占位")
-                    } label: {
-                        Image(systemName: "rectangle.grid.2x2")
-                            .font(.system(size: 25, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
@@ -3874,24 +4923,6 @@ struct ChatView: View {
                                 ChatBubble(message: message)
                                     .id(message.id)
                             }
-
-                            NavigationLink(value: Route.postDetail(post.id)) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "link")
-                                        .font(.system(size: 16, weight: .bold))
-                                        .foregroundStyle(Theme.hotPink)
-                                    Text("当前咨询：\(post.title)")
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(Theme.subtext)
-                                        .lineLimit(1)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(Theme.panel, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 4)
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 12)
@@ -3972,9 +5003,10 @@ struct ChatView: View {
     }
 
     private func send() {
-        store.sendMessage(threadID: threadID, body: draft)
-        draft = ""
-        isAttachmentPanelOpen = false
+        if store.sendMessage(threadID: threadID, body: draft) {
+            draft = ""
+            isAttachmentPanelOpen = false
+        }
     }
 }
 
@@ -4002,7 +5034,7 @@ struct EmojiMessageTextField: UIViewRepresentable {
         textField.delegate = context.coordinator
         textField.borderStyle = .none
         textField.backgroundColor = .clear
-        textField.textColor = UIColor.white
+        textField.textColor = Theme.primaryTextUIColor
         textField.tintColor = UIColor(red: 1, green: 0.12, blue: 0.27, alpha: 1)
         textField.font = UIFont.systemFont(ofSize: 19, weight: .semibold)
         textField.returnKeyType = .send
@@ -4274,184 +5306,222 @@ struct ProfileView: View {
     let profileTabs = ["笔记", "拼团合集", "收藏", "赞过"]
 
     var body: some View {
+        Group {
+            if store.isLoggedIn {
+                profileContent
+            } else {
+                GuestAuthView()
+            }
+        }
+        .navigationBarHidden(true)
+    }
+
+    @ViewBuilder private var profileContent: some View {
         let user = store.currentUser
-        ZStack(alignment: .leading) {
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    ZStack(alignment: .top) {
-                        UserBackgroundImage(user: user)
-                            .scaledToFill()
-                            .frame(height: 382)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                            .overlay(.black.opacity(0.52))
-                            .overlay(
-                                LinearGradient(colors: [.black.opacity(0.08), Theme.background.opacity(0.92)], startPoint: .top, endPoint: .bottom)
-                            )
+        GeometryReader { rootProxy in
+            let contentWidth = rootProxy.size.width
+            let headerHeight: CGFloat = 342
+            let windowTopInset = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first { $0.isKeyWindow }?
+                .safeAreaInsets.top ?? 0
+            let topInset = max(rootProxy.safeAreaInsets.top, windowTopInset)
 
-                        VStack(alignment: .leading, spacing: 18) {
-                            HStack {
-                                Button {
-                                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                                        isMenuOpen = true
-                                    }
-                                } label: {
-                                    Image(systemName: "line.3.horizontal")
-                                        .font(.system(size: 30, weight: .medium))
-                                        .frame(width: 48, height: 48)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
+            ZStack(alignment: .leading) {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ZStack(alignment: .top) {
+                            GeometryReader { headerProxy in
+                                let pullDistance = max(headerProxy.frame(in: .named("profile-scroll")).minY, 0)
 
-                                Spacer()
-
-                                NavigationLink(value: Route.editProfile) {
-                                    Label("编辑主页", systemImage: "pencil")
-                                        .font(.system(size: 16, weight: .bold))
-                                        .foregroundStyle(Theme.text)
-                                        .padding(.horizontal, 15)
-                                        .padding(.vertical, 9)
-                                        .background(.white.opacity(0.18), in: Capsule())
-                                }
-                                .buttonStyle(.plain)
-
-                                Button {
-                                    isShareSheetPresented = true
-                                } label: {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 27, weight: .semibold))
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Theme.text)
+                                UserBackgroundImage(user: user)
+                                    .scaledToFill()
+                                    .frame(width: contentWidth, height: headerHeight + topInset + pullDistance)
+                                    .clipped()
+                                    .overlay(.black.opacity(0.52))
+                                    .overlay(
+                                        LinearGradient(colors: [.black.opacity(0.08), Theme.background.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                                    )
+                                    .offset(y: -topInset - pullDistance)
+                                    .ignoresSafeArea(.container, edges: .top)
                             }
+                            .frame(width: contentWidth, height: headerHeight)
 
-                            Color.clear
-                                .frame(height: 8)
+                            VStack(alignment: .leading, spacing: 18) {
+                                HStack {
+                                    Button {
+                                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                            isMenuOpen = true
+                                        }
+                                    } label: {
+                                        Image(systemName: "line.3.horizontal")
+                                            .font(.system(size: 30, weight: .medium))
+                                            .frame(width: 48, height: 48)
+                                            .background(.black.opacity(0.28), in: Circle())
+                                            .overlay {
+                                                Circle().stroke(.white.opacity(0.18), lineWidth: 1)
+                                            }
+                                            .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.white)
 
-                            HStack(alignment: .center, spacing: 18) {
-                                AvatarView(user: user, size: 118)
-                                    .background(.white, in: Circle())
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack(spacing: 8) {
-                                        Text(user.nickname)
-                                            .font(.system(size: 28, weight: .black))
-                                            .foregroundStyle(Theme.text)
-                                        Image(systemName: "chevron.down")
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundStyle(Theme.subtext)
+                                    Spacer()
+
+                                    NavigationLink(value: Route.editProfile) {
+                                        Label("编辑主页", systemImage: "pencil")
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 15)
+                                            .padding(.vertical, 9)
+                                            .background(.black.opacity(0.32), in: Capsule())
+                                            .overlay {
+                                                Capsule().stroke(.white.opacity(0.18), lineWidth: 1)
+                                            }
+                                            .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 3)
                                     }
-                                    HStack(spacing: 8) {
-                                        Text("ID：\(store.registrationID(for: user.id))")
-                                        Image(systemName: "qrcode.viewfinder")
+                                    .buttonStyle(.plain)
+
+                                    Button {
+                                        isShareSheetPresented = true
+                                    } label: {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.system(size: 27, weight: .semibold))
+                                            .frame(width: 44, height: 44)
+                                            .background(.black.opacity(0.28), in: Circle())
+                                            .overlay {
+                                                Circle().stroke(.white.opacity(0.18), lineWidth: 1)
+                                            }
+                                            .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
                                     }
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(Theme.subtext)
-                                    Text("IP：\(user.region)")
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.white)
+                                }
+
+                                Color.clear
+                                    .frame(height: 8)
+
+                                HStack(alignment: .center, spacing: 18) {
+                                    AvatarView(user: user, size: 118)
+                                        .background(.white, in: Circle())
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(spacing: 8) {
+                                            Text(user.nickname)
+                                                .font(.system(size: 28, weight: .black))
+                                                .foregroundStyle(Theme.text)
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 18, weight: .bold))
+                                                .foregroundStyle(Theme.subtext)
+                                        }
+                                        HStack(spacing: 8) {
+                                            Text("ID：\(store.registrationID(for: user.id))")
+                                            Image(systemName: "qrcode.viewfinder")
+                                        }
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundStyle(Theme.subtext)
-                                }
-                            }
-
-                            HStack(spacing: 26) {
-                                NavigationLink(value: Route.userRelations(user.id, .following)) {
-                                    StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
-                                }
-                                .buttonStyle(.plain)
-                                NavigationLink(value: Route.userRelations(user.id, .followers)) {
-                                    StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
-                                }
-                                .buttonStyle(.plain)
-                                StatInline(value: "\(store.likedPostIDs.count + store.favoritePostIDs.count)", title: "获赞与收藏")
-                            }
-
-                            Button {
-                                bioDraft = user.bio == "点击这里，填写简介" ? "" : user.bio
-                                isBioEditorPresented = true
-                            } label: {
-                                Text(user.bio)
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(Theme.text.opacity(0.86))
-                                    .lineLimit(2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .frame(height: 382, alignment: .top)
-                    }
-
-                    VStack(spacing: 0) {
-                        HStack(spacing: 0) {
-                            ForEach(profileTabs, id: \.self) { tab in
-                                Button {
-                                    selectedTab = tab
-                                } label: {
-                                    VStack(spacing: 8) {
-                                        HStack(spacing: 6) {
-                                            Text(tab)
-                                                .font(.system(size: tab == "拼团合集" ? 15 : 17, weight: selectedTab == tab ? .black : .semibold))
-                                                .lineLimit(1)
-                                                .minimumScaleFactor(0.76)
-                                        }
-                                        .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
-                                        Capsule()
-                                            .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
-                                            .frame(width: 48, height: 4)
+                                        Text("IP：\(user.region)")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundStyle(Theme.subtext)
                                     }
-                                    .frame(maxWidth: .infinity)
+                                }
+
+                                HStack(spacing: 26) {
+                                    NavigationLink(value: Route.userRelations(user.id, .following)) {
+                                        StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
+                                    }
+                                    .buttonStyle(.plain)
+                                    NavigationLink(value: Route.userRelations(user.id, .followers)) {
+                                        StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
+                                    }
+                                    .buttonStyle(.plain)
+                                    StatInline(value: "\(store.likedPostIDs.count + store.favoritePostIDs.count)", title: "获赞与收藏")
+                                }
+
+                                Button {
+                                    bioDraft = user.bio == "点击这里，填写简介" ? "" : user.bio
+                                    isBioEditorPresented = true
+                                } label: {
+                                    Text(user.bio)
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(Theme.text.opacity(0.86))
+                                        .lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
                             }
-
-                            NavigationLink(value: Route.search) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 28, weight: .medium))
-                                    .foregroundStyle(Theme.subtext)
-                                    .frame(width: 54)
-                            }
-                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                            .frame(width: contentWidth, height: headerHeight, alignment: .top)
                         }
-                        .padding(.top, 20)
-                        .padding(.bottom, 12)
-                        .background(Theme.panel)
+                        .frame(width: contentWidth, height: headerHeight)
 
-                        Group {
-                            if selectedTab == "笔记" {
-                                ProfileNotesPanel(userID: user.id)
-                            } else if selectedTab == "拼团合集" {
-                                ProfileCollectionsPanel(ownerID: user.id, canManage: true)
-                            } else if selectedTab == "收藏" {
-                                ProfileFavoritePostsPanel(userID: user.id)
-                            } else if selectedTab == "赞过" {
-                                ProfileLikedPostsPanel(userID: user.id)
-                            } else {
-                                ProfileEmptyNotesView()
+                        VStack(spacing: 0) {
+                            HStack(spacing: 0) {
+                                ForEach(profileTabs, id: \.self) { tab in
+                                    Button {
+                                        selectedTab = tab
+                                    } label: {
+                                        VStack(spacing: 8) {
+                                            HStack(spacing: 6) {
+                                                Text(tab)
+                                                    .font(.system(size: tab == "拼团合集" ? 15 : 17, weight: selectedTab == tab ? .black : .semibold))
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.76)
+                                            }
+                                            .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
+                                            Capsule()
+                                                .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                                .frame(width: 48, height: 4)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
+                            .padding(.top, 20)
+                            .padding(.bottom, 12)
+                            .background(Theme.panel)
+
+                            Group {
+                                if selectedTab == "笔记" {
+                                    ProfileNotesPanel(userID: user.id, canManage: true)
+                                } else if selectedTab == "拼团合集" {
+                                    ProfileCollectionsPanel(ownerID: user.id, canManage: true)
+                                } else if selectedTab == "收藏" {
+                                    ProfileFavoritePostsPanel(userID: user.id)
+                                } else if selectedTab == "赞过" {
+                                    ProfileLikedPostsPanel(userID: user.id)
+                                } else {
+                                    ProfileEmptyNotesView()
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 430, alignment: .top)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 430)
+                        .background(Theme.background)
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+                        .offset(y: -2)
+                        .frame(width: contentWidth)
                     }
-                    .background(Theme.background)
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
-                    .offset(y: -2)
+                    .padding(.bottom, 88)
+                    .frame(width: contentWidth)
                 }
-                .padding(.bottom, 88)
-            }
-            .background(Theme.background.ignoresSafeArea())
+                .coordinateSpace(name: "profile-scroll")
+                .background(Theme.background.ignoresSafeArea())
 
-            if isMenuOpen {
-                Color.black.opacity(0.46)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                            isMenuOpen = false
+                if isMenuOpen {
+                    Color.black.opacity(0.46)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                isMenuOpen = false
+                            }
                         }
-                    }
 
-                ProfileSideMenu(isMenuOpen: $isMenuOpen)
-                    .transition(.move(edge: .leading))
+                    ProfileSideMenu(isMenuOpen: $isMenuOpen)
+                        .transition(.move(edge: .leading))
+                }
             }
         }
         .navigationBarHidden(true)
@@ -4542,7 +5612,6 @@ struct ProfileBioEditorView: View {
             Spacer()
         }
         .background(Theme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
         .onChange(of: bio) { _, newValue in
             if newValue.count > maxLength {
                 bio = String(newValue.prefix(maxLength))
@@ -4722,23 +5791,107 @@ struct ProfileEmptyNotesView: View {
 
 struct ProfileNotesPanel: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var isManaging = false
     let userID: String
+    var canManage = false
 
     var posts: [GroupBuyPost] {
-        store.activePosts
-            .filter { $0.authorID == userID }
-            .sorted { $0.createdAt > $1.createdAt }
+        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == userID })
     }
 
     var body: some View {
         if posts.isEmpty {
             ProfileEmptyNotesView()
         } else {
-            WaterfallGrid(posts: posts)
-                .padding(.horizontal, 12)
-                .padding(.top, 14)
-                .padding(.bottom, 28)
+            VStack(spacing: 12) {
+                if canManage {
+                    HStack {
+                        Text("我的帖子")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        Button {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                isManaging.toggle()
+                            }
+                        } label: {
+                            Text(isManaging ? "完成" : "管理")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundStyle(isManaging ? Theme.text : Theme.hotPink)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Theme.panelRaised, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                }
+
+                if isManaging {
+                    VStack(spacing: 10) {
+                        ForEach(posts) { post in
+                            ProfilePostManageRow(post: post)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 28)
+                } else {
+                    WaterfallGrid(posts: posts)
+                        .padding(.horizontal, 12)
+                        .padding(.top, canManage ? 0 : 14)
+                        .padding(.bottom, 28)
+                }
+            }
         }
+    }
+}
+
+struct ProfilePostManageRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let post: GroupBuyPost
+
+    var body: some View {
+        HStack(spacing: 12) {
+            PostImageView(post: post)
+                .scaledToFill()
+                .frame(width: 58, height: 58)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .saturation(post.isEnded ? 0 : 1)
+                .opacity(post.isEnded ? 0.58 : 1)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(post.title)
+                    .font(.system(size: 15, weight: .black))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Text(post.isEnded ? "已结团 · 可保留记录或删除" : "\(post.groupType.rawValue) · \(post.deadline.shortDeadlineText)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(post.isEnded ? Theme.muted : post.groupType.accent)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button {
+                store.deleteOwnPost(postID: post.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Theme.hotPink)
+                    .frame(width: 42, height: 42)
+                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
+        }
+        .saturation(post.isEnded ? 0 : 1)
+        .opacity(post.isEnded ? 0.72 : 1)
     }
 }
 
@@ -4748,9 +5901,7 @@ struct ProfileLikedPostsPanel: View {
 
     var posts: [GroupBuyPost] {
         guard userID == store.currentUserID else { return [] }
-        return store.activePosts
-            .filter { store.likedPostIDs.contains($0.id) }
-            .sorted { $0.createdAt > $1.createdAt }
+        return store.sortedFeedPosts(store.activePosts.filter { store.likedPostIDs.contains($0.id) })
     }
 
     var body: some View {
@@ -4771,9 +5922,7 @@ struct ProfileFavoritePostsPanel: View {
 
     var posts: [GroupBuyPost] {
         guard userID == store.currentUserID else { return [] }
-        return store.activePosts
-            .filter { store.favoritePostIDs.contains($0.id) }
-            .sorted { $0.createdAt > $1.createdAt }
+        return store.sortedFeedPosts(store.activePosts.filter { store.favoritePostIDs.contains($0.id) })
     }
 
     var body: some View {
@@ -4856,7 +6005,7 @@ struct ProfileCollectionsPanel: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
+        .padding(.top, 12)
         .sheet(isPresented: $isCreatingCollection) {
             CreateCollectionSheet()
                 .presentationDetents([.large])
@@ -4870,6 +6019,8 @@ struct CollectionCard: View {
     let collection: GroupCollection
 
     var body: some View {
+        let visibleCount = collection.postIDs.compactMap(store.post).filter { $0.status == .active }.count
+        let isEnded = collection.isEnded
         NavigationLink(value: Route.collectionDetail(collection.id)) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -4878,12 +6029,12 @@ struct CollectionCard: View {
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Spacer()
-                    Text("\(collection.postIDs.count)帖")
+                    Text(isEnded ? "已结团" : "\(visibleCount)帖")
                         .font(.system(size: 12, weight: .black))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(isEnded ? Theme.muted : Theme.hotPink)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                        .background((isEnded ? Theme.panelRaised : Theme.hotPink.opacity(0.13)), in: Capsule())
                 }
                 Text(collection.defaultNote)
                     .font(.system(size: 13, weight: .semibold))
@@ -4905,12 +6056,15 @@ struct CollectionCard: View {
             }
         }
         .buttonStyle(.plain)
+        .saturation(isEnded ? 0 : 1)
+        .opacity(isEnded ? 0.58 : 1)
     }
 }
 
 struct CreateCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    var onCreated: ((String) -> Void)? = nil
     @State private var name = ""
     @State private var wechat = ""
     @State private var qq = ""
@@ -4940,7 +6094,9 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
-                        store.createCollection(name: name, wechat: wechat, qq: qq, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
+                        if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
+                            onCreated?(collectionID)
+                        }
                         dismiss()
                     } label: {
                         Text(canCreate ? "创建合集" : "补齐必填字段")
@@ -5018,14 +6174,12 @@ struct CollectionPostManager: View {
     let collection: GroupCollection
 
     var manageablePosts: [GroupBuyPost] {
-        store.activePosts
-            .filter { $0.authorID == collection.ownerID }
-            .sorted { $0.createdAt > $1.createdAt }
+        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == collection.ownerID })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("选择已有帖子加入合集")
+            Text("切换帖子所属合集")
                 .font(.system(size: 16, weight: .black))
                 .foregroundStyle(Theme.text)
             ForEach(manageablePosts) { post in
@@ -5045,21 +6199,26 @@ struct CollectionPostManager: View {
                             .foregroundStyle(post.groupType.accent)
                     }
                     Spacer()
-                    Button {
-                        if isIncluded {
-                            store.removePost(post.id, from: collection.id)
-                        } else {
-                            store.addPost(post.id, to: collection.id)
-                        }
-                    } label: {
-                        Text(isIncluded ? "移出" : "加入")
+                    if isIncluded {
+                        Text("当前合集")
                             .font(.system(size: 13, weight: .black))
-                            .foregroundStyle(isIncluded ? Theme.subtext : .white)
+                            .foregroundStyle(Theme.subtext)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(isIncluded ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                            .background(Theme.panelRaised, in: Capsule())
+                    } else {
+                        Button {
+                            store.addPost(post.id, to: collection.id)
+                        } label: {
+                            Text("移入")
+                                .font(.system(size: 13, weight: .black))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Theme.hotPink, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -5142,7 +6301,8 @@ struct BrowsingHistoryView: View {
                 }
             }
 
-            HStack(spacing: 92) {
+            HStack {
+                Spacer()
                 VStack(spacing: 7) {
                     Text("笔记")
                         .font(.system(size: 22, weight: .black))
@@ -5151,9 +6311,7 @@ struct BrowsingHistoryView: View {
                         .fill(Theme.hotPink)
                         .frame(width: 48, height: 4)
                 }
-                Text("直播")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(Theme.muted)
+                Spacer()
             }
             .padding(.top, 14)
             .padding(.bottom, 26)
@@ -5214,6 +6372,10 @@ struct HistoryWaterfallGrid: View {
     let isManaging: Bool
     @Binding var selectedIDs: Set<String>
 
+    private var columnWidth: CGFloat {
+        FeedCardMetrics.columnWidth(screenWidth: UIScreen.main.bounds.width)
+    }
+
     private var leftPosts: [GroupBuyPost] {
         posts.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
     }
@@ -5226,14 +6388,14 @@ struct HistoryWaterfallGrid: View {
         HStack(alignment: .top, spacing: 12) {
             LazyVStack(spacing: 14) {
                 ForEach(leftPosts) { post in
-                    HistoryCard(post: post, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
+                    HistoryCard(post: post, cardWidth: columnWidth, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
                         toggle(post.id)
                     }
                 }
             }
             LazyVStack(spacing: 14) {
                 ForEach(rightPosts) { post in
-                    HistoryCard(post: post, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
+                    HistoryCard(post: post, cardWidth: columnWidth, isManaging: isManaging, isSelected: selectedIDs.contains(post.id)) {
                         toggle(post.id)
                     }
                 }
@@ -5253,6 +6415,7 @@ struct HistoryWaterfallGrid: View {
 struct HistoryCard: View {
     @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
+    let cardWidth: CGFloat
     let isManaging: Bool
     let isSelected: Bool
     let toggleSelection: () -> Void
@@ -5282,15 +6445,8 @@ struct HistoryCard: View {
             ZStack(alignment: .topTrailing) {
                 PostImageView(post: post)
                     .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(post.imageAspect, contentMode: .fit)
+                    .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
                     .clipped()
-                Image(systemName: "play.fill")
-                    .font(.system(size: 13, weight: .black))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(.black.opacity(0.34), in: Circle())
-                    .padding(8)
                 if isManaging {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 25, weight: .bold))
@@ -5300,6 +6456,7 @@ struct HistoryCard: View {
                         .padding(8)
                 }
             }
+            .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(post.title)
@@ -5326,6 +6483,7 @@ struct HistoryCard: View {
             .padding(10)
         }
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .frame(width: cardWidth)
     }
 }
 
@@ -5342,9 +6500,20 @@ struct SettingsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     SettingsGroup {
-                        SettingsRow(icon: "person.crop.circle", title: "账号与安全")
-                        SettingsRow(icon: "gearshape", title: "通用设置")
-                        SettingsRow(icon: "bell", title: "通知设置")
+                        NavigationLink(destination: AccountSecuritySettingsView()) {
+                            SettingsRow(icon: "person.crop.circle", title: "账号与安全")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(destination: GeneralSettingsView()) {
+                            SettingsRow(icon: "gearshape", title: "通用设置")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(destination: NotificationSettingsView()) {
+                            SettingsRow(icon: "bell", title: "通知设置")
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     SettingsGroup {
@@ -5356,7 +6525,8 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
                         Button {
-                            store.setLoginState(false)
+                            store.logOut()
+                            dismiss()
                         } label: {
                             SettingsPlainActionRow(title: "退出登录")
                         }
@@ -5381,6 +6551,230 @@ struct SettingsView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct AccountSecuritySettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+
+    var body: some View {
+        SettingsDetailScaffold(title: "账号与安全", dismiss: dismiss) {
+            SettingsDetailGroup {
+                SettingsValueRow(title: "手机号", value: "+86 139****7122")
+                SettingsSeparator()
+                SettingsValueRow(title: "登录密码", value: "已设置")
+            }
+
+            SettingsDetailGroup {
+                SettingsValueRow(title: "微信账号", value: "未绑定")
+                SettingsSeparator()
+                SettingsValueRow(title: "QQ账号", value: "未绑定")
+                SettingsSeparator()
+                SettingsValueRow(title: "Apple账号", value: store.currentUser.nickname)
+            }
+        }
+    }
+}
+
+struct GeneralSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var browsingHistoryEnabled = true
+
+    var body: some View {
+        SettingsDetailScaffold(title: "通用设置", dismiss: dismiss) {
+            Text("显示")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+
+            SettingsDetailGroup {
+                SettingsToggleRow(title: "深色模式", isOn: $store.isDarkModeEnabled)
+            }
+
+            Text("功能")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+
+            SettingsDetailGroup {
+                SettingsToggleRow(title: "浏览记录", subtitle: "关闭后，不再记录并删除历史浏览记录", isOn: $browsingHistoryEnabled)
+                    .onChange(of: browsingHistoryEnabled) {
+                        if !browsingHistoryEnabled {
+                            store.removeBrowsingHistory(postIDs: Set(store.browsingHistoryIDs))
+                        }
+                    }
+                SettingsSeparator()
+                SettingsToggleRow(title: "未关注回复前最多两条私信", subtitle: "开启后，对方未关注你时，对方回复之前只能连续发送两条消息", isOn: $store.limitsUnrepliedMessages)
+            }
+        }
+    }
+}
+
+struct NotificationSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var receiveMessages = false
+    @State private var likesAndFavorites = true
+    @State private var newFollowers = true
+    @State private var shares = true
+    @State private var privateMessageMode = "接收"
+
+    var body: some View {
+        SettingsDetailScaffold(title: "通知设置", dismiss: dismiss) {
+            SettingsDetailGroup {
+                SettingsToggleRow(title: "接收消息通知", isOn: $receiveMessages)
+            }
+
+            Text("互动通知")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+
+            SettingsDetailGroup {
+                SettingsToggleRow(title: "赞和收藏", isOn: $likesAndFavorites)
+                SettingsSeparator()
+                SettingsToggleRow(title: "新增关注", isOn: $newFollowers)
+                SettingsSeparator()
+                SettingsToggleRow(title: "分享", isOn: $shares)
+            }
+
+            Text("私信通知")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+
+            SettingsDetailGroup {
+                Button {
+                    privateMessageMode = privateMessageMode == "接收" ? "不接收" : "接收"
+                } label: {
+                    SettingsValueRow(title: "私信", value: privateMessageMode)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct SettingsDetailScaffold<Content: View>: View {
+    let title: String
+    let dismiss: DismissAction
+    let content: Content
+
+    init(title: String, dismiss: DismissAction, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.dismiss = dismiss
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SimpleTopBar(title: title, trailing: nil) {
+                dismiss()
+            }
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 24) {
+                    content
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 30)
+                .padding(.bottom, 60)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+    }
+}
+
+struct SettingsDetailGroup<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+struct SettingsValueRow: View {
+    let title: String
+    let value: String
+    var subtitle: String? = nil
+
+    var body: some View {
+        HStack(alignment: subtitle == nil ? .center : .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(Theme.text.opacity(0.92))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.muted)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: subtitle == nil ? 72 : 90)
+        .contentShape(Rectangle())
+    }
+}
+
+struct SettingsToggleRow: View {
+    let title: String
+    var subtitle: String? = nil
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(alignment: subtitle == nil ? .center : .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(Theme.text.opacity(0.92))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .tint(Theme.hotPink)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: subtitle == nil ? 72 : 96)
+    }
+}
+
+struct SettingsSeparator: View {
+    var body: some View {
+        Divider()
+            .overlay(Theme.hairline)
+            .padding(.leading, 16)
     }
 }
 
@@ -5516,10 +6910,10 @@ struct ProfileSideMenu: View {
 
             VStack(spacing: 6) {
                 Button {
-                    store.setLoginState(!store.isLoggedIn)
+                    store.logOut()
                     closeMenu()
                 } label: {
-                    DrawerRowContent(icon: store.isLoggedIn ? "rectangle.portrait.and.arrow.right" : "person.badge.key", title: store.isLoggedIn ? "退出登录" : "登录")
+                    DrawerRowContent(icon: "rectangle.portrait.and.arrow.right", title: "退出登录")
                 }
                 .buttonStyle(.plain)
             }
@@ -5968,7 +7362,7 @@ struct FavoritesView: View {
     @EnvironmentObject private var store: MockAppStore
 
     var favoritePosts: [GroupBuyPost] {
-        store.activePosts.filter { store.favoritePostIDs.contains($0.id) }
+        store.sortedFeedPosts(store.activePosts.filter { store.favoritePostIDs.contains($0.id) })
     }
 
     var body: some View {
@@ -6012,7 +7406,7 @@ struct AdminReportView: View {
                 HeaderTitle(title: "管理后台", subtitle: "自由发布 + 后审治理，处理虚假、过期、诈骗和无效联系方式")
                 HStack(spacing: 10) {
                     AdminMetric(title: "待处理", value: "\(store.reports.filter { $0.status == .pending }.count)")
-                    AdminMetric(title: "风险内容", value: "\(store.posts.filter { $0.reportCount > 0 }.count)")
+                    AdminMetric(title: "被举报内容", value: "\(store.posts.filter { $0.reportCount > 0 }.count)")
                     AdminMetric(title: "已下架", value: "\(store.posts.filter { $0.status == .removed }.count)")
                 }
                 .padding(.horizontal, 16)
@@ -6104,9 +7498,14 @@ struct TagContentView: View {
         let tagged = store.posts(tagged: tag)
         switch sort {
         case "最新":
-            return tagged.sorted { $0.createdAt > $1.createdAt }
+            return store.sortedFeedPosts(tagged)
         default:
-            return tagged.sorted { $0.likedCount > $1.likedCount }
+            return tagged.sorted { lhs, rhs in
+                if lhs.isEnded != rhs.isEnded {
+                    return !lhs.isEnded
+                }
+                return lhs.likedCount > rhs.likedCount
+            }
         }
     }
 
@@ -6141,7 +7540,9 @@ struct TagContentView: View {
                         .foregroundStyle(Theme.text)
 
                         Button {
-                            store.showToast("已打开标签分享占位")
+                            if store.requireLogin(prompt: "登录后才能分享") {
+                                store.showToast("已打开标签分享占位")
+                            }
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 27, weight: .medium))
@@ -6189,7 +7590,7 @@ struct TagContentView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 14)
 
-                    WaterfallGrid(posts: posts.isEmpty ? store.activePosts : posts)
+                    WaterfallGrid(posts: posts.isEmpty ? store.sortedFeedPosts(store.activePosts) : posts)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 28)
                 }
@@ -6204,10 +7605,12 @@ struct TagContentView: View {
 
 struct UserProfileView: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var chatThreadID: String?
+    @State private var isChatPresented = false
     let userID: String
 
     var userPosts: [GroupBuyPost] {
-        store.activePosts.filter { $0.authorID == userID }
+        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == userID })
     }
 
     var body: some View {
@@ -6226,22 +7629,46 @@ struct UserProfileView: View {
                                 .foregroundStyle(Theme.subtext)
                         }
                     }
-                    HStack {
+                    HStack(spacing: 18) {
                         NavigationLink(value: Route.userRelations(user.id, .followers)) {
                             StatItem(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
                         }
                         .buttonStyle(.plain)
-                        StatItem(value: "\(user.postCount)", title: "团购")
+                        StatItem(value: "\(store.unfinishedCollectionCount(ownerID: user.id))", title: "未结合集")
+                        StatItem(value: "\(store.completedGroupTotal(for: user.id))", title: "完成团")
                         Spacer()
-                        Button {
-                            store.toggleFollow(userID: user.id)
-                        } label: {
-                            Text(store.followedUserIDs.contains(user.id) ? "已关注" : "关注")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 10)
-                                .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                    }
+                    if user.id != store.currentUserID {
+                        HStack {
+                            Spacer()
+                            Button {
+                                openChat(with: user)
+                            } label: {
+                                Label("私信", systemImage: "bubble.left.and.bubble.right.fill")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(Theme.hotPink)
+                                    .labelStyle(.titleAndIcon)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(Theme.hotPink.opacity(0.12), in: Capsule())
+                                    .overlay {
+                                        Capsule().stroke(Theme.hotPink, lineWidth: 1)
+                                    }
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                store.toggleFollow(userID: user.id)
+                            } label: {
+                                Text(store.followedUserIDs.contains(user.id) ? "已关注" : "关注")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(minWidth: 72)
+                                    .padding(.horizontal, 18)
+                                    .padding(.vertical, 10)
+                                    .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -6265,6 +7692,17 @@ struct UserProfileView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle(user.nickname)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $isChatPresented) {
+            if let chatThreadID {
+                ChatView(threadID: chatThreadID)
+            }
+        }
+    }
+
+    private func openChat(with user: User) {
+        guard let threadID = store.directMessageThreadID(for: user.id) else { return }
+        chatThreadID = threadID
+        isChatPresented = true
     }
 }
 
@@ -6525,12 +7963,26 @@ struct PrototypeTextEditor: View {
 struct TagEditor: View {
     let tags: [String]
     @Binding var selection: Set<String>
+    @State private var customTag = ""
+
+    var visibleTags: [String] {
+        let customSelected = selection
+            .filter { !tags.contains($0) }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        return tags + customSelected
+    }
+
+    var normalizedCustomTag: String {
+        customTag.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            RequiredLabel("品类 / 圈层标签")
+            Text("品类 / 圈层标签")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.text)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 8)], alignment: .leading, spacing: 8) {
-                ForEach(tags, id: \.self) { tag in
+                ForEach(visibleTags, id: \.self) { tag in
                     Button {
                         if selection.contains(tag) {
                             selection.remove(tag)
@@ -6548,8 +8000,65 @@ struct TagEditor: View {
                     .buttonStyle(.plain)
                 }
             }
+            HStack(spacing: 8) {
+                TextField("自定义标签", text: $customTag)
+                    .foregroundStyle(Theme.text)
+                    .padding(12)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Theme.hairline, lineWidth: 1)
+                    }
+                Button {
+                    addCustomTag()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(normalizedCustomTag.isEmpty ? Theme.muted : .white)
+                        .frame(width: 44, height: 44)
+                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(normalizedCustomTag.isEmpty)
+            }
         }
     }
+
+    private func addCustomTag() {
+        let tag = normalizedCustomTag
+        guard !tag.isEmpty else { return }
+        selection.insert(tag)
+        customTag = ""
+    }
+}
+
+func sanitizeDepositPercentInput(_ value: String) -> String {
+    var result = ""
+    var hasDecimalPoint = false
+    var decimalDigits = 0
+
+    for scalar in value.unicodeScalars {
+        if scalar.value >= 48 && scalar.value <= 57 {
+            if hasDecimalPoint {
+                guard decimalDigits < 1 else { continue }
+                decimalDigits += 1
+            }
+            result.unicodeScalars.append(scalar)
+        } else if scalar == "." && !hasDecimalPoint {
+            hasDecimalPoint = true
+            if result.isEmpty {
+                result = "0"
+            }
+            result.append(".")
+        }
+    }
+
+    return result
+}
+
+func finalizedDepositPercent(_ value: String) -> String {
+    let sanitized = sanitizeDepositPercentInput(value)
+    return sanitized.hasSuffix(".") ? String(sanitized.dropLast()) : sanitized
 }
 
 struct ValidationRow: View {
