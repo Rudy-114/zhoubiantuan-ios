@@ -46,6 +46,11 @@
 	<string>public.app-category.social-networking</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于从相册选择团购帖产品图片。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

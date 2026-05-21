@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Photos
 import PhotosUI
+import Security
 import UniformTypeIdentifiers
 
 @main
@@ -46,6 +47,16 @@ enum AppTab: String, CaseIterable, Identifiable {
     case profile
 
     var id: String { rawValue }
+
+    var index: Int {
+        Self.allCases.firstIndex(of: self) ?? 0
+    }
+
+    func adjacent(offset: Int) -> AppTab? {
+        let nextIndex = index + offset
+        guard Self.allCases.indices.contains(nextIndex) else { return nil }
+        return Self.allCases[nextIndex]
+    }
 
     var title: String {
         switch self {
@@ -109,11 +120,10 @@ enum Route: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var store: MockAppStore
-    @AppStorage("zhoubiantuan.isLoggedIn") private var persistedIsLoggedIn = true
     @State private var selectedTab: AppTab = .home
 
     private var isAuthenticated: Bool {
-        store.isLoggedIn && persistedIsLoggedIn
+        store.isLoggedIn
     }
 
     var body: some View {
@@ -165,6 +175,10 @@ struct RootView: View {
             }
             .id("\(store.authSessionVersion)-\(isAuthenticated)")
             .tint(Theme.hotPink)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 34)
+                    .onEnded(handleTabSwipe)
+            )
             .overlay(alignment: .top) {
                 ToastHost()
             }
@@ -180,13 +194,27 @@ struct RootView: View {
                     store.isAuthPromptPresented = false
                 }
             }
+            .task {
+                await store.loadBackendIfNeeded()
+            }
+        }
+    }
+
+    private func handleTabSwipe(_ value: DragGesture.Value) {
+        guard value.startLocation.x > 34,
+              value.startLocation.x < UIScreen.main.bounds.width - 34,
+              abs(value.translation.width) > 126,
+              abs(value.translation.height) < 72 else { return }
+        let offset = value.translation.width < 0 ? 1 : -1
+        guard let nextTab = selectedTab.adjacent(offset: offset) else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            selectedTab = nextTab
         }
     }
 }
 
 struct AuthenticatedTabContent<Content: View>: View {
     @EnvironmentObject private var store: MockAppStore
-    @AppStorage("zhoubiantuan.isLoggedIn") private var persistedIsLoggedIn = true
     let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -194,7 +222,7 @@ struct AuthenticatedTabContent<Content: View>: View {
     }
 
     var body: some View {
-        if store.isLoggedIn && persistedIsLoggedIn {
+        if store.isLoggedIn {
             content
         } else {
             GuestAuthView()
@@ -340,12 +368,47 @@ struct UploadedImageView: View {
     }
 }
 
+struct RemoteImageView: View {
+    let urlString: String
+
+    var body: some View {
+        if let url = URL(string: urlString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable()
+                case .failure:
+                    imagePlaceholder
+                case .empty:
+                    imagePlaceholder
+                @unknown default:
+                    imagePlaceholder
+                }
+            }
+        } else {
+            imagePlaceholder
+        }
+    }
+
+    private var imagePlaceholder: some View {
+        Rectangle()
+            .fill(Theme.panelRaised)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+            }
+    }
+}
+
 struct PostImageView: View {
     let post: GroupBuyPost
     var index = 0
 
     var body: some View {
-        if post.uploadedImageData.indices.contains(index) {
+        if post.remoteImageURLs.indices.contains(index) {
+            RemoteImageView(urlString: post.remoteImageURLs[index])
+        } else if post.uploadedImageData.indices.contains(index) {
             UploadedImageView(data: post.uploadedImageData[index])
         } else {
             let fallbackIndex = max(0, index - post.uploadedImageData.count)
@@ -359,7 +422,9 @@ struct UserBackgroundImage: View {
     let user: User
 
     var body: some View {
-        if let imageData = user.backgroundImageData,
+        if !user.backgroundURL.isEmpty {
+            RemoteImageView(urlString: user.backgroundURL)
+        } else if let imageData = user.backgroundImageData,
            let image = UIImage(data: imageData) {
             Image(uiImage: image)
                 .resizable()
@@ -371,6 +436,7 @@ struct UserBackgroundImage: View {
 
 struct User: Identifiable, Hashable {
     let id: String
+    var email: String = ""
     var nickname: String
     var bio: String
     var followingCount: Int
@@ -387,6 +453,8 @@ struct User: Identifiable, Hashable {
     var backgroundImageName: String = "merch_magazine"
     var avatarImageData: Data? = nil
     var backgroundImageData: Data? = nil
+    var avatarURL: String = ""
+    var backgroundURL: String = ""
     var lastNicknameChangedAt: Date? = nil
     var phoneNumber: String = ""
     var password: String = ""
@@ -397,6 +465,8 @@ struct GroupBuyPost: Identifiable, Hashable {
     var title: String
     var imageNames: [String]
     var uploadedImageData: [Data] = []
+    var remoteImageURLs: [String] = []
+    var imageObjectKeys: [String] = []
     var authorID: String
     var groupType: GroupBuyType = .followGroup
     var collectionID: String? = nil
@@ -459,6 +529,22 @@ enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .followGroup: Theme.hotPink
         case .splitGoods: Color(red: 0.25, green: 0.78, blue: 0.72)
+        }
+    }
+
+    var backendValue: String {
+        switch self {
+        case .followGroup: "followGroup"
+        case .splitGoods: "splitGoods"
+        }
+    }
+
+    static func backendValue(_ value: String) -> GroupBuyType {
+        switch value {
+        case "splitGoods", "拼谷":
+            return .splitGoods
+        default:
+            return .followGroup
         }
     }
 }
@@ -600,6 +686,541 @@ enum ColorToken: String, Hashable {
     }
 }
 
+extension ContentStatus {
+    static func backendValue(_ value: String) -> ContentStatus {
+        switch value {
+        case "active", "公开":
+            return .active
+        case "hidden", "已隐藏":
+            return .hidden
+        case "removed", "已下架":
+            return .removed
+        case "deleted", "已删除":
+            return .deleted
+        default:
+            return .active
+        }
+    }
+}
+
+extension ReportStatus {
+    static func backendValue(_ value: String) -> ReportStatus {
+        switch value {
+        case "ignored", "已忽略":
+            return .ignored
+        case "hidden", "已隐藏":
+            return .hidden
+        case "removed", "已下架":
+            return .removed
+        case "warned", "已警告":
+            return .warned
+        default:
+            return .pending
+        }
+    }
+}
+
+enum BackendDateParser {
+    static func date(from value: String?) -> Date {
+        guard let value else { return Date() }
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+        if let date = plainFormatter.date(from: value) {
+            return date
+        }
+        return Date()
+    }
+
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let plainFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+}
+
+struct BackendPayload: Decodable {
+    var token: String?
+    var currentUser: BackendUser?
+    var users: [BackendUser]?
+    var posts: [BackendPost]?
+    var collections: [BackendCollection]?
+    var comments: [BackendComment]?
+    var reports: [BackendReport]?
+    var likedPostIDs: [String]?
+    var favoritePostIDs: [String]?
+    var followedUserIDs: [String]?
+}
+
+struct BackendUser: Decodable {
+    let id: String
+    let email: String?
+    let nickname: String
+    let bio: String
+    let followingCount: Int
+    let followersCount: Int
+    let postCount: Int
+    let isRestricted: Bool
+    let canShowContact: Bool
+    let avatarSymbol: String
+    let avatarTint: String
+    let redBookID: String
+    let gender: String
+    let birthday: String
+    let region: String
+    let backgroundImageName: String
+    let avatarURL: String?
+    let backgroundURL: String?
+    let phoneNumber: String?
+    let lastNicknameChangedAt: String?
+
+    func localUser() -> User {
+        User(
+            id: id,
+            email: email ?? "",
+            nickname: nickname,
+            bio: bio,
+            followingCount: followingCount,
+            followersCount: followersCount,
+            postCount: postCount,
+            isRestricted: isRestricted,
+            canShowContact: canShowContact,
+            avatarSymbol: avatarSymbol,
+            avatarTint: ColorToken(rawValue: avatarTint) ?? .rose,
+            redBookID: redBookID,
+            gender: gender,
+            birthday: birthday,
+            region: region,
+            backgroundImageName: backgroundImageName,
+            avatarURL: avatarURL ?? "",
+            backgroundURL: backgroundURL ?? "",
+            lastNicknameChangedAt: lastNicknameChangedAt.map(BackendDateParser.date(from:)),
+            phoneNumber: phoneNumber ?? ""
+        )
+    }
+}
+
+struct BackendRole: Decodable {
+    let id: String?
+    let name: String
+    let quantity: Int
+
+    func localRole() -> UnsoldRole {
+        UnsoldRole(id: id ?? "role-\(UUID().uuidString)", name: name, quantity: quantity)
+    }
+}
+
+struct BackendPost: Decodable {
+    let id: String
+    let title: String
+    let imageNames: [String]
+    let remoteImageURLs: [String]?
+    let imageObjectKeys: [String]?
+    let authorID: String
+    let groupType: String
+    let collectionID: String?
+    let categoryTags: [String]
+    let fandomTags: [String]
+    let price: String
+    let deposit: String
+    let deadline: String
+    let condition: String
+    let isFormed: Bool
+    let description: String
+    let wechat: String
+    let qq: String
+    let groupInfo: String
+    let externalLink: String
+    let createdAt: String
+    let likedCount: Int
+    let favoriteCount: Int
+    let commentCount: Int
+    let reportCount: Int
+    let status: String
+    let imageAspect: Double
+    let pingguAveragePrice: String
+    let pingguNote: String
+    let unsoldRoles: [BackendRole]
+
+    func localPost() -> GroupBuyPost {
+        GroupBuyPost(
+            id: id,
+            title: title,
+            imageNames: imageNames,
+            remoteImageURLs: remoteImageURLs ?? [],
+            imageObjectKeys: imageObjectKeys ?? [],
+            authorID: authorID,
+            groupType: GroupBuyType.backendValue(groupType),
+            collectionID: collectionID,
+            categoryTags: categoryTags,
+            fandomTags: fandomTags,
+            price: price,
+            deposit: deposit,
+            deadline: BackendDateParser.date(from: deadline),
+            condition: condition,
+            isFormed: isFormed,
+            description: description,
+            wechat: wechat,
+            qq: qq,
+            groupInfo: groupInfo,
+            externalLink: externalLink,
+            createdAt: BackendDateParser.date(from: createdAt),
+            likedCount: likedCount,
+            favoriteCount: favoriteCount,
+            commentCount: commentCount,
+            reportCount: reportCount,
+            status: ContentStatus.backendValue(status),
+            imageAspect: imageAspect,
+            pingguAveragePrice: pingguAveragePrice,
+            pingguNote: pingguNote,
+            unsoldRoles: unsoldRoles.map { $0.localRole() }
+        )
+    }
+}
+
+struct BackendCollection: Decodable {
+    let id: String
+    let ownerID: String
+    let name: String
+    let contactWechat: String
+    let contactQQ: String
+    let groupInfo: String
+    let deadline: String
+    let defaultNote: String
+    let postIDs: [String]
+    let createdAt: String
+
+    func localCollection() -> GroupCollection {
+        GroupCollection(
+            id: id,
+            ownerID: ownerID,
+            name: name,
+            contactWechat: contactWechat,
+            contactQQ: contactQQ,
+            groupInfo: groupInfo,
+            deadline: BackendDateParser.date(from: deadline),
+            defaultNote: defaultNote,
+            postIDs: postIDs,
+            createdAt: BackendDateParser.date(from: createdAt)
+        )
+    }
+}
+
+struct BackendComment: Decodable {
+    let id: String
+    let body: String
+    let authorID: String
+    let postID: String
+    let replyToID: String?
+    let createdAt: String
+    let status: String
+
+    func localComment() -> Comment {
+        Comment(id: id, body: body, authorID: authorID, postID: postID, replyToID: replyToID, createdAt: BackendDateParser.date(from: createdAt), status: ContentStatus.backendValue(status))
+    }
+}
+
+struct BackendReportTarget: Decodable {
+    let type: String
+    let id: String
+}
+
+struct BackendReport: Decodable {
+    let id: String
+    let target: BackendReportTarget
+    let reason: String
+    let detail: String
+    let reporterID: String
+    let status: String
+    let adminResult: String?
+    let handledAt: String?
+
+    func localReport() -> Report {
+        let localTarget: ReportTarget = target.type == "comment" ? .comment(target.id) : .post(target.id)
+        return Report(id: id, target: localTarget, reason: reason, detail: detail, reporterID: reporterID, status: ReportStatus.backendValue(status), adminResult: adminResult, handledAt: handledAt.map(BackendDateParser.date(from:)))
+    }
+}
+
+struct UploadTarget: Decodable {
+    let objectKey: String
+    let uploadUrl: String
+}
+
+final class AliyunBackendClient {
+    static let baseURLDefaultsKey = "zhoubiantuan.backendBaseURL"
+    static let defaultBaseURL = "http://47.103.44.42/api"
+
+    private let baseURL: URL
+    private let session: URLSession
+
+    init(baseURLString: String = UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? defaultBaseURL, session: URLSession = .shared) {
+        self.baseURL = URL(string: baseURLString) ?? URL(string: Self.defaultBaseURL)!
+        self.session = session
+    }
+
+    func register(email: String, password: String, nickname: String) async throws -> BackendPayload {
+        try await request("/auth/register", method: "POST", body: [
+            "email": email,
+            "password": password,
+            "nickname": nickname
+        ])
+    }
+
+    func sendEmailCode(email: String, purpose: String) async throws {
+        let _: EmptyResponse = try await request("/auth/email/send-code", method: "POST", body: [
+            "email": email,
+            "purpose": purpose
+        ])
+    }
+
+    func registerWithEmailCode(email: String, password: String, nickname: String, code: String) async throws -> BackendPayload {
+        try await request("/auth/email/register", method: "POST", body: [
+            "email": email,
+            "password": password,
+            "nickname": nickname,
+            "code": code
+        ])
+    }
+
+    func login(email: String, password: String) async throws -> BackendPayload {
+        try await request("/auth/email/login", method: "POST", body: [
+            "email": email,
+            "password": password
+        ])
+    }
+
+    func loginWithEmailCode(email: String, code: String) async throws -> BackendPayload {
+        try await request("/auth/email/login", method: "POST", body: [
+            "email": email,
+            "code": code
+        ])
+    }
+
+    func bootstrap(token: String) async throws -> BackendPayload {
+        try await request("/bootstrap", token: token)
+    }
+
+    func updateProfile(token: String, user: User) async throws {
+        let _: EmptyResponse = try await request("/me", method: "PATCH", token: token, body: [
+            "nickname": user.nickname,
+            "bio": user.bio,
+            "redBookID": user.redBookID,
+            "gender": user.gender,
+            "birthday": user.birthday,
+            "region": user.region,
+            "avatarSymbol": user.avatarSymbol,
+            "avatarTint": user.avatarTint.rawValue,
+            "backgroundImageName": user.backgroundImageName
+        ])
+    }
+
+    func createCollection(token: String, collection: GroupCollection) async throws {
+        let _: EmptyResponse = try await request("/collections", method: "POST", token: token, body: [
+            "id": collection.id,
+            "name": collection.name,
+            "wechat": collection.contactWechat,
+            "qq": collection.contactQQ,
+            "groupInfo": collection.groupInfo,
+            "deadline": BackendDateParserString.string(from: collection.deadline),
+            "defaultNote": collection.defaultNote
+        ])
+    }
+
+    func deleteCollection(token: String, collectionID: String) async throws {
+        try await emptyRequest("/collections/\(collectionID)", method: "DELETE", token: token)
+    }
+
+    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String]) async throws {
+        let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity] as [String: Any] }
+        let _: EmptyResponse = try await request("/posts", method: "POST", token: token, body: [
+            "id": post.id,
+            "title": post.title,
+            "imageNames": post.imageNames,
+            "imageObjectKeys": imageObjectKeys,
+            "groupType": post.groupType.backendValue,
+            "collectionID": post.collectionID ?? "",
+            "categoryTags": post.categoryTags,
+            "fandomTags": post.fandomTags,
+            "price": post.price,
+            "deposit": post.deposit,
+            "deadline": BackendDateParserString.string(from: post.deadline),
+            "condition": post.condition,
+            "isFormed": post.isFormed,
+            "description": post.description,
+            "wechat": post.wechat,
+            "qq": post.qq,
+            "groupInfo": post.groupInfo,
+            "externalLink": post.externalLink,
+            "imageAspect": post.imageAspect,
+            "pingguAveragePrice": post.pingguAveragePrice,
+            "pingguNote": post.pingguNote,
+            "unsoldRoles": roles
+        ])
+    }
+
+    func deletePost(token: String, postID: String) async throws {
+        try await emptyRequest("/posts/\(postID)", method: "DELETE", token: token)
+    }
+
+    func setPostFlag(token: String, postID: String, flag: String, enabled: Bool) async throws {
+        try await emptyRequest("/posts/\(postID)/\(flag)", method: enabled ? "POST" : "DELETE", token: token)
+    }
+
+    func setFollow(token: String, userID: String, enabled: Bool) async throws {
+        try await emptyRequest("/users/\(userID)/follow", method: enabled ? "POST" : "DELETE", token: token)
+    }
+
+    func addComment(token: String, postID: String, body: String, replyToID: String? = nil) async throws {
+        let _: EmptyResponse = try await request("/posts/\(postID)/comments", method: "POST", token: token, body: [
+            "body": body,
+            "replyToID": replyToID ?? ""
+        ])
+    }
+
+    func deleteComment(token: String, commentID: String) async throws {
+        try await emptyRequest("/comments/\(commentID)", method: "DELETE", token: token)
+    }
+
+    func reportPost(token: String, postID: String, reason: String) async throws {
+        let _: EmptyResponse = try await request("/reports", method: "POST", token: token, body: [
+            "targetType": "post",
+            "targetID": postID,
+            "reason": reason,
+            "detail": "来自 iOS 内测版举报"
+        ])
+    }
+
+    func uploadPostImages(token: String, images: [Data]) async throws -> [String] {
+        var keys: [String] = []
+        for (index, data) in images.enumerated() {
+            let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
+                "kind": "post",
+                "filename": "post-\(index).jpg",
+                "contentType": "image/jpeg"
+            ])
+            var request = URLRequest(url: URL(string: target.uploadUrl)!)
+            request.httpMethod = "PUT"
+            request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+            let (_, response) = try await session.upload(for: request, from: data)
+            try validate(response: response, data: Data())
+            keys.append(target.objectKey)
+        }
+        return keys
+    }
+
+    private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        if T.self == EmptyResponse.self {
+            return EmptyResponse() as! T
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func emptyRequest(_ path: String, method: String, token: String) async throws {
+        let _: EmptyResponse = try await request(path, method: method, token: token)
+    }
+
+    private func validate(response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard (200..<300).contains(http.statusCode) else {
+            let errorMessage = (try? JSONDecoder().decode(APIError.self, from: data).error) ?? "请求失败"
+            throw NSError(domain: "AliyunBackendClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        }
+    }
+
+    private struct APIError: Decodable {
+        let error: String
+    }
+}
+
+struct BackendDateParserString {
+    static func string(from date: Date) -> String {
+        formatter.string(from: date)
+    }
+
+    private static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
+struct EmptyResponse: Decodable {}
+
+enum KeychainStore {
+    private static let service = "com.panpanpan.zhoubiantuan"
+
+    static func string(forKey key: String) -> String? {
+        var query = baseQuery(forKey: key)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return value
+    }
+
+    @discardableResult
+    static func set(_ value: String, forKey key: String) -> Bool {
+        let data = Data(value.utf8)
+        let query = baseQuery(forKey: key)
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            return add(data, forKey: key)
+        } else if status != errSecSuccess {
+            delete(forKey: key)
+            return add(data, forKey: key)
+        }
+        return true
+    }
+
+    static func delete(forKey key: String) {
+        SecItemDelete(baseQuery(forKey: key) as CFDictionary)
+    }
+
+    private static func baseQuery(forKey key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+    }
+
+    @discardableResult
+    private static func add(_ data: Data, forKey key: String) -> Bool {
+        var item = baseQuery(forKey: key)
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+}
+
 @MainActor
 final class MockAppStore: ObservableObject {
     @Published var users: [User]
@@ -614,7 +1235,11 @@ final class MockAppStore: ObservableObject {
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
     @Published var followingIDsByUserID: [String: Set<String>]
-    @Published var browsingHistoryIDs: [String]
+    @Published var browsingHistoryIDs: [String] {
+        didSet {
+            UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
+        }
+    }
     @Published var searchHistory: [String] {
         didSet {
             UserDefaults.standard.set(searchHistory, forKey: Self.searchHistoryDefaultsKey)
@@ -639,21 +1264,68 @@ final class MockAppStore: ObservableObject {
             UserDefaults.standard.set(limitsUnrepliedMessages, forKey: Self.messageLimitDefaultsKey)
         }
     }
+    @Published var isBackendEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isBackendEnabled, forKey: Self.backendEnabledDefaultsKey)
+        }
+    }
 
     private static let demoUserID = "u-me"
     private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
     private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
     private static let messageLimitDefaultsKey = "zhoubiantuan.limitsUnrepliedMessages"
+    private static let backendEnabledDefaultsKey = "zhoubiantuan.isBackendEnabled"
+    private static let backendTokenDefaultsKey = "zhoubiantuan.backendToken"
+    private static let backendTokenFallbackDefaultsKey = "zhoubiantuan.backendToken.fallback"
+    private static let browsingHistoryDefaultsKeyPrefix = "zhoubiantuan.browsingHistory"
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let defaultSearchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
     private static let demoLikedPostIDs: Set<String> = ["p-card", "p-plush"]
     private static let demoFavoritePostIDs: Set<String> = ["p-card", "p-album"]
+    private let backendClient = AliyunBackendClient()
+    private var cachedBackendToken: String?
+    private var backendToken: String? {
+        get {
+            cachedBackendToken ??
+            KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ??
+            UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
+        }
+        set {
+            if let newValue, !newValue.isEmpty {
+                cachedBackendToken = newValue
+                KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey)
+                UserDefaults.standard.set(newValue, forKey: Self.backendTokenFallbackDefaultsKey)
+            } else {
+                cachedBackendToken = nil
+                KeychainStore.delete(forKey: Self.backendTokenDefaultsKey)
+                UserDefaults.standard.removeObject(forKey: Self.backendTokenFallbackDefaultsKey)
+            }
+        }
+    }
+
+    private static func migrateBackendTokenToKeychain() {
+        let defaults = UserDefaults.standard
+        guard let legacyToken = defaults.string(forKey: backendTokenDefaultsKey), !legacyToken.isEmpty else { return }
+        if KeychainStore.string(forKey: backendTokenDefaultsKey) == nil {
+            if !KeychainStore.set(legacyToken, forKey: backendTokenDefaultsKey) {
+                defaults.set(legacyToken, forKey: backendTokenFallbackDefaultsKey)
+            }
+        }
+        defaults.removeObject(forKey: backendTokenDefaultsKey)
+    }
+
+    private static func browsingHistoryDefaultsKey(for userID: String) -> String {
+        "\(browsingHistoryDefaultsKeyPrefix).\(userID)"
+    }
 
     init() {
+        Self.migrateBackendTokenToKeychain()
+        cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ?? UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
         let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? true
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
+        isBackendEnabled = UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) as? Bool ?? false
         let now = Date()
         let myCollectionID = "col-my-winter"
         let winterCollectionID = "col-winter-bucky"
@@ -726,12 +1398,115 @@ final class MockAppStore: ObservableObject {
             "u-black": ["u-echo", "u-me"],
             "u-moon": ["u-black"]
         ]
-        browsingHistoryIDs = ["p-my-pinggu", "p-badge", "p-card", "p-jewelry", "p-concert", "p-magazine"]
+        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: Self.demoUserID)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? Self.defaultSearchHistory
+        if isBackendEnabled {
+            if backendToken == nil {
+                isLoggedIn = false
+            } else {
+                Task { await refreshFromBackend() }
+            }
+        }
     }
 
     var currentUser: User {
         users.first(where: { $0.id == currentUserID })!
+    }
+
+    func loadBackendIfNeeded() async {
+        guard isBackendEnabled else { return }
+        await refreshFromBackend(silent: true)
+    }
+
+    func backendModeChanged() {
+        if isBackendEnabled {
+            if backendToken == nil {
+                logOut()
+                showToast("已切换到阿里云后端，请登录测试账号")
+            } else {
+                Task { await refreshFromBackend() }
+            }
+        } else {
+            backendToken = nil
+            showToast("已切换到本地 Mock 数据")
+        }
+    }
+
+    func refreshFromBackend(silent: Bool = false) async {
+        guard isBackendEnabled, let backendToken else { return }
+        do {
+            let payload = try await backendClient.bootstrap(token: backendToken)
+            applyBackendPayload(payload)
+            if !silent {
+                showToast("云端数据已同步")
+            }
+        } catch {
+            if !silent {
+                showToast(error.localizedDescription)
+            }
+        }
+    }
+
+    private func applyBackendPayload(_ payload: BackendPayload) {
+        let previousUserID = currentUserID
+        let previousLoggedIn = isLoggedIn
+        if let token = payload.token {
+            backendToken = token
+        }
+        if let users = payload.users {
+            self.users = users.map { $0.localUser() }
+        }
+        if let posts = payload.posts {
+            self.posts = posts.map { $0.localPost() }
+        }
+        if let collections = payload.collections {
+            self.collections = collections.map { $0.localCollection() }
+        }
+        if let comments = payload.comments {
+            self.comments = comments.map { $0.localComment() }
+        }
+        if let reports = payload.reports {
+            self.reports = reports.map { $0.localReport() }
+        }
+        if let likedPostIDs = payload.likedPostIDs {
+            self.likedPostIDs = Set(likedPostIDs)
+        }
+        if let favoritePostIDs = payload.favoritePostIDs {
+            self.favoritePostIDs = Set(favoritePostIDs)
+        }
+        if let followedUserIDs = payload.followedUserIDs {
+            self.followedUserIDs = Set(followedUserIDs)
+        }
+        if let currentUser = payload.currentUser?.localUser() {
+            if !users.contains(where: { $0.id == currentUser.id }) {
+                users.append(currentUser)
+            }
+            currentUserID = currentUser.id
+            browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: currentUser.id)) ?? []
+        }
+        followingIDsByUserID[currentUserID] = followedUserIDs
+        isLoggedIn = payload.currentUser != nil || backendToken != nil
+        isAuthPromptPresented = false
+        if previousUserID != currentUserID || previousLoggedIn != isLoggedIn {
+            authSessionVersion = UUID()
+        }
+    }
+
+    private func runBackendMutation(refreshAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String) async throws -> Void) {
+        guard isBackendEnabled, let backendToken else { return }
+        Task {
+            do {
+                try await operation(backendToken)
+                if refreshAfterSuccess {
+                    await refreshFromBackend(silent: true)
+                }
+            } catch {
+                showToast(error.localizedDescription)
+                if refreshAfterFailure {
+                    await refreshFromBackend(silent: true)
+                }
+            }
+        }
     }
 
     var activePosts: [GroupBuyPost] {
@@ -739,7 +1514,27 @@ final class MockAppStore: ObservableObject {
     }
 
     var messageThreads: [MessageThread] {
-        threads.sorted { $0.updatedAt > $1.updatedAt }
+        threads
+            .filter(isCurrentUserThread)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    var currentUserReminders: [Reminder] {
+        reminders
+            .filter { $0.userID == currentUserID }
+            .sorted { $0.deadline < $1.deadline }
+    }
+
+    func messageThread(id: String) -> MessageThread? {
+        threads.first { $0.id == id && isCurrentUserThread($0) }
+    }
+
+    func isCurrentUserThread(_ thread: MessageThread) -> Bool {
+        thread.buyerUserID == currentUserID || thread.publisherUserID == currentUserID
+    }
+
+    func peerUserID(for thread: MessageThread) -> String {
+        thread.publisherUserID == currentUserID ? thread.buyerUserID : thread.publisherUserID
     }
 
     func user(id: String) -> User {
@@ -839,12 +1634,46 @@ final class MockAppStore: ObservableObject {
             })
     }
 
+    func groupLeaderUsers(matching keyword: String) -> [User] {
+        let trimmed = keyword.trimmed
+        let normalizedKeyword = trimmed.lowercased()
+        let userMatches = users.filter { user in
+            guard user.id != currentUserID else { return false }
+            guard !normalizedKeyword.isEmpty else { return false }
+            let authoredText = posts
+                .filter { $0.authorID == user.id && $0.status == .active }
+                .flatMap { post in
+                    [post.title, post.description, post.price] + post.categoryTags + post.fandomTags + post.unsoldRoles.map(\.name)
+                }
+                .joined(separator: " ")
+            let searchableText = [
+                user.nickname,
+                user.redBookID,
+                user.bio,
+                user.region,
+                user.email,
+                authoredText
+            ]
+                .joined(separator: " ")
+                .lowercased()
+            return searchableText.localizedCaseInsensitiveContains(normalizedKeyword) ||
+                normalizedKeyword.localizedCaseInsensitiveContains(user.nickname.lowercased())
+        }
+
+        return userMatches.sorted { lhs, rhs in
+            if followedUserIDs.contains(lhs.id) != followedUserIDs.contains(rhs.id) {
+                return followedUserIDs.contains(lhs.id)
+            }
+            return lhs.followersCount > rhs.followersCount
+        }
+    }
+
     func availableRoles(for postID: String) -> [UnsoldRole] {
         post(id: postID)?.unsoldRoles.filter(\.isAvailable).sorted { $0.name < $1.name } ?? []
     }
 
     func browsingHistoryPosts() -> [GroupBuyPost] {
-        sortedFeedPosts(browsingHistoryIDs.compactMap(post).filter { $0.status == .active })
+        browsingHistoryIDs.compactMap(post).filter { $0.status == .active }
     }
 
     func recordBrowse(postID: String) {
@@ -874,6 +1703,14 @@ final class MockAppStore: ObservableObject {
         comments.filter { $0.postID == postID && $0.status == .active }.sorted { $0.createdAt < $1.createdAt }
     }
 
+    func comment(id: String) -> Comment? {
+        comments.first(where: { $0.id == id })
+    }
+
+    func canDeleteComment(_ comment: Comment) -> Bool {
+        comment.authorID == currentUserID || post(id: comment.postID)?.authorID == currentUserID
+    }
+
     @discardableResult
     func requireLogin(prompt: String = "登录后才能使用该功能") -> Bool {
         guard isLoggedIn else {
@@ -890,9 +1727,15 @@ final class MockAppStore: ObservableObject {
         if likedPostIDs.contains(postID) {
             likedPostIDs.remove(postID)
             posts[index].likedCount = max(0, posts[index].likedCount - 1)
+            runBackendMutation { token in
+                try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
+            }
         } else {
             likedPostIDs.insert(postID)
             posts[index].likedCount += 1
+            runBackendMutation { token in
+                try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
+            }
         }
     }
 
@@ -904,12 +1747,18 @@ final class MockAppStore: ObservableObject {
             posts[index].favoriteCount = max(0, posts[index].favoriteCount - 1)
             reminders.removeAll { $0.postID == postID && $0.userID == currentUserID }
             showToast("已取消收藏和截团提醒")
+            runBackendMutation { token in
+                try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
+            }
         } else {
             favoritePostIDs.insert(postID)
             posts[index].favoriteCount += 1
             let post = posts[index]
             reminders.append(Reminder(id: "re-\(postID)-\(Int(Date().timeIntervalSince1970))", userID: currentUserID, postID: postID, deadline: post.deadline, remindAt: post.deadline.addingTimeInterval(-3600 * 3), hasReminded: false))
             showToast("已收藏，截团前会提醒你")
+            runBackendMutation { token in
+                try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
+            }
         }
     }
 
@@ -928,6 +1777,9 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
             }
             showToast("已取消关注")
+            runBackendMutation { token in
+                try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
+            }
         } else {
             followedUserIDs.insert(userID)
             followingIDsByUserID[currentUserID] = followedUserIDs
@@ -938,18 +1790,48 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount += 1
             }
             showToast("已关注团长")
+            runBackendMutation { token in
+                try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
+            }
         }
     }
 
-    func addComment(postID: String, body: String) {
+    func addComment(postID: String, body: String, replyToID: String? = nil) {
         guard requireLogin(prompt: "登录后才能评论") else { return }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        comments.append(Comment(id: "c-\(UUID().uuidString)", body: trimmed, authorID: currentUserID, postID: postID, replyToID: nil, createdAt: Date(), status: .active))
+        comments.append(Comment(id: "c-\(UUID().uuidString)", body: trimmed, authorID: currentUserID, postID: postID, replyToID: replyToID, createdAt: Date(), status: .active))
         if let index = posts.firstIndex(where: { $0.id == postID }) {
             posts[index].commentCount += 1
         }
         showToast("评论已发布")
+        runBackendMutation { token in
+            try await self.backendClient.addComment(token: token, postID: postID, body: trimmed, replyToID: replyToID)
+        }
+    }
+
+    func copyComment(_ comment: Comment) {
+        UIPasteboard.general.string = comment.body
+        showToast("已复制评论")
+    }
+
+    func deleteComment(commentID: String) {
+        guard requireLogin(prompt: "登录后才能删除评论") else { return }
+        guard let commentIndex = comments.firstIndex(where: { $0.id == commentID }),
+              comments[commentIndex].status == .active else { return }
+        let comment = comments[commentIndex]
+        guard canDeleteComment(comment) else {
+            showToast("只能删除自己的评论")
+            return
+        }
+        comments[commentIndex].status = .deleted
+        if let postIndex = posts.firstIndex(where: { $0.id == comment.postID }) {
+            posts[postIndex].commentCount = max(0, posts[postIndex].commentCount - 1)
+        }
+        showToast("评论已删除")
+        runBackendMutation { token in
+            try await self.backendClient.deleteComment(token: token, commentID: commentID)
+        }
     }
 
     func reportPost(postID: String, reason: String = "用户举报") {
@@ -959,6 +1841,9 @@ final class MockAppStore: ObservableObject {
             posts[index].reportCount += 1
         }
         showToast("已提交举报，管理员将后审处理")
+        runBackendMutation { token in
+            try await self.backendClient.reportPost(token: token, postID: postID, reason: reason)
+        }
     }
 
     func handleReport(reportID: String, status: ReportStatus) {
@@ -1034,6 +1919,10 @@ final class MockAppStore: ObservableObject {
         users[index].avatarImageData = avatarImageData
         users[index].backgroundImageData = backgroundImageData
         showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
+        let updatedUser = users[index]
+        runBackendMutation { token in
+            try await self.backendClient.updateProfile(token: token, user: updatedUser)
+        }
     }
 
     func setLoginState(_ loggedIn: Bool) {
@@ -1047,6 +1936,7 @@ final class MockAppStore: ObservableObject {
     func logOut() {
         isLoggedIn = false
         isAuthPromptPresented = false
+        backendToken = nil
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
@@ -1060,16 +1950,66 @@ final class MockAppStore: ObservableObject {
     }
 
     @discardableResult
-    func registerAccount(nickname: String, phone: String, password: String) -> Bool {
+    func requestEmailCode(email: String, purpose: String) async -> Bool {
+        let trimmedEmail = email.trimmed
+        guard isBackendEnabled else {
+            showToast("当前模式不需要邮箱验证码")
+            return false
+        }
+        guard trimmedEmail.contains("@") else {
+            showToast("请填写有效邮箱")
+            return false
+        }
+        do {
+            try await backendClient.sendEmailCode(email: trimmedEmail, purpose: purpose)
+            showToast("验证码已发送，请查看邮箱")
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    func registerAccount(nickname: String, email: String, password: String, code: String = "") async -> Bool {
         let trimmedNickname = nickname.trimmed
-        let trimmedPhone = phone.trimmed
+        let trimmedEmail = email.trimmed
         let trimmedPassword = password.trimmed
+        let trimmedCode = code.trimmed
+
+        if isBackendEnabled {
+            guard !trimmedNickname.isEmpty else {
+                showToast("请填写昵称")
+                return false
+            }
+            guard trimmedEmail.contains("@") else {
+                showToast("请填写有效邮箱")
+                return false
+            }
+            guard trimmedPassword.count >= 6 else {
+                showToast("密码至少 6 位")
+                return false
+            }
+            guard trimmedCode.count == 6 else {
+                showToast("请填写 6 位验证码")
+                return false
+            }
+            do {
+                let payload = try await backendClient.registerWithEmailCode(email: trimmedEmail, password: trimmedPassword, nickname: trimmedNickname, code: trimmedCode)
+                applyBackendPayload(payload)
+                showToast("注册成功，已登录云端账号")
+                return true
+            } catch {
+                showToast(error.localizedDescription)
+                return false
+            }
+        }
 
         guard !trimmedNickname.isEmpty else {
             showToast("请填写昵称")
             return false
         }
-        guard trimmedPhone.count >= 6 else {
+        guard trimmedEmail.count >= 6 else {
             showToast("请填写有效手机号")
             return false
         }
@@ -1077,7 +2017,7 @@ final class MockAppStore: ObservableObject {
             showToast("密码至少 6 位")
             return false
         }
-        guard !users.contains(where: { $0.phoneNumber == trimmedPhone }) else {
+        guard !users.contains(where: { $0.phoneNumber == trimmedEmail }) else {
             showToast("该手机号已注册")
             return false
         }
@@ -1095,12 +2035,12 @@ final class MockAppStore: ObservableObject {
             canShowContact: true,
             avatarSymbol: avatarSymbol.isEmpty ? "新" : avatarSymbol,
             avatarTint: .rose,
-            redBookID: String(trimmedPhone.suffix(8)),
+            redBookID: String(trimmedEmail.suffix(8)),
             gender: "未设置",
             birthday: "选择生日",
             region: "未设置",
             backgroundImageName: "merch_magazine",
-            phoneNumber: trimmedPhone,
+            phoneNumber: trimmedEmail,
             password: trimmedPassword
         )
 
@@ -1112,10 +2052,22 @@ final class MockAppStore: ObservableObject {
     }
 
     @discardableResult
-    func loginWithPhone(phone: String, password: String) -> Bool {
-        let trimmedPhone = phone.trimmed
+    func loginWithEmail(email: String, password: String) async -> Bool {
+        let trimmedEmail = email.trimmed
         let trimmedPassword = password.trimmed
-        guard let user = users.first(where: { $0.phoneNumber == trimmedPhone && $0.password == trimmedPassword }) else {
+        if isBackendEnabled {
+            do {
+                let payload = try await backendClient.login(email: trimmedEmail, password: trimmedPassword)
+                applyBackendPayload(payload)
+                showToast("云端登录成功")
+                return true
+            } catch {
+                let message = error.localizedDescription == "邮箱或密码不正确" ? "密码和邮箱不匹配" : error.localizedDescription
+                showToast(message)
+                return false
+            }
+        }
+        guard let user = users.first(where: { $0.phoneNumber == trimmedEmail && $0.password == trimmedPassword }) else {
             showToast("手机号或密码不正确")
             return false
         }
@@ -1124,9 +2076,38 @@ final class MockAppStore: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func loginWithEmailCode(email: String, code: String) async -> Bool {
+        let trimmedEmail = email.trimmed
+        let trimmedCode = code.trimmed
+        guard isBackendEnabled else {
+            showToast("本地模式不支持验证码登录")
+            return false
+        }
+        guard trimmedEmail.contains("@") else {
+            showToast("请填写有效邮箱")
+            return false
+        }
+        guard trimmedCode.count == 6 else {
+            showToast("请填写 6 位验证码")
+            return false
+        }
+        do {
+            let payload = try await backendClient.loginWithEmailCode(email: trimmedEmail, code: trimmedCode)
+            applyBackendPayload(payload)
+            showToast("验证码登录成功")
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
     private func switchCurrentUser(to userID: String) {
         guard users.contains(where: { $0.id == userID }) else { return }
+        UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
         currentUserID = userID
+        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: userID)) ?? []
         followedUserIDs = followingIDsByUserID[userID] ?? []
         followingIDsByUserID[userID] = followedUserIDs
         likedPostIDs = userID == Self.demoUserID ? Self.demoLikedPostIDs : []
@@ -1139,7 +2120,7 @@ final class MockAppStore: ObservableObject {
     func sharePostToThread(postID: String, threadID: String) {
         guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let post = post(id: postID),
-              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+              let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return }
         threads[index].messages.append(
             DirectMessage(
                 id: "m-\(UUID().uuidString)",
@@ -1162,7 +2143,7 @@ final class MockAppStore: ObservableObject {
     func shareProfileToThread(userID: String, threadID: String) {
         guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let user = users.first(where: { $0.id == userID }),
-              let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+              let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return }
         threads[index].messages.append(
             DirectMessage(
                 id: "m-\(UUID().uuidString)",
@@ -1194,7 +2175,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func ensureMutualFriendThreads() {
-        for friend in mutualFriendUsers() where !threads.contains(where: { $0.publisherUserID == friend.id && $0.relatedPostID == nil }) {
+        for friend in mutualFriendUsers() where !threads.contains(where: { isCurrentUserThread($0) && peerUserID(for: $0) == friend.id && $0.relatedPostID == nil }) {
             let threadID = "t-\(UUID().uuidString)"
             let thread = MessageThread(
                 id: threadID,
@@ -1212,10 +2193,10 @@ final class MockAppStore: ObservableObject {
     private func threadID(forRecipient userID: String, relatedPostID: String?) -> String? {
         guard requireLogin(prompt: "登录后才能发私信") else { return nil }
         guard userID != currentUserID else { return nil }
-        if let existing = threads.first(where: { $0.publisherUserID == userID && $0.relatedPostID == relatedPostID }) {
+        if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID && $0.relatedPostID == relatedPostID }) {
             return existing.id
         }
-        if let existing = threads.first(where: { $0.publisherUserID == userID }) {
+        if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
             return existing.id
         }
         let threadID = "t-\(UUID().uuidString)"
@@ -1236,7 +2217,7 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能发私信") else { return false }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              let index = threads.firstIndex(where: { $0.id == threadID }) else { return false }
+              let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return false }
         guard canSendMessage(in: threads[index]) else {
             showToast("对方未关注你时，回复前最多发送两条消息")
             return false
@@ -1249,14 +2230,14 @@ final class MockAppStore: ObservableObject {
 
     private func canSendMessage(in thread: MessageThread) -> Bool {
         guard limitsUnrepliedMessages else { return true }
-        let peerFollowsCurrentUser = followingIDs(for: thread.publisherUserID).contains(currentUserID)
+        let peerFollowsCurrentUser = followingIDs(for: peerUserID(for: thread)).contains(currentUserID)
         guard !peerFollowsCurrentUser else { return true }
         let trailingOwnMessages = thread.messages.reversed().prefix { $0.senderID == currentUserID }.count
         return trailingOwnMessages < 2
     }
 
     func markThreadRead(threadID: String) {
-        guard let index = threads.firstIndex(where: { $0.id == threadID }),
+        guard let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }),
               threads[index].unreadCount > 0 else { return }
         threads[index].unreadCount = 0
     }
@@ -1282,7 +2263,30 @@ final class MockAppStore: ObservableObject {
         )
         collections.insert(collection, at: 0)
         showToast("已创建拼团合集")
+        runBackendMutation { token in
+            try await self.backendClient.createCollection(token: token, collection: collection)
+        }
         return collection.id
+    }
+
+    func deleteCollections(ids: Set<String>) {
+        let ownedIDs = Set(collections.filter { ids.contains($0.id) && $0.ownerID == currentUserID }.map(\.id))
+        guard !ownedIDs.isEmpty else {
+            showToast("请选择要删除的合集")
+            return
+        }
+        collections.removeAll { ownedIDs.contains($0.id) }
+        for index in posts.indices {
+            if let collectionID = posts[index].collectionID, ownedIDs.contains(collectionID) {
+                posts[index].collectionID = nil
+            }
+        }
+        showToast("已删除 \(ownedIDs.count) 个拼团合集")
+        runBackendMutation(refreshAfterFailure: true) { token in
+            for collectionID in ownedIDs {
+                try await self.backendClient.deleteCollection(token: token, collectionID: collectionID)
+            }
+        }
     }
 
     func addPost(_ postID: String, to collectionID: String) {
@@ -1321,6 +2325,9 @@ final class MockAppStore: ObservableObject {
             collections[collectionIndex].postIDs.removeAll { $0 == postID }
         }
         showToast("帖子已删除")
+        runBackendMutation { token in
+            try await self.backendClient.deletePost(token: token, postID: postID)
+        }
     }
 
     func addUnsoldRole(postID: String, name: String, quantity: Int) {
@@ -1387,6 +2394,21 @@ final class MockAppStore: ObservableObject {
             collections[index].postIDs.insert(postID, at: 0)
         }
         showToast("发布成功，已进入\(groupType.moduleTitle)模块")
+        if isBackendEnabled {
+            Task {
+                guard let backendToken else { return }
+                do {
+                    let objectKeys = try await backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
+                    var remotePost = post
+                    remotePost.imageObjectKeys = objectKeys
+                    try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys)
+                    await refreshFromBackend(silent: true)
+                    showToast("发布成功，已同步到云端")
+                } catch {
+                    showToast(error.localizedDescription)
+                }
+            }
+        }
     }
 
     func showToast(_ message: String) {
@@ -1419,17 +2441,42 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HomeHeader(feed: $feed)
+            HomeHeader(feed: $feed, onSelect: selectFeed)
             ScrollView(showsIndicators: false) {
                 WaterfallGrid(posts: posts)
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
                     .padding(.bottom, 28)
+                    .id(feed)
+                    .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
+                    .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
             }
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 28)
+                .onEnded(handleFeedSwipe)
+        )
         .background(Theme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
+    }
+
+    private func selectFeed(_ nextFeed: HomeFeed) {
+        guard feed != nextFeed else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            feed = nextFeed
+        }
+    }
+
+    private func handleFeedSwipe(_ value: DragGesture.Value) {
+        guard abs(value.translation.width) > 88,
+              abs(value.translation.height) < 70 else { return }
+        if value.translation.width < 0 {
+            selectFeed(.splitGoods)
+        } else {
+            selectFeed(.followGroup)
+        }
     }
 }
 
@@ -1442,6 +2489,7 @@ enum HomeFeed: String, CaseIterable, Identifiable {
 
 struct HomeHeader: View {
     @Binding var feed: HomeFeed
+    let onSelect: (HomeFeed) -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1452,7 +2500,7 @@ struct HomeHeader: View {
                 HStack(spacing: 28) {
                     ForEach(HomeFeed.allCases) { item in
                         Button {
-                            feed = item
+                            onSelect(item)
                         } label: {
                             VStack(spacing: 7) {
                                 Text(item.rawValue)
@@ -1847,7 +2895,7 @@ struct GuestAuthView: View {
         .navigationBarHidden(true)
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $isRegisterPresented) {
-            PhoneAuthView()
+            AccountAuthView()
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
         }
@@ -1895,36 +2943,58 @@ struct GuestBrandLogo: View {
     }
 }
 
-enum PhoneAuthMode: String, CaseIterable, Identifiable {
+enum AccountAuthMode: String, CaseIterable, Identifiable {
     case register = "注册"
-    case login = "登录"
+    case passwordLogin = "密码登录"
+    case codeLogin = "验证码登录"
 
     var id: String { rawValue }
+
+    static func available(isBackendEnabled: Bool) -> [AccountAuthMode] {
+        isBackendEnabled ? Self.allCases : [.register, .passwordLogin]
+    }
 }
 
-struct PhoneAuthView: View {
+struct AccountAuthView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
-    @State private var mode: PhoneAuthMode = .register
+    @State private var mode: AccountAuthMode = .register
     @State private var nickname = ""
-    @State private var phone = ""
+    @State private var email = ""
+    @State private var code = ""
     @State private var password = ""
     @State private var confirmPassword = ""
     @State private var hasAcceptedTerms = false
+    @State private var isSendingCode = false
+    @State private var codeResendSecondsRemaining = 0
 
     var canSubmit: Bool {
         switch mode {
         case .register:
             !nickname.trimmed.isEmpty &&
-            phone.trimmed.count >= 6 &&
+            (store.isBackendEnabled ? email.trimmed.contains("@") : email.trimmed.count >= 6) &&
             password.trimmed.count >= 6 &&
             password == confirmPassword &&
+            (!store.isBackendEnabled || code.trimmed.count == 6) &&
             hasAcceptedTerms
-        case .login:
-            phone.trimmed.count >= 6 &&
+        case .passwordLogin:
+            (store.isBackendEnabled ? email.trimmed.contains("@") : email.trimmed.count >= 6) &&
             !password.trimmed.isEmpty &&
             hasAcceptedTerms
+        case .codeLogin:
+            store.isBackendEnabled &&
+            email.trimmed.contains("@") &&
+            code.trimmed.count == 6 &&
+            hasAcceptedTerms
         }
+    }
+
+    var shouldShowCodeField: Bool {
+        store.isBackendEnabled && (mode == .register || mode == .codeLogin)
+    }
+
+    var canRequestCode: Bool {
+        store.isBackendEnabled && email.trimmed.contains("@") && !isSendingCode && codeResendSecondsRemaining == 0
     }
 
     var body: some View {
@@ -1956,26 +3026,26 @@ struct PhoneAuthView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(mode == .register ? "手机号注册" : "手机号登录")
+                        Text(titleText)
                             .font(.system(size: 34, weight: .black))
                             .foregroundStyle(.white)
-                        Text(mode == .register ? "创建账号后会自动进入个人主页。" : "输入已注册手机号和密码继续。")
+                        Text(subtitleText)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(0.56))
                     }
                     .padding(.top, 18)
 
                     HStack(spacing: 8) {
-                        ForEach(PhoneAuthMode.allCases) { item in
+                        ForEach(AccountAuthMode.available(isBackendEnabled: store.isBackendEnabled)) { item in
                             Button {
                                 mode = item
                             } label: {
                                 Text(item.rawValue)
-                                    .font(.system(size: 16, weight: .black))
+                                    .font(.system(size: store.isBackendEnabled ? 14 : 16, weight: .black))
                                     .foregroundStyle(mode == item ? .white : Color.white.opacity(0.52))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
-                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: Capsule())
+                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                             .buttonStyle(.plain)
                         }
@@ -1985,22 +3055,48 @@ struct PhoneAuthView: View {
                         if mode == .register {
                             AuthTextField(title: "昵称", placeholder: "设置你的昵称", text: $nickname)
                         }
-                        AuthTextField(title: "手机号", placeholder: "输入手机号", text: $phone, keyboardType: .phonePad)
-                        AuthSecureField(title: "密码", placeholder: "至少 6 位", text: $password)
+                        AuthTextField(
+                            title: store.isBackendEnabled ? "邮箱" : "手机号",
+                            placeholder: store.isBackendEnabled ? "输入邮箱" : "输入手机号",
+                            text: $email,
+                            keyboardType: store.isBackendEnabled ? .emailAddress : .phonePad,
+                            textContentType: store.isBackendEnabled ? .emailAddress : .telephoneNumber
+                        )
+                        if shouldShowCodeField {
+                            HStack(alignment: .bottom, spacing: 10) {
+                                AuthTextField(title: "验证码", placeholder: "6 位数字", text: $code, keyboardType: .numberPad, textContentType: .oneTimeCode)
+                                Button {
+                                    Task { await requestCode() }
+                                } label: {
+                                    Text(codeButtonTitle)
+                                        .font(.system(size: 14, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 104, height: 52)
+                                        .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!canRequestCode)
+                            }
+                        }
+                        if mode != .codeLogin {
+                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 6 位" : "输入密码", text: $password)
+                        }
                         if mode == .register {
                             AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword)
                         }
                     }
 
                     Button {
-                        submit()
+                        Task {
+                            await submit()
+                        }
                     } label: {
-                        Text(mode == .register ? "注册并登录" : "登录")
+                        Text(submitText)
                             .font(.system(size: 18, weight: .black))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(canSubmit ? Theme.hotPink : Color.white.opacity(0.12), in: Capsule())
+                            .background(canSubmit ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
@@ -2026,7 +3122,74 @@ struct PhoneAuthView: View {
         .background(Color(red: 0.015, green: 0.016, blue: 0.022).ignoresSafeArea())
     }
 
-    private func submit() {
+    private var codeButtonTitle: String {
+        if isSendingCode {
+            return "发送中"
+        }
+        if codeResendSecondsRemaining > 0 {
+            return "\(codeResendSecondsRemaining)s后重发"
+        }
+        return "发送验证码"
+    }
+
+    private var titleText: String {
+        if !store.isBackendEnabled {
+            return mode == .register ? "手机号注册" : "手机号登录"
+        }
+        switch mode {
+        case .register: return "邮箱注册"
+        case .passwordLogin: return "密码登录"
+        case .codeLogin: return "验证码登录"
+        }
+    }
+
+    private var subtitleText: String {
+        if !store.isBackendEnabled {
+            return mode == .register ? "创建账号后会自动进入个人主页。" : "输入已注册手机号和密码继续。"
+        }
+        switch mode {
+        case .register:
+            return "先获取验证码，设置密码后即可创建账号。"
+        case .passwordLogin:
+            return "输入已注册邮箱和密码继续。"
+        case .codeLogin:
+            return "获取邮箱验证码后无需密码即可登录。"
+        }
+    }
+
+    private var submitText: String {
+        switch mode {
+        case .register: return "验证并注册"
+        case .passwordLogin: return "登录"
+        case .codeLogin: return "验证码登录"
+        }
+    }
+
+    private func requestCode() async {
+        isSendingCode = true
+        let purpose = mode == .register ? "register" : "login"
+        let didSend = await store.requestEmailCode(email: email, purpose: purpose)
+        isSendingCode = false
+        if didSend {
+            startCodeCooldown()
+        }
+    }
+
+    private func startCodeCooldown() {
+        codeResendSecondsRemaining = 60
+        Task {
+            while codeResendSecondsRemaining > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                await MainActor.run {
+                    if codeResendSecondsRemaining > 0 {
+                        codeResendSecondsRemaining -= 1
+                    }
+                }
+            }
+        }
+    }
+
+    private func submit() async {
         guard hasAcceptedTerms else {
             store.showToast("请先勾选并同意协议")
             return
@@ -2037,11 +3200,15 @@ struct PhoneAuthView: View {
                 store.showToast("两次输入的密码不一致")
                 return
             }
-            if store.registerAccount(nickname: nickname, phone: phone, password: password) {
+            if await store.registerAccount(nickname: nickname, email: email, password: password, code: code) {
                 dismiss()
             }
-        case .login:
-            if store.loginWithPhone(phone: phone, password: password) {
+        case .passwordLogin:
+            if await store.loginWithEmail(email: email, password: password) {
+                dismiss()
+            }
+        case .codeLogin:
+            if await store.loginWithEmailCode(email: email, code: code) {
                 dismiss()
             }
         }
@@ -2053,6 +3220,7 @@ struct AuthTextField: View {
     let placeholder: String
     @Binding var text: String
     var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2061,6 +3229,7 @@ struct AuthTextField: View {
                 .foregroundStyle(Color.white.opacity(0.56))
             TextField(placeholder, text: $text)
                 .keyboardType(keyboardType)
+                .textContentType(textContentType)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.system(size: 17, weight: .semibold))
@@ -2087,12 +3256,7 @@ struct AuthSecureField: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Color.white.opacity(0.56))
-            SecureField(placeholder, text: $text)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .tint(Theme.hotPink)
+            SecureTextField(placeholder: placeholder, text: $text)
                 .padding(.horizontal, 14)
                 .frame(height: 52)
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2100,6 +3264,57 @@ struct AuthSecureField: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 }
+        }
+    }
+}
+
+struct SecureTextField: UIViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField()
+        textField.isSecureTextEntry = true
+        textField.borderStyle = .none
+        textField.backgroundColor = .clear
+        textField.textColor = .white
+        textField.tintColor = UIColor(red: 1.0, green: 0.12, blue: 0.27, alpha: 1)
+        textField.font = .systemFont(ofSize: 17, weight: .semibold)
+        textField.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor.white.withAlphaComponent(0.34)]
+        )
+        textField.autocapitalizationType = .none
+        textField.autocorrectionType = .no
+        textField.spellCheckingType = .no
+        textField.smartDashesType = .no
+        textField.smartQuotesType = .no
+        textField.smartInsertDeleteType = .no
+        textField.textContentType = .oneTimeCode
+        textField.passwordRules = nil
+        textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        return textField
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+    }
+
+    final class Coordinator: NSObject {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        @objc func textDidChange(_ sender: UITextField) {
+            text = sender.text ?? ""
         }
     }
 }
@@ -2173,6 +3388,16 @@ struct SearchView: View {
         !activeQuery.isEmpty && activeQuery == typedQuery
     }
 
+    var searchContentKey: String {
+        if typedQuery.isEmpty {
+            return "initial"
+        }
+        if isShowingResults {
+            return "results-\(activeQuery)"
+        }
+        return "suggestions-\(typedQuery)"
+    }
+
     var suggestions: [String] {
         let keyword = typedQuery
         guard !keyword.isEmpty else { return [] }
@@ -2198,6 +3423,11 @@ struct SearchView: View {
             pool.append(contentsOf: post.categoryTags)
             pool.append(contentsOf: post.fandomTags)
             pool.append(contentsOf: post.unsoldRoles.map(\.name))
+        }
+        for user in store.users where user.id != store.currentUserID {
+            pool.append(user.nickname)
+            pool.append(user.redBookID)
+            pool.append(user.region)
         }
 
         let filtered = pool
@@ -2244,6 +3474,10 @@ struct SearchView: View {
         }
     }
 
+    var leaderResults: [User] {
+        store.groupLeaderUsers(matching: activeQuery)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -2258,12 +3492,14 @@ struct SearchView: View {
                 .buttonStyle(.plain)
 
                 HStack(spacing: 10) {
-                    TextField("搜索角色名", text: $query)
+                    TextField("搜索角色名 / 团长名", text: $query)
                         .font(.system(size: 20, weight: .semibold))
                         .submitLabel(.search)
                         .textInputAutocapitalization(.never)
                         .foregroundStyle(Theme.text)
-                        .onSubmit(submitSearch)
+                        .onSubmit {
+                            submitSearch()
+                        }
 
                     if !query.trimmed.isEmpty {
                         Button {
@@ -2296,38 +3532,65 @@ struct SearchView: View {
             .padding(.top, 16)
             .padding(.bottom, typedQuery.isEmpty ? 20 : 10)
 
-            if typedQuery.isEmpty {
-                SearchInitialContent(history: $store.searchHistory, isManaging: $isManagingHistory) { term in
-                    query = term
-                    committedQuery = ""
+            Group {
+                if typedQuery.isEmpty {
+                    SearchInitialContent(history: $store.searchHistory, isManaging: $isManagingHistory) { term in
+                        query = term
+                        committedQuery = ""
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                } else if !isShowingResults {
+                    SearchSuggestionsContent(query: typedQuery, suggestions: suggestions) { suggestion in
+                        query = suggestion
+                        committedQuery = ""
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                } else {
+                    SearchResultsContent(
+                        query: activeQuery,
+                        tabs: tabs,
+                        selectedTab: $selectedTab,
+                        filters: filters,
+                        selectedFilter: $selectedFilter,
+                        results: results,
+                        users: leaderResults
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
-            } else if !isShowingResults {
-                SearchSuggestionsContent(query: typedQuery, suggestions: suggestions) { suggestion in
-                    query = suggestion
-                    committedQuery = ""
-                }
-            } else {
-                SearchResultsContent(
-                    query: activeQuery,
-                    tabs: tabs,
-                    selectedTab: $selectedTab,
-                    filters: filters,
-                    selectedFilter: $selectedFilter,
-                    results: results
-                )
             }
+            .id(searchContentKey)
         }
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .background(Theme.background.ignoresSafeArea())
         .toolbar(.hidden, for: .tabBar)
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 28)
+                .onEnded(handleBackSwipe)
+        )
     }
 
     private func submitSearch() {
-        committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
-        query = committedQuery
-        store.recordSearchHistory(committedQuery)
-        isManagingHistory = false
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
+            query = committedQuery
+            store.recordSearchHistory(committedQuery)
+            isManagingHistory = false
+        }
+    }
+
+    private func handleBackSwipe(_ value: DragGesture.Value) {
+        guard value.startLocation.x < 56,
+              value.translation.width > 86,
+              abs(value.translation.height) < 72 else { return }
+        if isShowingResults {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                committedQuery = ""
+            }
+            return
+        }
+        dismiss()
     }
 }
 
@@ -2580,12 +3843,18 @@ private struct SearchWrappingLayout: Layout {
 }
 
 struct SearchResultsContent: View {
+    @Namespace private var tabIndicator
     let query: String
     let tabs: [String]
     @Binding var selectedTab: String
     let filters: [String]
     @Binding var selectedFilter: String
     let results: [GroupBuyPost]
+    let users: [User]
+
+    private var resultContentID: String {
+        "\(query)-\(selectedTab)-\(selectedFilter)-\(results.map(\.id).joined(separator: ","))-\(users.map(\.id).joined(separator: ","))"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2593,7 +3862,9 @@ struct SearchResultsContent: View {
                 HStack(spacing: 30) {
                     ForEach(tabs, id: \.self) { tab in
                         Button {
-                            selectedTab = tab
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                selectedTab = tab
+                            }
                         } label: {
                             VStack(spacing: 8) {
                                 HStack(spacing: 6) {
@@ -2606,9 +3877,16 @@ struct SearchResultsContent: View {
                                         .font(.system(size: 22, weight: selectedTab == tab ? .black : .semibold))
                                         .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                 }
-                                Capsule()
-                                    .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
-                                    .frame(width: selectedTab == tab ? 52 : 0, height: 4)
+                                ZStack {
+                                    if selectedTab == tab {
+                                        Capsule()
+                                            .fill(Theme.hotPink)
+                                            .matchedGeometryEffect(id: "search-tab-indicator", in: tabIndicator)
+                                            .frame(width: 52, height: 4)
+                                    } else {
+                                        Color.clear.frame(width: 52, height: 4)
+                                    }
+                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -2622,56 +3900,162 @@ struct SearchResultsContent: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 14) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(filters, id: \.self) { filter in
-                                Button {
-                                    selectedFilter = filter
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        if filter == "拼谷有货" {
-                                            Image(systemName: "bag")
-                                                .font(.system(size: 16, weight: .bold))
+                    if selectedTab != "团长" {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(filters, id: \.self) { filter in
+                                    Button {
+                                        withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                                            selectedFilter = filter
                                         }
-                                        Text(filter)
-                                            .font(.system(size: 18, weight: .bold))
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            if filter == "拼谷有货" {
+                                                Image(systemName: "bag")
+                                                    .font(.system(size: 16, weight: .bold))
+                                            }
+                                            Text(filter)
+                                                .font(.system(size: 18, weight: .bold))
+                                        }
+                                        .foregroundStyle(selectedFilter == filter ? Theme.text : Theme.subtext)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 12)
+                                        .background(selectedFilter == filter ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     }
-                                    .foregroundStyle(selectedFilter == filter ? Theme.text : Theme.subtext)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(selectedFilter == filter ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 14)
                     }
 
-                    if results.isEmpty {
-                        VStack(spacing: 14) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 42))
-                            Text("没有找到和“\(query)”相关的内容")
-                                .font(.system(size: 17, weight: .bold))
+                    Group {
+                        if selectedTab == "团长" {
+                            if users.isEmpty {
+                                SearchEmptyState(icon: "person.crop.circle", text: "没有找到和“\(query)”相关的团长")
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(users) { user in
+                                        SearchLeaderRow(userID: user.id)
+                                        Divider()
+                                            .overlay(Theme.hairline)
+                                            .padding(.leading, 96)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.top, 8)
+                            }
+                        } else if results.isEmpty {
+                            SearchEmptyState(icon: "magnifyingglass", text: "没有找到和“\(query)”相关的内容")
+                        } else {
+                            WaterfallGrid(posts: results)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 28)
                         }
-                        .foregroundStyle(Theme.muted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 80)
-                    } else {
-                        WaterfallGrid(posts: results)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 28)
                     }
+                    .id(resultContentID)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .animation(.spring(response: 0.26, dampingFraction: 0.86), value: resultContentID)
                 }
             }
         }
     }
 }
 
+struct SearchEmptyState: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 42, weight: .light))
+            Text(text)
+                .font(.system(size: 17, weight: .bold))
+                .multilineTextAlignment(.center)
+        }
+        .foregroundStyle(Theme.muted)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 80)
+    }
+}
+
+struct SearchLeaderRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let userID: String
+
+    private var user: User {
+        store.user(id: userID)
+    }
+
+    private var isFollowing: Bool {
+        store.followedUserIDs.contains(userID)
+    }
+
+    private var isMutual: Bool {
+        isFollowing && store.followerUsers(for: userID).contains { $0.id == store.currentUserID }
+    }
+
+    private var followTitle: String {
+        if isMutual { return "互相关注" }
+        return isFollowing ? "已关注" : "关注"
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            NavigationLink(value: Route.userProfile(userID)) {
+                HStack(spacing: 14) {
+                    AvatarView(user: user, size: 58)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(user.nickname)
+                            .font(.system(size: 21, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Text("粉丝 \(user.followersCount.formattedCount)")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.subtext)
+                        Text("小红书号：\(user.redBookID.isEmpty ? store.registrationID(for: user.id) : user.redBookID)")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.subtext)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 10)
+
+            Button {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+                    store.toggleFollow(userID: userID)
+                }
+            } label: {
+                Text(followTitle)
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(isFollowing ? Theme.text : Theme.hotPink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .frame(minWidth: 78)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .overlay {
+                        Capsule()
+                            .stroke(isFollowing ? Theme.hairline : Theme.hotPink, lineWidth: 1.5)
+                    }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 16)
+    }
+}
+
 struct PostDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var commentDraft = ""
+    @State private var replyTargetCommentID: String?
+    @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
     @State private var selectedImageIndex = 0
     let postID: String
@@ -2679,7 +4063,7 @@ struct PostDetailView: View {
     var body: some View {
         if let post = store.post(id: postID) {
             let author = store.user(id: post.authorID)
-            let imageCount = max(1, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count)
+            let imageCount = max(1, max(post.remoteImageURLs.count, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count))
             let detailImageHeight = imageHeight(for: post, index: 0)
             VStack(spacing: 0) {
                 DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
@@ -2718,7 +4102,7 @@ struct PostDetailView: View {
                                 PingguRoleAvailabilityCard(postID: post.id)
                             }
                             ContactCard(post: post)
-                            CommentSection(postID: post.id, commentDraft: $commentDraft)
+                            CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
                     }
@@ -2727,7 +4111,43 @@ struct PostDetailView: View {
             }
             .background(Theme.background.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
-                DetailActionBar(post: post, commentDraft: $commentDraft)
+                DetailActionBar(post: post, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID)
+            }
+            .overlay {
+                if let actionComment = actionCommentID.flatMap(store.comment(id:)) {
+                    CommentActionOverlay(
+                        comment: actionComment,
+                        onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                actionCommentID = nil
+                            }
+                        },
+                        onReply: {
+                            replyTargetCommentID = actionComment.id
+                            commentDraft = ""
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                actionCommentID = nil
+                            }
+                            store.showToast("正在回复 \(store.user(id: actionComment.authorID).nickname)")
+                        },
+                        onCopy: {
+                            store.copyComment(actionComment)
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                actionCommentID = nil
+                            }
+                        },
+                        onDelete: {
+                            if replyTargetCommentID == actionComment.id {
+                                replyTargetCommentID = nil
+                            }
+                            store.deleteComment(commentID: actionComment.id)
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                actionCommentID = nil
+                            }
+                        }
+                    )
+                    .transition(.opacity)
+                }
             }
             .sheet(isPresented: $isShareSheetPresented) {
                 ShareSheetView(post: post)
@@ -2756,6 +4176,9 @@ struct PostDetailView: View {
     }
 
     private func imageAspect(for post: GroupBuyPost, index: Int) -> CGFloat {
+        if post.remoteImageURLs.indices.contains(index) {
+            return CGFloat(max(0.28, post.imageAspect))
+        }
         if post.uploadedImageData.indices.contains(index),
            let image = UIImage(data: post.uploadedImageData[index]),
            image.size.width > 0,
@@ -2857,7 +4280,7 @@ struct ShareSheetView: View {
     let post: GroupBuyPost
 
     var stationThreads: [MessageThread] {
-        Array(store.threads.prefix(3))
+        Array(store.messageThreads.prefix(3))
     }
 
     var body: some View {
@@ -2889,7 +4312,7 @@ struct ShareSheetView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 22) {
                     ForEach(stationThreads) { thread in
-                        let friend = store.user(id: thread.publisherUserID)
+                        let friend = store.user(id: store.peerUserID(for: thread))
                         Button {
                             store.sharePostToThread(postID: post.id, threadID: thread.id)
                             dismiss()
@@ -3018,9 +4441,8 @@ struct ShareRecipientPickerView: View {
             store.followingUsers(for: user.id).contains { $0.id == store.currentUserID }
         }
         let recent = uniqueUsers(
-            store.threads
-                .sorted { $0.updatedAt > $1.updatedAt }
-                .map { store.user(id: $0.publisherUserID) }
+            store.messageThreads
+                .map { store.user(id: store.peerUserID(for: $0)) }
         )
         let allFollowed = uniqueUsers(following)
         var groups: [ShareRecipientSection] = []
@@ -3160,7 +4582,7 @@ struct ProfileShareSheetView: View {
     let user: User
 
     var stationThreads: [MessageThread] {
-        Array(store.threads.prefix(3))
+        Array(store.messageThreads.prefix(3))
     }
 
     var body: some View {
@@ -3192,7 +4614,7 @@ struct ProfileShareSheetView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 22) {
                     ForEach(stationThreads) { thread in
-                        let friend = store.user(id: thread.publisherUserID)
+                        let friend = store.user(id: store.peerUserID(for: thread))
                         Button {
                             store.shareProfileToThread(userID: user.id, threadID: thread.id)
                             dismiss()
@@ -3628,6 +5050,8 @@ struct CommentSection: View {
     @EnvironmentObject private var store: MockAppStore
     let postID: String
     @Binding var commentDraft: String
+    @Binding var replyTargetCommentID: String?
+    @Binding var actionCommentID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -3653,7 +5077,12 @@ struct CommentSection: View {
                 .foregroundStyle(Theme.muted)
             } else {
                 ForEach(comments) { comment in
-                    CommentRow(comment: comment)
+                    CommentRow(comment: comment) {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+                            actionCommentID = comment.id
+                        }
+                    }
                 }
             }
         }
@@ -3664,6 +5093,7 @@ struct CommentSection: View {
 struct CommentRow: View {
     @EnvironmentObject private var store: MockAppStore
     let comment: Comment
+    let onLongPress: () -> Void
 
     var body: some View {
         let author = store.user(id: comment.authorID)
@@ -3678,6 +5108,18 @@ struct CommentRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.muted)
                 }
+                if let replyToID = comment.replyToID {
+                    let repliedComment = store.comment(id: replyToID).flatMap { $0.status == .active ? $0 : nil }
+                    let repliedAuthor = repliedComment.map { store.user(id: $0.authorID).nickname } ?? "原评论"
+                    Text("回复 \(repliedAuthor)：\(repliedComment?.body ?? "原评论已删除")")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.subtext)
+                        .lineLimit(2)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
                 Text(comment.body)
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.text.opacity(0.86))
@@ -3686,6 +5128,121 @@ struct CommentRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onLongPressGesture(minimumDuration: 0.35) {
+            onLongPress()
+        }
+    }
+}
+
+struct CommentActionOverlay: View {
+    @EnvironmentObject private var store: MockAppStore
+    let comment: Comment
+    let onDismiss: () -> Void
+    let onReply: () -> Void
+    let onCopy: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        let author = store.user(id: comment.authorID)
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.58)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onDismiss)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 52, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+
+                Text("\(author.nickname) · \(comment.createdAt.relativeText)")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.52))
+
+                VStack(spacing: 0) {
+                    CommentActionRow(title: "回复", systemImage: "bubble.left", action: onReply)
+                    CommentActionDivider()
+                    CommentActionRow(title: "复制", systemImage: "doc.on.doc", action: onCopy)
+                }
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                if store.canDeleteComment(comment) {
+                    VStack(spacing: 0) {
+                        CommentActionRow(title: "删除", systemImage: "trash", isDestructive: true, action: onDelete)
+                    }
+                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                Button(action: onDismiss) {
+                    Text("取消")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 62)
+                        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(red: 0.12, green: 0.12, blue: 0.14)
+                    .clipShape(TopRoundedRectangle(radius: 28))
+                    .ignoresSafeArea(edges: .bottom)
+            )
+        }
+        .zIndex(10)
+    }
+}
+
+struct CommentActionRow: View {
+    let title: String
+    let systemImage: String
+    var isDestructive = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 18) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 26, weight: .medium))
+                    .frame(width: 36)
+                Text(title)
+                    .font(.system(size: 24, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isDestructive ? Theme.hotPink : Color.white.opacity(0.9))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 72)
+            .padding(.horizontal, 18)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CommentActionDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(height: 0.5)
+            .padding(.leading, 72)
+    }
+}
+
+struct TopRoundedRectangle: Shape {
+    let radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: [.topLeft, .topRight],
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
     }
 }
 
@@ -3693,64 +5250,93 @@ struct DetailActionBar: View {
     @EnvironmentObject private var store: MockAppStore
     let post: GroupBuyPost
     @Binding var commentDraft: String
+    @Binding var replyTargetCommentID: String?
 
     var body: some View {
         let livePost = store.post(id: post.id) ?? post
         let isLiked = store.likedPostIDs.contains(post.id)
         let isFavorite = store.favoritePostIDs.contains(post.id)
         let commentTitle = livePost.commentCount == 0 ? "评论" : livePost.commentCount.formattedCount
-        HStack(spacing: 12) {
-            if store.isLoggedIn {
+        let replyTarget = replyTargetCommentID.flatMap { store.comment(id: $0) }
+        let replyAuthor = replyTarget.map { store.user(id: $0.authorID) }
+        VStack(spacing: 8) {
+            if let replyAuthor {
                 HStack(spacing: 8) {
-                    Image(systemName: "pencil")
-                        .foregroundStyle(Theme.muted)
-                    TextField("发评论", text: $commentDraft)
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.hotPink)
+                    Text("回复 \(replyAuthor.nickname)")
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.text)
-                        .submitLabel(.send)
-                        .onSubmit {
-                            store.addComment(postID: post.id, body: commentDraft)
-                            commentDraft = ""
-                        }
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button {
+                        replyTargetCommentID = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(Theme.muted)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 11)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panelRaised, in: Capsule())
-            } else {
-                Button {
-                    store.requireLogin(prompt: "登录后才能评论")
-                } label: {
+                .padding(.horizontal, 14)
+            }
+
+            HStack(spacing: 12) {
+                if store.isLoggedIn {
                     HStack(spacing: 8) {
                         Image(systemName: "pencil")
                             .foregroundStyle(Theme.muted)
-                        Text("登录后评论")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Theme.subtext)
-                        Spacer(minLength: 0)
+                        TextField(replyAuthor == nil ? "发评论" : "回复 \(replyAuthor?.nickname ?? "")", text: $commentDraft)
+                            .foregroundStyle(Theme.text)
+                            .submitLabel(.send)
+                            .onSubmit {
+                                store.addComment(postID: post.id, body: commentDraft, replyToID: replyTargetCommentID)
+                                commentDraft = ""
+                                replyTargetCommentID = nil
+                            }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 11)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.panelRaised, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-
-            ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-                    store.toggleLike(postID: post.id)
-                }
-            }
-            ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
-                store.toggleFavorite(postID: post.id)
-            }
-            ActionIconButton(icon: "bubble.left", title: commentTitle, tint: Theme.text) {
-                guard store.requireLogin(prompt: "登录后才能评论") else { return }
-                if commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    store.showToast("输入内容后按回车发布评论")
                 } else {
-                    store.addComment(postID: post.id, body: commentDraft)
-                    commentDraft = ""
+                    Button {
+                        store.requireLogin(prompt: "登录后才能评论")
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "pencil")
+                                .foregroundStyle(Theme.muted)
+                            Text("登录后评论")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 11)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.panelRaised, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
+                        store.toggleLike(postID: post.id)
+                    }
+                }
+                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
+                    store.toggleFavorite(postID: post.id)
+                }
+                ActionIconButton(icon: "bubble.left", title: commentTitle, tint: Theme.text) {
+                    guard store.requireLogin(prompt: "登录后才能评论") else { return }
+                    if commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        store.showToast("输入内容后按回车发布评论")
+                    } else {
+                        store.addComment(postID: post.id, body: commentDraft, replyToID: replyTargetCommentID)
+                        commentDraft = ""
+                        replyTargetCommentID = nil
+                    }
                 }
             }
         }
@@ -4784,13 +6370,16 @@ struct MessagesView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         HeaderTitle(title: "消息", subtitle: "站内咨询、截团提醒和治理通知")
                         VStack(spacing: 10) {
-                            ForEach(store.reminders.prefix(3)) { reminder in
+                            ForEach(store.currentUserReminders.prefix(3)) { reminder in
                                 if let post = store.post(id: reminder.postID) {
                                     NavigationLink(value: Route.postDetail(post.id)) {
                                         ReminderMiniCard(post: post, reminder: reminder)
                                     }
                                     .buttonStyle(.plain)
                                 }
+                            }
+                            if store.currentUserReminders.isEmpty {
+                                MessagesEmptyPanel(title: "暂无截团提醒", icon: "bell")
                             }
                         }
                         .padding(.horizontal, 16)
@@ -4801,12 +6390,16 @@ struct MessagesView: View {
                             .padding(.horizontal, 16)
 
                         VStack(spacing: 0) {
-                            ForEach(store.messageThreads) { thread in
-                                NavigationLink(value: Route.chat(thread.id)) {
-                                    ThreadRow(thread: thread)
+                            if store.messageThreads.isEmpty {
+                                MessagesEmptyPanel(title: "暂无私信", icon: "bubble.left.and.bubble.right")
+                            } else {
+                                ForEach(store.messageThreads) { thread in
+                                    NavigationLink(value: Route.chat(thread.id)) {
+                                        ThreadRow(thread: thread)
+                                    }
+                                    .buttonStyle(.plain)
+                                    Divider().overlay(Theme.hairline).padding(.leading, 74)
                                 }
-                                .buttonStyle(.plain)
-                                Divider().overlay(Theme.hairline).padding(.leading, 74)
                             }
                         }
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
@@ -4826,12 +6419,38 @@ struct MessagesView: View {
     }
 }
 
+struct MessagesEmptyPanel: View {
+    let title: String
+    let icon: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.muted)
+                .frame(width: 38, height: 38)
+                .background(Theme.panelRaised, in: Circle())
+            Text(title)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.subtext)
+            Spacer()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
+        }
+    }
+}
+
 struct ThreadRow: View {
     @EnvironmentObject private var store: MockAppStore
     let thread: MessageThread
 
     var body: some View {
-        let user = store.user(id: thread.publisherUserID)
+        let user = store.user(id: store.peerUserID(for: thread))
         let post = thread.relatedPostID.flatMap(store.post)
         HStack(spacing: 12) {
             AvatarView(user: user, size: 46)
@@ -4863,6 +6482,8 @@ struct ThreadRow: View {
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -4876,8 +6497,8 @@ struct ChatView: View {
     let threadID: String
 
     var body: some View {
-        if let thread = store.threads.first(where: { $0.id == threadID }) {
-            let peer = store.user(id: thread.publisherUserID)
+        if let thread = store.messageThread(id: threadID) {
+            let peer = store.user(id: store.peerUserID(for: thread))
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Button {
@@ -5959,6 +7580,8 @@ struct ProfileEmptyState: View {
 struct ProfileCollectionsPanel: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isCreatingCollection = false
+    @State private var isManaging = false
+    @State private var selectedCollectionIDs: Set<String> = []
     let ownerID: String
     let canManage: Bool
 
@@ -5976,16 +7599,37 @@ struct ProfileCollectionsPanel: View {
                 }
                 Spacer()
                 if canManage {
-                    Button {
-                        isCreatingCollection = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 18, weight: .black))
-                            .foregroundStyle(.white)
-                            .frame(width: 38, height: 38)
-                            .background(Theme.hotPink, in: Circle())
+                    HStack(spacing: 10) {
+                        if !collections.isEmpty {
+                            Button {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                    isManaging.toggle()
+                                    selectedCollectionIDs.removeAll()
+                                }
+                            } label: {
+                                Text(isManaging ? "完成" : "管理")
+                                    .font(.system(size: 13, weight: .black))
+                                    .foregroundStyle(isManaging ? .white : Theme.text)
+                                    .padding(.horizontal, 13)
+                                    .frame(height: 36)
+                                    .background(isManaging ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if !isManaging {
+                            Button {
+                                isCreatingCollection = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 18, weight: .black))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 38, height: 38)
+                                    .background(Theme.hotPink, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
 
@@ -5999,7 +7643,13 @@ struct ProfileCollectionsPanel: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(collections) { collection in
-                        CollectionCard(collection: collection)
+                        CollectionCard(
+                            collection: collection,
+                            isManaging: canManage && isManaging,
+                            isSelected: selectedCollectionIDs.contains(collection.id)
+                        ) {
+                            toggleCollectionSelection(collection.id)
+                        }
                     }
                 }
             }
@@ -6011,17 +7661,70 @@ struct ProfileCollectionsPanel: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .safeAreaInset(edge: .bottom) {
+            if canManage && isManaging {
+                Button {
+                    let ids = selectedCollectionIDs
+                    store.deleteCollections(ids: ids)
+                    selectedCollectionIDs.removeAll()
+                    isManaging = false
+                } label: {
+                    Text(selectedCollectionIDs.isEmpty ? "选择要删除的合集" : "删除 \(selectedCollectionIDs.count) 个合集")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(selectedCollectionIDs.isEmpty ? Theme.muted : .white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(selectedCollectionIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 8)
+                }
+                .disabled(selectedCollectionIDs.isEmpty)
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial)
+            }
+        }
+    }
+
+    private func toggleCollectionSelection(_ id: String) {
+        if selectedCollectionIDs.contains(id) {
+            selectedCollectionIDs.remove(id)
+        } else {
+            selectedCollectionIDs.insert(id)
+        }
     }
 }
 
 struct CollectionCard: View {
     @EnvironmentObject private var store: MockAppStore
     let collection: GroupCollection
+    var isManaging = false
+    var isSelected = false
+    var onToggle: (() -> Void)? = nil
 
     var body: some View {
         let visibleCount = collection.postIDs.compactMap(store.post).filter { $0.status == .active }.count
         let isEnded = collection.isEnded
-        NavigationLink(value: Route.collectionDetail(collection.id)) {
+        Group {
+            if isManaging {
+                Button {
+                    onToggle?()
+                } label: {
+                    content(visibleCount: visibleCount, isEnded: isEnded)
+                }
+            } else {
+                NavigationLink(value: Route.collectionDetail(collection.id)) {
+                    content(visibleCount: visibleCount, isEnded: isEnded)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .saturation(isEnded ? 0 : 1)
+        .opacity(isEnded ? 0.58 : 1)
+    }
+
+    private func content(visibleCount: Int, isEnded: Bool) -> some View {
+        ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label(collection.name, systemImage: "rectangle.stack.fill")
@@ -6054,10 +7757,14 @@ struct CollectionCard: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Theme.hairline, lineWidth: 1)
             }
+
+            if isManaging {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+                    .padding(12)
+            }
         }
-        .buttonStyle(.plain)
-        .saturation(isEnded ? 0 : 1)
-        .opacity(isEnded ? 0.58 : 1)
     }
 }
 
@@ -6561,17 +8268,19 @@ struct AccountSecuritySettingsView: View {
     var body: some View {
         SettingsDetailScaffold(title: "账号与安全", dismiss: dismiss) {
             SettingsDetailGroup {
-                SettingsValueRow(title: "手机号", value: "+86 139****7122")
+                SettingsValueRow(title: "邮箱", value: store.currentUser.email.isEmpty ? "未绑定" : "已绑定")
                 SettingsSeparator()
-                SettingsValueRow(title: "登录密码", value: "已设置")
+                SettingsValueRow(title: "密码登录", value: store.isBackendEnabled ? "已启用" : "已设置")
+                SettingsSeparator()
+                SettingsValueRow(title: "邮箱验证码", value: store.isBackendEnabled ? "可用" : "本地模式不可用")
             }
 
             SettingsDetailGroup {
-                SettingsValueRow(title: "微信账号", value: "未绑定")
+                SettingsValueRow(title: "Apple", value: "未绑定")
                 SettingsSeparator()
-                SettingsValueRow(title: "QQ账号", value: "未绑定")
+                SettingsValueRow(title: "微信", value: "待配置")
                 SettingsSeparator()
-                SettingsValueRow(title: "Apple账号", value: store.currentUser.nickname)
+                SettingsValueRow(title: "删除账号", value: "待接入")
             }
         }
     }
@@ -6609,6 +8318,11 @@ struct GeneralSettingsView: View {
                     }
                 SettingsSeparator()
                 SettingsToggleRow(title: "未关注回复前最多两条私信", subtitle: "开启后，对方未关注你时，对方回复之前只能连续发送两条消息", isOn: $store.limitsUnrepliedMessages)
+                SettingsSeparator()
+                SettingsToggleRow(title: "阿里云后端测试", subtitle: "开启后使用 ECS + RDS + OSS 测试接口", isOn: $store.isBackendEnabled)
+                    .onChange(of: store.isBackendEnabled) {
+                        store.backendModeChanged()
+                    }
             }
         }
     }
@@ -7381,13 +9095,17 @@ struct ReminderCenterView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                ForEach(store.reminders) { reminder in
+                ForEach(store.currentUserReminders) { reminder in
                     if let post = store.post(id: reminder.postID) {
                         NavigationLink(value: Route.postDetail(post.id)) {
                             ReminderLargeCard(post: post, reminder: reminder)
                         }
                         .buttonStyle(.plain)
                     }
+                }
+                if store.currentUserReminders.isEmpty {
+                    ProfileEmptyState(text: "暂无截团提醒", icon: "bell")
+                        .frame(height: 360)
                 }
             }
             .padding(16)
@@ -7731,7 +9449,10 @@ struct AvatarView: View {
 
     var body: some View {
         Group {
-            if let imageData = user.avatarImageData,
+            if !user.avatarURL.isEmpty {
+                RemoteImageView(urlString: user.avatarURL)
+                    .scaledToFill()
+            } else if let imageData = user.avatarImageData,
                let image = UIImage(data: imageData) {
                 Image(uiImage: image)
                     .resizable()

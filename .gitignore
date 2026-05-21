@@ -18,3 +18,12 @@ Package.resolved
 
 # Logs
 *.log
+
+# Node backend
+node_modules/
+backend/node_modules/
+backend/.env
+backend/.npm-cache/
+
+# Local secrets for backend/cloud credentials
+.project-secrets/
