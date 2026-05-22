@@ -44,13 +44,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.social-networking</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于在私信中拍摄并发送图片。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于从相册选择团购帖产品图片。</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
+	<string>用于从相册选择团购帖产品图片、头像、主页背景和私信图片。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -5,6 +5,37 @@ import PhotosUI
 import Security
 import UniformTypeIdentifiers
 
+enum ImageDataNormalizer {
+    static func jpegData(from data: Data, maxSide: CGFloat = 1800, compressionQuality: CGFloat = 0.8) -> Data {
+        guard let image = UIImage(data: data) else { return data }
+        return jpegData(from: image, maxSide: maxSide, compressionQuality: compressionQuality) ?? data
+    }
+
+    static func jpegData(from image: UIImage, maxSide: CGFloat = 1800, compressionQuality: CGFloat = 0.8) -> Data? {
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else {
+            return image.jpegData(compressionQuality: compressionQuality)
+        }
+
+        let longestSide = max(sourceSize.width, sourceSize.height)
+        let scale = min(1, maxSide / max(longestSide, 1))
+        let targetSize = CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
+
+        guard scale < 1 || image.imageOrientation != .up else {
+            return image.jpegData(compressionQuality: compressionQuality)
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        let renderedImage = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return renderedImage.jpegData(compressionQuality: compressionQuality)
+    }
+}
+
 @main
 struct ZhouBianTuanApp: App {
     @StateObject private var store = MockAppStore()
@@ -47,16 +78,6 @@ enum AppTab: String, CaseIterable, Identifiable {
     case profile
 
     var id: String { rawValue }
-
-    var index: Int {
-        Self.allCases.firstIndex(of: self) ?? 0
-    }
-
-    func adjacent(offset: Int) -> AppTab? {
-        let nextIndex = index + offset
-        guard Self.allCases.indices.contains(nextIndex) else { return nil }
-        return Self.allCases[nextIndex]
-    }
 
     var title: String {
         switch self {
@@ -175,10 +196,6 @@ struct RootView: View {
             }
             .id("\(store.authSessionVersion)-\(isAuthenticated)")
             .tint(Theme.hotPink)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 34)
-                    .onEnded(handleTabSwipe)
-            )
             .overlay(alignment: .top) {
                 ToastHost()
             }
@@ -197,18 +214,6 @@ struct RootView: View {
             .task {
                 await store.loadBackendIfNeeded()
             }
-        }
-    }
-
-    private func handleTabSwipe(_ value: DragGesture.Value) {
-        guard value.startLocation.x > 34,
-              value.startLocation.x < UIScreen.main.bounds.width - 34,
-              abs(value.translation.width) > 126,
-              abs(value.translation.height) < 72 else { return }
-        let offset = value.translation.width < 0 ? 1 : -1
-        guard let nextTab = selectedTab.adjacent(offset: offset) else { return }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-            selectedTab = nextTab
         }
     }
 }
@@ -434,6 +439,89 @@ struct UserBackgroundImage: View {
     }
 }
 
+enum AppMotion {
+    static let page = Animation.spring(response: 0.32, dampingFraction: 0.88)
+    static let quick = Animation.spring(response: 0.24, dampingFraction: 0.86)
+
+    static var sideCoverTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .trailing).combined(with: .opacity)
+        )
+    }
+}
+
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .flatMap(\.windows)
+        .forEach { $0.endEditing(true) }
+}
+
+func parsePriceAdjustment(_ value: String) -> Double {
+    let cleaned = value
+        .replacingOccurrences(of: "¥", with: "")
+        .replacingOccurrences(of: "元", with: "")
+        .trimmed
+    return Double(cleaned) ?? 0
+}
+
+func formatPlainAmount(_ value: Double) -> String {
+    guard value != 0 else { return "" }
+    return value.rounded() == value ? String(Int(value)) : String(format: "%.2f", value)
+}
+
+enum SearchMatcher {
+    static func normalized(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .lowercased()
+            .filter { !$0.isWhitespace && !$0.isNewline }
+    }
+
+    static func matchingCharacterCount(query: String, in candidate: String) -> Int {
+        let queryText = normalized(query)
+        let candidateText = normalized(candidate)
+        guard !queryText.isEmpty, !candidateText.isEmpty else { return 0 }
+
+        var remaining: [Character: Int] = [:]
+        for character in candidateText {
+            remaining[character, default: 0] += 1
+        }
+
+        var count = 0
+        for character in queryText {
+            if let value = remaining[character], value > 0 {
+                remaining[character] = value - 1
+                count += 1
+            }
+        }
+        return count
+    }
+
+    static func score(query: String, candidate: String) -> Int {
+        let queryText = normalized(query)
+        let candidateText = normalized(candidate)
+        guard !queryText.isEmpty, !candidateText.isEmpty else { return 0 }
+        let overlap = matchingCharacterCount(query: query, in: candidate)
+        let containsBoost = candidateText.contains(queryText) || queryText.contains(candidateText) ? 1_000 : 0
+        let prefixBoost = candidateText.hasPrefix(queryText) ? 500 : 0
+        return containsBoost + prefixBoost + overlap
+    }
+
+    static func matches(query: String, candidate: String) -> Bool {
+        let queryText = normalized(query)
+        guard !queryText.isEmpty else { return false }
+        let candidateText = normalized(candidate)
+        guard !candidateText.isEmpty else { return false }
+        if candidateText.contains(queryText) || queryText.contains(candidateText) {
+            return true
+        }
+        return matchingCharacterCount(query: query, in: candidate) >= min(2, queryText.count)
+    }
+}
+
 struct User: Identifiable, Hashable {
     let id: String
     var email: String = ""
@@ -496,6 +584,11 @@ struct GroupBuyPost: Identifiable, Hashable {
     var isEnded: Bool {
         deadline <= Date()
     }
+
+    var searchableText: String {
+        ([title, description, price, deposit, condition, pingguAveragePrice, pingguNote] + categoryTags + fandomTags + unsoldRoles.map(\.name))
+            .joined(separator: " ")
+    }
 }
 
 enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
@@ -553,15 +646,24 @@ struct UnsoldRole: Identifiable, Hashable {
     let id: String
     var name: String
     var quantity: Int
+    var priceAdjustment: Double
 
-    init(id: String = "role-\(UUID().uuidString)", name: String, quantity: Int) {
+    init(id: String = "role-\(UUID().uuidString)", name: String, quantity: Int, priceAdjustment: Double = 0) {
         self.id = id
         self.name = name
         self.quantity = quantity
+        self.priceAdjustment = priceAdjustment
     }
 
     var isAvailable: Bool {
         quantity > 0 && !name.trimmed.isEmpty
+    }
+
+    var priceAdjustmentText: String {
+        guard priceAdjustment != 0 else { return "无调价" }
+        let value = abs(priceAdjustment)
+        let formatted = value.rounded() == value ? String(Int(value)) : String(format: "%.2f", value)
+        return "\(priceAdjustment > 0 ? "+" : "-")¥\(formatted)"
     }
 }
 
@@ -604,7 +706,7 @@ struct Comment: Identifiable, Hashable {
     var status: ContentStatus
 }
 
-struct MessageThread: Identifiable, Hashable {
+struct MessageThread: Identifiable, Hashable, Codable {
     let id: String
     var buyerUserID: String
     var publisherUserID: String
@@ -614,11 +716,12 @@ struct MessageThread: Identifiable, Hashable {
     var updatedAt: Date
 }
 
-struct DirectMessage: Identifiable, Hashable {
+struct DirectMessage: Identifiable, Hashable, Codable {
     let id: String
     var senderID: String
     var body: String
     var createdAt: Date
+    var imageData: Data? = nil
     var sharedPostID: String? = nil
     var sharedProfileUserID: String? = nil
 }
@@ -810,9 +913,10 @@ struct BackendRole: Decodable {
     let id: String?
     let name: String
     let quantity: Int
+    let priceAdjustment: Double?
 
     func localRole() -> UnsoldRole {
-        UnsoldRole(id: id ?? "role-\(UUID().uuidString)", name: name, quantity: quantity)
+        UnsoldRole(id: id ?? "role-\(UUID().uuidString)", name: name, quantity: quantity, priceAdjustment: priceAdjustment ?? 0)
     }
 }
 
@@ -954,12 +1058,28 @@ struct UploadTarget: Decodable {
 
 final class AliyunBackendClient {
     static let baseURLDefaultsKey = "zhoubiantuan.backendBaseURL"
-    static let defaultBaseURL = "http://47.103.44.42/api"
+    static let defaultBaseURL = "https://api.zhoubiantuanmail.top/api"
 
     private let baseURL: URL
     private let session: URLSession
+    private static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 18
+        configuration.timeoutIntervalForResource = 55
+        configuration.waitsForConnectivity = false
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
 
-    init(baseURLString: String = UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? defaultBaseURL, session: URLSession = .shared) {
+    private static var configuredBaseURL: String {
+        #if DEBUG
+        return UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? defaultBaseURL
+        #else
+        return defaultBaseURL
+        #endif
+    }
+
+    init(baseURLString: String = AliyunBackendClient.configuredBaseURL, session: URLSession = AliyunBackendClient.defaultSession) {
         self.baseURL = URL(string: baseURLString) ?? URL(string: Self.defaultBaseURL)!
         self.session = session
     }
@@ -1006,8 +1126,8 @@ final class AliyunBackendClient {
         try await request("/bootstrap", token: token)
     }
 
-    func updateProfile(token: String, user: User) async throws {
-        let _: EmptyResponse = try await request("/me", method: "PATCH", token: token, body: [
+    func updateProfile(token: String, user: User, avatarObjectKey: String? = nil, backgroundObjectKey: String? = nil) async throws {
+        var body: [String: Any] = [
             "nickname": user.nickname,
             "bio": user.bio,
             "redBookID": user.redBookID,
@@ -1017,7 +1137,14 @@ final class AliyunBackendClient {
             "avatarSymbol": user.avatarSymbol,
             "avatarTint": user.avatarTint.rawValue,
             "backgroundImageName": user.backgroundImageName
-        ])
+        ]
+        if let avatarObjectKey {
+            body["avatarObjectKey"] = avatarObjectKey
+        }
+        if let backgroundObjectKey {
+            body["backgroundObjectKey"] = backgroundObjectKey
+        }
+        let _: EmptyResponse = try await request("/me", method: "PATCH", token: token, body: body)
     }
 
     func createCollection(token: String, collection: GroupCollection) async throws {
@@ -1037,7 +1164,7 @@ final class AliyunBackendClient {
     }
 
     func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String]) async throws {
-        let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity] as [String: Any] }
+        let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity, "priceAdjustment": $0.priceAdjustment] as [String: Any] }
         let _: EmptyResponse = try await request("/posts", method: "POST", token: token, body: [
             "id": post.id,
             "title": post.title,
@@ -1097,18 +1224,34 @@ final class AliyunBackendClient {
     }
 
     func uploadPostImages(token: String, images: [Data]) async throws -> [String] {
+        try await uploadImages(token: token, images: images, kind: "post", filenamePrefix: "post")
+    }
+
+    func uploadProfileImage(token: String, data: Data, kind: String) async throws -> String {
+        try await uploadImages(token: token, images: [data], kind: kind, filenamePrefix: kind).first ?? ""
+    }
+
+    private func uploadImages(token: String, images: [Data], kind: String, filenamePrefix: String) async throws -> [String] {
         var keys: [String] = []
         for (index, data) in images.enumerated() {
             let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
-                "kind": "post",
-                "filename": "post-\(index).jpg",
+                "kind": kind,
+                "filename": "\(filenamePrefix)-\(index).jpg",
                 "contentType": "image/jpeg"
             ])
-            var request = URLRequest(url: URL(string: target.uploadUrl)!)
+            guard let uploadURL = URL(string: target.uploadUrl) else {
+                throw NSError(domain: "AliyunBackendClient", code: -1000, userInfo: [NSLocalizedDescriptionKey: "上传地址无效"])
+            }
+            var request = URLRequest(url: uploadURL)
             request.httpMethod = "PUT"
+            request.timeoutInterval = 45
             request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-            let (_, response) = try await session.upload(for: request, from: data)
-            try validate(response: response, data: Data())
+            do {
+                let (_, response) = try await session.upload(for: request, from: data)
+                try validate(response: response, data: Data())
+            } catch let error as URLError where error.code == .timedOut {
+                throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "图片上传超时，请换个网络或稍后重试"])
+            }
             keys.append(target.objectKey)
         }
         return keys
@@ -1117,6 +1260,7 @@ final class AliyunBackendClient {
     private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
         var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
         request.httpMethod = method
+        request.timeoutInterval = 18
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1125,12 +1269,16 @@ final class AliyunBackendClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await session.data(for: request)
-        try validate(response: response, data: data)
-        if T.self == EmptyResponse.self {
-            return EmptyResponse() as! T
+        do {
+            let (data, response) = try await session.data(for: request)
+            try validate(response: response, data: data)
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as URLError where error.code == .timedOut {
+            throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请稍后重试"])
         }
-        return try JSONDecoder().decode(T.self, from: data)
     }
 
     private func emptyRequest(_ path: String, method: String, token: String) async throws {
@@ -1228,7 +1376,11 @@ final class MockAppStore: ObservableObject {
     @Published var collections: [GroupCollection]
     @Published var reviews: [ReviewPost]
     @Published var comments: [Comment]
-    @Published var threads: [MessageThread]
+    @Published var threads: [MessageThread] {
+        didSet {
+            persistThreads()
+        }
+    }
     @Published var reports: [Report]
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
@@ -1278,12 +1430,14 @@ final class MockAppStore: ObservableObject {
     private static let backendTokenDefaultsKey = "zhoubiantuan.backendToken"
     private static let backendTokenFallbackDefaultsKey = "zhoubiantuan.backendToken.fallback"
     private static let browsingHistoryDefaultsKeyPrefix = "zhoubiantuan.browsingHistory"
+    private static let messageThreadsDefaultsKey = "zhoubiantuan.messageThreads"
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let defaultSearchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
     private static let demoLikedPostIDs: Set<String> = ["p-card", "p-plush"]
     private static let demoFavoritePostIDs: Set<String> = ["p-card", "p-album"]
     private let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
+    private var isRestoringThreads = false
     private var backendToken: String? {
         get {
             cachedBackendToken ??
@@ -1318,14 +1472,43 @@ final class MockAppStore: ObservableObject {
         "\(browsingHistoryDefaultsKeyPrefix).\(userID)"
     }
 
+    private static var messageThreadsStorageURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("zhoubiantuan-message-threads.json")
+    }
+
+    private func persistThreads() {
+        guard !isRestoringThreads,
+              let data = try? JSONEncoder().encode(threads) else { return }
+        guard let storageURL = Self.messageThreadsStorageURL else {
+            UserDefaults.standard.set(data, forKey: Self.messageThreadsDefaultsKey)
+            return
+        }
+        try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: storageURL, options: .atomic)
+    }
+
+    private func restorePersistedThreads() {
+        let fileData = Self.messageThreadsStorageURL.flatMap { try? Data(contentsOf: $0) }
+        guard let data = fileData ?? UserDefaults.standard.data(forKey: Self.messageThreadsDefaultsKey),
+              let restoredThreads = try? JSONDecoder().decode([MessageThread].self, from: data) else { return }
+        isRestoringThreads = true
+        threads = restoredThreads
+        isRestoringThreads = false
+    }
+
+    private static func normalizedMessageImageData(_ data: Data) -> Data {
+        ImageDataNormalizer.jpegData(from: data, maxSide: 1600, compressionQuality: 0.78)
+    }
+
     init() {
         Self.migrateBackendTokenToKeychain()
         cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ?? UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
-        let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? true
+        let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
-        isBackendEnabled = UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) as? Bool ?? false
+        isBackendEnabled = UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) as? Bool ?? true
         let now = Date()
         let myCollectionID = "col-my-winter"
         let winterCollectionID = "col-winter-bucky"
@@ -1373,7 +1556,7 @@ final class MockAppStore: ObservableObject {
             MessageThread(id: "t-card", buyerUserID: "u-me", publisherUserID: "u-echo", relatedPostID: "p-card", messages: [
                 DirectMessage(id: "m-1", senderID: "u-me", body: "小卡套组还能上车吗？", createdAt: now.addingTimeInterval(-3600)),
                 DirectMessage(id: "m-2", senderID: "u-echo", body: "可以，复制微信备注“巡演小卡”我拉你进群。", createdAt: now.addingTimeInterval(-3200)),
-                DirectMessage(id: "m-share-card", senderID: "u-me", body: "分享了笔记：巡演限定小卡套组二开", createdAt: now.addingTimeInterval(-2600), sharedPostID: "p-card")
+                DirectMessage(id: "m-share-card", senderID: "u-me", body: "分享了制品：巡演限定小卡套组二开", createdAt: now.addingTimeInterval(-2600), sharedPostID: "p-card")
             ], unreadCount: 1, updatedAt: now.addingTimeInterval(-3200)),
             MessageThread(id: "t-plush", buyerUserID: "u-me", publisherUserID: "u-berry", relatedPostID: "p-plush", messages: [
                 DirectMessage(id: "m-3", senderID: "u-berry", body: "15cm 娃衣还有粉色和灰色。", createdAt: now.addingTimeInterval(-9200))
@@ -1400,6 +1583,7 @@ final class MockAppStore: ObservableObject {
         ]
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: Self.demoUserID)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? Self.defaultSearchHistory
+        restorePersistedThreads()
         if isBackendEnabled {
             if backendToken == nil {
                 isLoggedIn = false
@@ -1625,21 +1809,26 @@ final class MockAppStore: ObservableObject {
     func splitGoodsPosts(matchingRole keyword: String) -> [GroupBuyPost] {
         let trimmed = keyword.trimmed
         guard !trimmed.isEmpty else { return [] }
-        return sortedFeedPosts(activePosts
+        return activePosts
             .filter { post in
                 post.groupType == .splitGoods &&
                 post.unsoldRoles.contains { role in
-                    role.isAvailable && role.name.localizedCaseInsensitiveContains(trimmed)
+                    role.isAvailable && SearchMatcher.matches(query: trimmed, candidate: role.name)
                 }
-            })
+            }
+            .sorted { lhs, rhs in
+                let lhsScore = lhs.unsoldRoles.map { SearchMatcher.score(query: trimmed, candidate: $0.name) }.max() ?? 0
+                let rhsScore = rhs.unsoldRoles.map { SearchMatcher.score(query: trimmed, candidate: $0.name) }.max() ?? 0
+                if lhsScore != rhsScore { return lhsScore > rhsScore }
+                return lhs.createdAt > rhs.createdAt
+            }
     }
 
     func groupLeaderUsers(matching keyword: String) -> [User] {
         let trimmed = keyword.trimmed
-        let normalizedKeyword = trimmed.lowercased()
         let userMatches = users.filter { user in
             guard user.id != currentUserID else { return false }
-            guard !normalizedKeyword.isEmpty else { return false }
+            guard !trimmed.isEmpty else { return false }
             let authoredText = posts
                 .filter { $0.authorID == user.id && $0.status == .active }
                 .flatMap { post in
@@ -1655,12 +1844,13 @@ final class MockAppStore: ObservableObject {
                 authoredText
             ]
                 .joined(separator: " ")
-                .lowercased()
-            return searchableText.localizedCaseInsensitiveContains(normalizedKeyword) ||
-                normalizedKeyword.localizedCaseInsensitiveContains(user.nickname.lowercased())
+            return SearchMatcher.matches(query: trimmed, candidate: searchableText)
         }
 
         return userMatches.sorted { lhs, rhs in
+            let lhsScore = SearchMatcher.score(query: trimmed, candidate: [lhs.nickname, lhs.redBookID, lhs.bio, lhs.region].joined(separator: " "))
+            let rhsScore = SearchMatcher.score(query: trimmed, candidate: [rhs.nickname, rhs.redBookID, rhs.bio, rhs.region].joined(separator: " "))
+            if lhsScore != rhsScore { return lhsScore > rhsScore }
             if followedUserIDs.contains(lhs.id) != followedUserIDs.contains(rhs.id) {
                 return followedUserIDs.contains(lhs.id)
             }
@@ -1920,8 +2110,23 @@ final class MockAppStore: ObservableObject {
         users[index].backgroundImageData = backgroundImageData
         showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
         let updatedUser = users[index]
-        runBackendMutation { token in
-            try await self.backendClient.updateProfile(token: token, user: updatedUser)
+        let avatarUploadData = avatarImageData
+        let backgroundUploadData = backgroundImageData
+        runBackendMutation(refreshAfterSuccess: true) { token in
+            var avatarObjectKey: String?
+            if let avatarUploadData {
+                avatarObjectKey = try await self.backendClient.uploadProfileImage(token: token, data: avatarUploadData, kind: "avatar")
+            }
+            var backgroundObjectKey: String?
+            if let backgroundUploadData {
+                backgroundObjectKey = try await self.backendClient.uploadProfileImage(token: token, data: backgroundUploadData, kind: "background")
+            }
+            try await self.backendClient.updateProfile(
+                token: token,
+                user: updatedUser,
+                avatarObjectKey: avatarObjectKey,
+                backgroundObjectKey: backgroundObjectKey
+            )
         }
     }
 
@@ -2125,12 +2330,13 @@ final class MockAppStore: ObservableObject {
             DirectMessage(
                 id: "m-\(UUID().uuidString)",
                 senderID: currentUserID,
-                body: "分享了笔记：\(post.title)",
+                body: "分享了制品：\(post.title)",
                 createdAt: Date(),
                 sharedPostID: postID
             )
         )
         threads[index].updatedAt = Date()
+        persistThreads()
         showToast("已分享给站内好友")
     }
 
@@ -2154,6 +2360,7 @@ final class MockAppStore: ObservableObject {
             )
         )
         threads[index].updatedAt = Date()
+        persistThreads()
         showToast("已分享给站内好友")
     }
 
@@ -2188,6 +2395,7 @@ final class MockAppStore: ObservableObject {
             )
             threads.append(thread)
         }
+        persistThreads()
     }
 
     private func threadID(forRecipient userID: String, relatedPostID: String?) -> String? {
@@ -2210,6 +2418,7 @@ final class MockAppStore: ObservableObject {
             updatedAt: Date()
         )
         threads.insert(thread, at: 0)
+        persistThreads()
         return threadID
     }
 
@@ -2225,6 +2434,30 @@ final class MockAppStore: ObservableObject {
         threads[index].messages.append(DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date()))
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
+        persistThreads()
+        return true
+    }
+
+    func sendImageMessage(threadID: String, imageData: Data) -> Bool {
+        guard requireLogin(prompt: "登录后才能发私信") else { return false }
+        guard let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return false }
+        guard canSendMessage(in: threads[index]) else {
+            showToast("对方未关注你时，回复前最多发送两条消息")
+            return false
+        }
+        let storedImageData = Self.normalizedMessageImageData(imageData)
+        threads[index].messages.append(
+            DirectMessage(
+                id: "m-\(UUID().uuidString)",
+                senderID: currentUserID,
+                body: "[图片]",
+                createdAt: Date(),
+                imageData: storedImageData
+            )
+        )
+        threads[index].updatedAt = Date()
+        threads[index].unreadCount = 0
+        persistThreads()
         return true
     }
 
@@ -2240,6 +2473,7 @@ final class MockAppStore: ObservableObject {
         guard let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }),
               threads[index].unreadCount > 0 else { return }
         threads[index].unreadCount = 0
+        persistThreads()
     }
 
     @discardableResult
@@ -2330,20 +2564,21 @@ final class MockAppStore: ObservableObject {
         }
     }
 
-    func addUnsoldRole(postID: String, name: String, quantity: Int) {
+    func addUnsoldRole(postID: String, name: String, quantity: Int, priceAdjustment: Double = 0) {
         let trimmed = name.trimmed
         guard !trimmed.isEmpty,
               quantity > 0,
               let index = posts.firstIndex(where: { $0.id == postID }) else { return }
-        posts[index].unsoldRoles.append(UnsoldRole(name: trimmed, quantity: quantity))
+        posts[index].unsoldRoles.append(UnsoldRole(name: trimmed, quantity: quantity, priceAdjustment: priceAdjustment))
         showToast("已更新角色余量")
     }
 
-    func updateUnsoldRole(postID: String, roleID: String, name: String, quantity: Int) {
+    func updateUnsoldRole(postID: String, roleID: String, name: String, quantity: Int, priceAdjustment: Double) {
         guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
               let roleIndex = posts[postIndex].unsoldRoles.firstIndex(where: { $0.id == roleID }) else { return }
         posts[postIndex].unsoldRoles[roleIndex].name = name.trimmed
         posts[postIndex].unsoldRoles[roleIndex].quantity = max(0, quantity)
+        posts[postIndex].unsoldRoles[roleIndex].priceAdjustment = priceAdjustment
     }
 
     func removeUnsoldRole(postID: String, roleID: String) {
@@ -2789,6 +3024,230 @@ struct PostLikeCountButton: View {
     }
 }
 
+struct LegalSection: Identifiable {
+    let title: String
+    let body: String
+    var id: String { title }
+}
+
+enum LegalDocument: String, CaseIterable, Identifiable {
+    case userAgreement
+    case privacyPolicy
+    case minorsPolicy
+    case personalInfoList
+    case thirdPartySharingList
+
+    var id: String { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .userAgreement: return "用户协议"
+        case .privacyPolicy: return "隐私政策"
+        case .minorsPolicy: return "未成年人个人信息保护规则"
+        case .personalInfoList: return "个人信息收集清单"
+        case .thirdPartySharingList: return "第三方信息共享清单"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .userAgreement: return "周边团用户服务协议"
+        case .privacyPolicy: return "周边团用户隐私政策"
+        case .minorsPolicy: return "未成年人个人信息保护规则"
+        case .personalInfoList: return "个人信息收集清单"
+        case .thirdPartySharingList: return "第三方信息共享清单"
+        }
+    }
+
+    var sections: [LegalSection] {
+        switch self {
+        case .userAgreement:
+            return [
+                LegalSection(title: "服务范围", body: "周边团提供团购信息发布、浏览、收藏、评论、私信沟通、举报和账号管理等信息服务。平台不直接承接支付、订单、退款、物流或售后，正式交易请在团长和用户确认的外部渠道完成。"),
+                LegalSection(title: "账号使用", body: "你需要使用真实可接收邮件的邮箱注册或登录，并妥善保管密码和验证码。请勿冒用他人身份、发布违法或侵权内容，或通过自动化方式干扰平台正常运行。"),
+                LegalSection(title: "内容责任", body: "你发布的帖子、评论、图片、联系方式和私信应由你自行确认合法、真实、清晰。平台可以基于用户举报、风险控制或法律要求，对违规内容采取隐藏、下架、限制账号等处理。"),
+                LegalSection(title: "风险提示", body: "团购信息具有时效性和交易风险。请在付款前核对团长身份、商品信息、价格、截团时间、补款规则和售后安排，避免脱离可追溯沟通记录进行高风险交易。")
+            ]
+        case .privacyPolicy:
+            return [
+                LegalSection(title: "我们收集的信息", body: "为提供账号和社区功能，我们会收集邮箱、昵称、个人资料、你主动发布的帖子、评论、私信、举报内容，以及你主动选择上传的图片。"),
+                LegalSection(title: "使用目的", body: "这些信息用于注册登录、验证码发送、账号展示、内容发布、互动通知、私信沟通、内容安全、举报处理、客服支持和基础运营维护。"),
+                LegalSection(title: "存储与安全", body: "账号密码以哈希形式保存，登录状态使用令牌维护。图片上传到云存储，后端服务访问数据库和对象存储时使用服务端密钥，密钥不会放入 iOS 客户端。"),
+                LegalSection(title: "你的选择", body: "你可以退出登录、编辑资料、删除本地浏览记录，或通过平台提供的反馈渠道请求更正、删除账号相关信息。我们不会将上述信息用于跨 App 或跨网站追踪。")
+            ]
+        case .minorsPolicy:
+            return [
+                LegalSection(title: "监护人同意", body: "未成年人使用本服务前，应取得父母或其他监护人的同意，并在监护人指导下理解团购信息、个人信息保护和网络交易风险。"),
+                LegalSection(title: "最小必要", body: "平台仅围绕账号、内容发布和沟通功能处理必要信息。未成年人不应公开发布身份证件、住址、学校、银行卡、精确定位等敏感信息。"),
+                LegalSection(title: "交易提醒", body: "未成年人不应独立进行高金额或高风险交易。涉及付款、补款、退款或线下见面时，应由监护人参与判断并保留沟通凭证。"),
+                LegalSection(title: "保护请求", body: "监护人如发现未成年人信息被不当展示或使用，可以通过平台反馈渠道联系我们处理。")
+            ]
+        case .personalInfoList:
+            return [
+                LegalSection(title: "账号信息", body: "邮箱用于注册、登录和验证码发送；昵称、头像、简介、地区等资料用于账号展示和社区互动。"),
+                LegalSection(title: "用户内容", body: "帖子、评论、私信、举报理由和详情用于展示、沟通、内容管理和安全处理。"),
+                LegalSection(title: "图片信息", body: "你主动选择的商品图片、头像或背景图会用于帖子和资料展示。App 只在你选择图片时访问相册。"),
+                LegalSection(title: "本地偏好", body: "App 使用 UserDefaults 保存登录状态、深色模式、浏览记录、搜索历史、后端调试偏好等仅本 App 可访问的信息。")
+            ]
+        case .thirdPartySharingList:
+            return [
+                LegalSection(title: "云服务", body: "后端部署在云服务器，数据库和对象存储用于保存账号、内容和图片。邮件服务用于发送注册和登录验证码。"),
+                LegalSection(title: "外部交易渠道", body: "帖子中可能展示微信、QQ、群聊或表单链接等外部联系方式。你离开本 App 后的信息处理和交易规则由相应第三方或团长负责。"),
+                LegalSection(title: "法定披露", body: "如法律法规、监管要求、司法机关或平台安全处置需要，我们可能在必要范围内提供相关信息。"),
+                LegalSection(title: "不用于追踪", body: "当前 Beta 版本不接入广告追踪 SDK，不将收集的信息用于跨 App 或跨网站追踪。")
+            ]
+        }
+    }
+}
+
+struct LegalDocumentSheet: View {
+    let document: LegalDocument
+
+    var body: some View {
+        NavigationStack {
+            LegalDocumentView(document: document)
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+struct LegalDocumentView: View {
+    @Environment(\.dismiss) private var dismiss
+    let document: LegalDocument
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Beta 版本说明")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Theme.hotPink)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Theme.hotPink.opacity(0.12), in: Capsule())
+
+                Text("本页面用于内测阶段向用户说明周边团的服务规则和个人信息处理方式。正式公开发布前，页面内容会与 App Store Connect 隐私标签和公开隐私政策 URL 保持一致。")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .lineSpacing(6)
+
+                ForEach(document.sections) { section in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(section.title)
+                            .font(.system(size: 19, weight: .black))
+                            .foregroundStyle(Theme.text)
+                        Text(section.body)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.subtext)
+                            .lineSpacing(7)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationTitle(document.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("完成") { dismiss() }
+                    .foregroundStyle(Theme.hotPink)
+            }
+        }
+    }
+}
+
+struct LegalAgreementRow: View {
+    @Binding var isAccepted: Bool
+    let documents: [LegalDocument]
+    var textColor: Color
+    var linkColor: Color = Theme.hotPink
+    var fontSize: CGFloat = 14
+    var iconSize: CGFloat = 18
+
+    @State private var selectedDocument: LegalDocument?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button {
+                isAccepted.toggle()
+            } label: {
+                Image(systemName: isAccepted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: iconSize, weight: .semibold))
+                    .foregroundStyle(isAccepted ? Theme.hotPink : Color.white.opacity(0.36))
+                    .padding(.top, 1)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isAccepted ? "取消同意协议" : "同意协议")
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("我已阅读并同意")
+                    .font(.system(size: fontSize, weight: .semibold))
+                    .foregroundStyle(textColor)
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), alignment: .leading)], alignment: .leading, spacing: 7) {
+                    ForEach(documents) { document in
+                        Button {
+                            selectedDocument = document
+                        } label: {
+                            Text("《\(document.shortTitle)》")
+                                .font(.system(size: fontSize, weight: .bold))
+                                .foregroundStyle(linkColor)
+                                .underline()
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(item: $selectedDocument) { document in
+            LegalDocumentSheet(document: document)
+        }
+    }
+}
+
+struct SettingsLegalLinks: View {
+    @State private var selectedDocument: LegalDocument?
+
+    private let rows: [[LegalDocument]] = [
+        [.personalInfoList, .thirdPartySharingList],
+        [.userAgreement, .privacyPolicy],
+        [.minorsPolicy]
+    ]
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(rows.indices, id: \.self) { index in
+                HStack(spacing: 12) {
+                    ForEach(rows[index]) { document in
+                        Button {
+                            selectedDocument = document
+                        } label: {
+                            Text("《\(document.shortTitle)》")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.subtext)
+                                .underline()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.82)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .multilineTextAlignment(.center)
+        .sheet(item: $selectedDocument) { document in
+            LegalDocumentSheet(document: document)
+        }
+    }
+}
+
 struct GuestAuthView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var hasAcceptedTerms = false
@@ -2831,62 +3290,67 @@ struct GuestAuthView: View {
                 VStack(spacing: 28) {
                     VStack(spacing: 18) {
                         Button {
-                            logIn(provider: "微信")
-                        } label: {
-                            Label("微信登录", systemImage: "bubble.left.and.bubble.right.fill")
-                                .font(.system(size: 23, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 64)
-                                .background(Color(red: 0.03, green: 0.78, blue: 0.36), in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            logIn(provider: "Apple")
-                        } label: {
-                            Label("通过 Apple 登录", systemImage: "apple.logo")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 62)
-                                .overlay {
-                                    Capsule().stroke(Color.white.opacity(0.32), lineWidth: 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
                             isRegisterPresented = true
                         } label: {
-                            HStack(spacing: 8) {
-                                Text("其他登录方式")
-                                    .underline()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 17, weight: .bold))
-                            }
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(Color(red: 0.78, green: 0.85, blue: 0.94))
+                            Label("邮箱注册 / 登录", systemImage: "envelope.fill")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(height: 62)
+                                .padding(.horizontal, 20)
+                                .background(Theme.hotPink, in: Capsule())
                         }
                         .buttonStyle(.plain)
+
+                        Text("Beta 版本仅开放邮箱注册、密码登录和验证码登录。")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        #if DEBUG
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("开发调试入口")
+                                .font(.system(size: 13, weight: .black))
+                                .foregroundStyle(Color.white.opacity(0.46))
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    logIn(provider: "微信")
+                                } label: {
+                                    Label("微信", systemImage: "bubble.left.and.bubble.right.fill")
+                                        .font(.system(size: 16, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 48)
+                                        .background(Color(red: 0.03, green: 0.78, blue: 0.36).opacity(0.82), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    logIn(provider: "Apple")
+                                } label: {
+                                    Label("Apple", systemImage: "apple.logo")
+                                        .font(.system(size: 16, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 48)
+                                        .overlay {
+                                            Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1)
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        #endif
                     }
 
-                    Button {
-                        hasAcceptedTerms.toggle()
-                    } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: hasAcceptedTerms ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(hasAcceptedTerms ? Theme.hotPink : Color.white.opacity(0.36))
-                                .padding(.top, 1)
-                            Text("我已阅读并同意《用户协议》《隐私政策》《未成年人个人信息保护规则》")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
-                                .lineSpacing(7)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    LegalAgreementRow(
+                        isAccepted: $hasAcceptedTerms,
+                        documents: [.userAgreement, .privacyPolicy, .minorsPolicy],
+                        textColor: Color(red: 0.76, green: 0.82, blue: 0.91),
+                        fontSize: 16,
+                        iconSize: 20
+                    )
                 }
                 .padding(.horizontal, 34)
                 .padding(.bottom, 34)
@@ -3101,19 +3565,11 @@ struct AccountAuthView: View {
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
 
-                    Button {
-                        hasAcceptedTerms.toggle()
-                    } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: hasAcceptedTerms ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(hasAcceptedTerms ? Theme.hotPink : Color.white.opacity(0.36))
-                            Text("我已阅读并同意《用户协议》《隐私政策》")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    LegalAgreementRow(
+                        isAccepted: $hasAcceptedTerms,
+                        documents: [.userAgreement, .privacyPolicy, .minorsPolicy],
+                        textColor: Color(red: 0.76, green: 0.82, blue: 0.91)
+                    )
                 }
                 .padding(.horizontal, 22)
                 .padding(.bottom, 28)
@@ -3433,10 +3889,16 @@ struct SearchView: View {
         let filtered = pool
             .map { $0.trimmed }
             .filter { !$0.isEmpty }
-            .filter { $0.localizedCaseInsensitiveContains(keyword) || keyword.localizedCaseInsensitiveContains($0) }
+            .filter { SearchMatcher.matches(query: keyword, candidate: $0) }
+            .sorted {
+                let lhsScore = SearchMatcher.score(query: keyword, candidate: $0)
+                let rhsScore = SearchMatcher.score(query: keyword, candidate: $1)
+                if lhsScore != rhsScore { return lhsScore > rhsScore }
+                return $0.count < $1.count
+            }
 
         let unique = Array(NSOrderedSet(array: filtered)) as? [String] ?? filtered
-        return Array((unique.isEmpty ? pool.filter { $0.localizedCaseInsensitiveContains(keyword.prefix(1)) } : unique).prefix(9))
+        return Array((unique.isEmpty ? pool.filter { SearchMatcher.matches(query: String(keyword.prefix(1)), candidate: $0) } : unique).prefix(9))
     }
 
     var results: [GroupBuyPost] {
@@ -3447,12 +3909,16 @@ struct SearchView: View {
             if selectedTab == "拼谷角色" || selectedFilter == "拼谷有货" || !roleMatches.isEmpty {
                 result = roleMatches
             } else {
-                result = result.filter { post in
-                    post.title.localizedCaseInsensitiveContains(keyword) ||
-                    post.description.localizedCaseInsensitiveContains(keyword) ||
-                    post.categoryTags.joined().localizedCaseInsensitiveContains(keyword) ||
-                    post.fandomTags.joined().localizedCaseInsensitiveContains(keyword)
-                }
+                result = result
+                    .filter { post in
+                        SearchMatcher.matches(query: keyword, candidate: post.searchableText)
+                    }
+                    .sorted { lhs, rhs in
+                        let lhsScore = SearchMatcher.score(query: keyword, candidate: lhs.searchableText)
+                        let rhsScore = SearchMatcher.score(query: keyword, candidate: rhs.searchableText)
+                        if lhsScore != rhsScore { return lhsScore > rhsScore }
+                        return lhs.createdAt > rhs.createdAt
+                    }
             }
         }
         if selectedFilter == "拼谷有货" {
@@ -3535,16 +4001,14 @@ struct SearchView: View {
             Group {
                 if typedQuery.isEmpty {
                     SearchInitialContent(history: $store.searchHistory, isManaging: $isManagingHistory) { term in
-                        query = term
-                        committedQuery = ""
+                        commitSearch(term)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(AppMotion.sideCoverTransition)
                 } else if !isShowingResults {
                     SearchSuggestionsContent(query: typedQuery, suggestions: suggestions) { suggestion in
-                        query = suggestion
-                        committedQuery = ""
+                        commitSearch(suggestion)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .transition(AppMotion.sideCoverTransition)
                 } else {
                     SearchResultsContent(
                         query: activeQuery,
@@ -3555,7 +4019,7 @@ struct SearchView: View {
                         results: results,
                         users: leaderResults
                     )
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .transition(AppMotion.sideCoverTransition)
                 }
             }
             .id(searchContentKey)
@@ -3565,6 +4029,9 @@ struct SearchView: View {
         .background(Theme.background.ignoresSafeArea())
         .toolbar(.hidden, for: .tabBar)
         .contentShape(Rectangle())
+        .onTapGesture {
+            hideKeyboard()
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 28)
                 .onEnded(handleBackSwipe)
@@ -3572,10 +4039,19 @@ struct SearchView: View {
     }
 
     private func submitSearch() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-            committedQuery = query.trimmed.isEmpty ? "Bucky" : query.trimmed
-            query = committedQuery
-            store.recordSearchHistory(committedQuery)
+        commitSearch(query.trimmed.isEmpty ? "Bucky" : query.trimmed)
+    }
+
+    private func commitSearch(_ term: String) {
+        let trimmed = term.trimmed
+        guard !trimmed.isEmpty else { return }
+        hideKeyboard()
+        withAnimation(AppMotion.page) {
+            committedQuery = trimmed
+            query = trimmed
+            selectedTab = "全部"
+            selectedFilter = "综合"
+            store.recordSearchHistory(trimmed)
             isManagingHistory = false
         }
     }
@@ -3585,8 +4061,11 @@ struct SearchView: View {
               value.translation.width > 86,
               abs(value.translation.height) < 72 else { return }
         if isShowingResults {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            withAnimation(AppMotion.page) {
                 committedQuery = ""
+                query = ""
+                selectedTab = "全部"
+                selectedFilter = "综合"
             }
             return
         }
@@ -3629,6 +4108,7 @@ struct SearchSuggestionsContent: View {
             }
             .padding(.top, 16)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
@@ -3737,6 +4217,7 @@ struct SearchInitialContent: View {
             }
             .padding(.bottom, 36)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
@@ -3955,8 +4436,8 @@ struct SearchResultsContent: View {
                         }
                     }
                     .id(resultContentID)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
-                    .animation(.spring(response: 0.26, dampingFraction: 0.86), value: resultContentID)
+                    .transition(AppMotion.sideCoverTransition)
+                    .animation(AppMotion.quick, value: resultContentID)
                 }
             }
         }
@@ -4052,11 +4533,13 @@ struct SearchLeaderRow: View {
 }
 
 struct PostDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     @State private var commentDraft = ""
     @State private var replyTargetCommentID: String?
     @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
+    @State private var isAuthorProfilePresented = false
     @State private var selectedImageIndex = 0
     let postID: String
 
@@ -4107,6 +4590,10 @@ struct PostDetailView: View {
                         .padding(18)
                     }
                     .padding(.bottom, 20)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onTapGesture {
+                    hideKeyboard()
                 }
             }
             .background(Theme.background.ignoresSafeArea())
@@ -4163,6 +4650,15 @@ struct PostDetailView: View {
             .onChange(of: imageCount) {
                 selectedImageIndex = min(selectedImageIndex, max(0, imageCount - 1))
             }
+            .navigationDestination(isPresented: $isAuthorProfilePresented) {
+                UserProfileView(userID: author.id)
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        handleDetailSwipe(value, authorID: author.id)
+                    }
+            )
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
@@ -4186,6 +4682,18 @@ struct PostDetailView: View {
             return image.size.width / image.size.height
         }
         return CGFloat(max(0.28, post.imageAspect))
+    }
+
+    private func handleDetailSwipe(_ value: DragGesture.Value, authorID: String) {
+        guard abs(value.translation.height) < 72 else { return }
+        if value.translation.width > 92 {
+            dismiss()
+        } else if value.translation.width < -92 {
+            hideKeyboard()
+            withAnimation(AppMotion.page) {
+                isAuthorProfilePresented = true
+            }
+        }
     }
 }
 
@@ -4397,7 +4905,7 @@ struct ShareSheetView: View {
                     ShareUtilityButton(title: "生成分享图", icon: "photo") {
                         store.showToast("已生成分享图占位")
                     }
-                    ShareUtilityButton(title: "引用发笔记", icon: "quote.bubble") {
+                    ShareUtilityButton(title: "引用发制品", icon: "quote.bubble") {
                         store.showToast("已带引用进入发布占位")
                     }
                     ShareUtilityButton(title: "建群分享", icon: "person.2") {
@@ -4806,6 +5314,7 @@ struct PingguRoleAvailabilityCard: View {
     @State private var isEditing = false
     @State private var newRoleName = ""
     @State private var newRoleQuantity = "1"
+    @State private var newRolePriceAdjustment = ""
     let postID: String
 
     var body: some View {
@@ -4863,9 +5372,16 @@ struct PingguRoleAvailabilityCard: View {
                                 EditableRoleRow(postID: postID, role: role)
                             } else {
                                 HStack {
-                                    Text(role.name)
-                                        .font(.system(size: 16, weight: .bold))
-                                        .foregroundStyle(Theme.text)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(role.name)
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundStyle(Theme.text)
+                                        if role.priceAdjustment != 0 {
+                                            Text("角色调价 \(role.priceAdjustmentText)")
+                                                .font(.system(size: 12, weight: .black))
+                                                .foregroundStyle(post.groupType.accent)
+                                        }
+                                    }
                                     Spacer()
                                     Text("(\(role.quantity))")
                                         .font(.system(size: 16, weight: .black))
@@ -4894,10 +5410,17 @@ struct PingguRoleAvailabilityCard: View {
                                 .frame(width: 66)
                                 .padding(12)
                                 .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+                            TextField("调价", text: $newRolePriceAdjustment)
+                                .keyboardType(.numbersAndPunctuation)
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 76)
+                                .padding(12)
+                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
                             Button {
-                                store.addUnsoldRole(postID: postID, name: newRoleName, quantity: Int(newRoleQuantity) ?? 1)
+                                store.addUnsoldRole(postID: postID, name: newRoleName, quantity: Int(newRoleQuantity) ?? 1, priceAdjustment: parsePriceAdjustment(newRolePriceAdjustment))
                                 newRoleName = ""
                                 newRoleQuantity = "1"
+                                newRolePriceAdjustment = ""
                             } label: {
                                 Image(systemName: "plus")
                                     .font(.system(size: 17, weight: .black))
@@ -4936,7 +5459,8 @@ struct EditableRoleRow: View {
             get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name },
             set: { newValue in
                 let quantity = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity
-                store.updateUnsoldRole(postID: postID, roleID: role.id, name: newValue, quantity: quantity)
+                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
+                store.updateUnsoldRole(postID: postID, roleID: role.id, name: newValue, quantity: quantity, priceAdjustment: adjustment)
             }
         )
     }
@@ -4946,7 +5470,27 @@ struct EditableRoleRow: View {
             get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity },
             set: { newValue in
                 let name = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name
-                store.updateUnsoldRole(postID: postID, roleID: role.id, name: name, quantity: newValue)
+                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
+                store.updateUnsoldRole(postID: postID, roleID: role.id, name: name, quantity: newValue, priceAdjustment: adjustment)
+            }
+        )
+    }
+
+    var adjustmentBinding: Binding<String> {
+        Binding(
+            get: {
+                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
+                return formatPlainAmount(adjustment)
+            },
+            set: { newValue in
+                let current = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id }) ?? role
+                store.updateUnsoldRole(
+                    postID: postID,
+                    roleID: role.id,
+                    name: current.name,
+                    quantity: current.quantity,
+                    priceAdjustment: parsePriceAdjustment(newValue)
+                )
             }
         )
     }
@@ -4964,6 +5508,13 @@ struct EditableRoleRow: View {
             }
             .labelsHidden()
             .frame(width: 100)
+            TextField("调价", text: adjustmentBinding)
+                .keyboardType(.numbersAndPunctuation)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.text)
+                .frame(width: 72)
+                .padding(11)
+                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
             Button {
                 store.removeUnsoldRole(postID: postID, roleID: role.id)
             } label: {
@@ -5370,6 +5921,7 @@ struct CreatePostView: View {
     @State private var pingguNote = ""
     @State private var newRoleName = ""
     @State private var newRoleQuantity = "1"
+    @State private var newRolePriceAdjustment = ""
     @State private var roleDrafts: [UnsoldRole] = []
     @State private var isCollectionPickerPresented = false
     @State private var isCreatingCollection = false
@@ -5538,9 +6090,16 @@ struct CreatePostView: View {
                             } else {
                                 ForEach(roleDrafts) { role in
                                     HStack {
-                                        Text(role.name)
-                                            .font(.system(size: 15, weight: .bold))
-                                            .foregroundStyle(Theme.text)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(role.name)
+                                                .font(.system(size: 15, weight: .bold))
+                                                .foregroundStyle(Theme.text)
+                                            if role.priceAdjustment != 0 {
+                                                Text("角色调价 \(role.priceAdjustmentText)")
+                                                    .font(.system(size: 12, weight: .black))
+                                                    .foregroundStyle(GroupBuyType.splitGoods.accent)
+                                            }
+                                        }
                                         Spacer()
                                         Text("(\(role.quantity))")
                                             .font(.system(size: 15, weight: .black))
@@ -5566,6 +6125,12 @@ struct CreatePostView: View {
                                     .keyboardType(.numberPad)
                                     .foregroundStyle(Theme.text)
                                     .frame(width: 72)
+                                    .padding(12)
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                TextField("调价", text: $newRolePriceAdjustment)
+                                    .keyboardType(.numbersAndPunctuation)
+                                    .foregroundStyle(Theme.text)
+                                    .frame(width: 78)
                                     .padding(12)
                                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                                 Button {
@@ -5620,6 +6185,7 @@ struct CreatePostView: View {
                 .padding(.bottom, 28)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
             .sheet(isPresented: $isCollectionPickerPresented) {
@@ -5667,6 +6233,7 @@ struct CreatePostView: View {
         pingguNote = ""
         newRoleName = ""
         newRoleQuantity = "1"
+        newRolePriceAdjustment = ""
         roleDrafts = []
     }
 
@@ -5674,9 +6241,10 @@ struct CreatePostView: View {
         let quantity = max(1, Int(newRoleQuantity) ?? 1)
         let trimmed = newRoleName.trimmed
         guard !trimmed.isEmpty else { return }
-        roleDrafts.append(UnsoldRole(name: trimmed, quantity: quantity))
+        roleDrafts.append(UnsoldRole(name: trimmed, quantity: quantity, priceAdjustment: parsePriceAdjustment(newRolePriceAdjustment)))
         newRoleName = ""
         newRoleQuantity = "1"
+        newRolePriceAdjustment = ""
     }
 }
 
@@ -5809,6 +6377,7 @@ struct PhotoLibraryImportView: View {
     @State private var selectedIDs: [String] = []
     @State private var isLoadingAssets = false
     @State private var isImporting = false
+    @State private var importErrorMessage: String?
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
 
@@ -5973,6 +6542,13 @@ struct PhotoLibraryImportView: View {
                 .disabled(isImporting)
             }
             .padding(.horizontal, 26)
+
+            if let importErrorMessage {
+                Text(importErrorMessage)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Theme.hotPink)
+                    .padding(.horizontal, 26)
+            }
         }
         .padding(.top, 20)
         .padding(.bottom, 34)
@@ -6065,6 +6641,7 @@ struct PhotoLibraryImportView: View {
     }
 
     private func toggleSelection(_ id: String) {
+        importErrorMessage = nil
         if let index = selectedIDs.firstIndex(of: id) {
             selectedIDs.remove(at: index)
         } else if selectedIDs.count < maxSelection {
@@ -6080,11 +6657,17 @@ struct PhotoLibraryImportView: View {
     private func importSelectedAssets() async {
         guard !isImporting else { return }
         isImporting = true
+        importErrorMessage = nil
         var imported: [Data] = []
         for id in selectedIDs {
             guard let asset = assets.first(where: { $0.id == id })?.asset,
                   let data = await imageData(for: asset) else { continue }
             imported.append(data)
+        }
+        guard !imported.isEmpty else {
+            isImporting = false
+            importErrorMessage = "图片读取失败，请稍后重试或换一张"
+            return
         }
         onImport(imported)
         isImporting = false
@@ -6093,12 +6676,84 @@ struct PhotoLibraryImportView: View {
 
     private func imageData(for asset: PHAsset) async -> Data? {
         await withCheckedContinuation { continuation in
+            let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.isNetworkAccessAllowed = true
-            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
-                continuation.resume(returning: data)
+            options.resizeMode = .fast
+
+            let lock = NSLock()
+            var didResume = false
+            var requestID = PHInvalidImageRequestID
+
+            func resume(_ data: Data?) {
+                lock.lock()
+                guard !didResume else {
+                    lock.unlock()
+                    return
+                }
+                didResume = true
+                lock.unlock()
+                continuation.resume(returning: data.map { ImageDataNormalizer.jpegData(from: $0, maxSide: 1800, compressionQuality: 0.8) })
             }
+
+            requestID = manager.requestImageDataAndOrientation(for: asset, options: options) { data, _, _, info in
+                if info?[PHImageCancelledKey] as? Bool == true || info?[PHImageErrorKey] != nil {
+                    resume(nil)
+                    return
+                }
+                resume(data)
+            }
+
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 15) {
+                lock.lock()
+                let shouldCancel = !didResume
+                lock.unlock()
+                if shouldCancel {
+                    manager.cancelImageRequest(requestID)
+                    resume(nil)
+                }
+            }
+        }
+    }
+}
+
+struct CameraCaptureView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+    let onCapture: (Data) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.mediaTypes = ["public.image"]
+        controller.allowsEditing = false
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: CameraCaptureView
+
+        init(parent: CameraCaptureView) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage,
+               let data = ImageDataNormalizer.jpegData(from: image, maxSide: 1800, compressionQuality: 0.8) {
+                parent.onCapture(data)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
         }
     }
 }
@@ -6455,15 +7110,10 @@ struct ThreadRow: View {
         HStack(spacing: 12) {
             AvatarView(user: user, size: 46)
             VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text(user.nickname)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.text)
-                    Spacer()
-                    Text(thread.updatedAt.relativeText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.muted)
-                }
+                Text(user.nickname)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
                 Text(post?.title ?? "好友私聊")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.softPink)
@@ -6473,12 +7123,15 @@ struct ThreadRow: View {
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(1)
             }
+            Spacer(minLength: 8)
             if thread.unreadCount > 0 {
                 Text("\(thread.unreadCount)")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .black))
                     .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(Theme.hotPink, in: Circle())
+                    .monospacedDigit()
+                    .padding(.horizontal, 8)
+                    .frame(minWidth: 24, minHeight: 24)
+                    .background(Theme.hotPink, in: Capsule())
             }
         }
         .padding(14)
@@ -6494,6 +7147,8 @@ struct ChatView: View {
     @State private var isAttachmentPanelOpen = false
     @State private var isMessageFieldFocused = false
     @State private var prefersEmojiKeyboard = false
+    @State private var isPhotoLibraryPresented = false
+    @State private var isCameraPresented = false
     let threadID: String
 
     var body: some View {
@@ -6548,10 +7203,14 @@ struct ChatView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 12)
                     }
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: thread.messages.count) {
                         if let last = thread.messages.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
+                    }
+                    .onTapGesture {
+                        closeInputSurfaces()
                     }
                 }
 
@@ -6562,6 +7221,7 @@ struct ChatView: View {
                             isFocused: $isMessageFieldFocused,
                             prefersEmojiKeyboard: $prefersEmojiKeyboard,
                             placeholder: "发消息...",
+                            onTap: activateNormalKeyboard,
                             onSubmit: send
                         )
                         .frame(height: 52)
@@ -6582,11 +7242,7 @@ struct ChatView: View {
 
                         Button {
                             if draft.trimmed.isEmpty {
-                                prefersEmojiKeyboard = false
-                                isMessageFieldFocused = false
-                                withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
-                                    isAttachmentPanelOpen.toggle()
-                                }
+                                toggleAttachmentPanel()
                             } else {
                                 send()
                             }
@@ -6604,7 +7260,7 @@ struct ChatView: View {
 
                     if isAttachmentPanelOpen {
                         ChatAttachmentPanel { option in
-                            store.showToast("已打开\(option)占位")
+                            openAttachmentPicker(option)
                         }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -6618,6 +7274,23 @@ struct ChatView: View {
             .onAppear {
                 store.markThreadRead(threadID: threadID)
             }
+            .fullScreenCover(isPresented: $isPhotoLibraryPresented) {
+                PhotoLibraryImportView(maxSelection: 9) { importedData in
+                    for data in importedData {
+                        _ = store.sendImageMessage(threadID: threadID, imageData: data)
+                    }
+                }
+            }
+            .sheet(isPresented: $isCameraPresented) {
+                CameraCaptureView { data in
+                    _ = store.sendImageMessage(threadID: threadID, imageData: data)
+                }
+                .ignoresSafeArea()
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded(handleExitSwipe)
+            )
         } else {
             ContentUnavailableView("会话不存在", systemImage: "bubble.left")
         }
@@ -6628,6 +7301,61 @@ struct ChatView: View {
             draft = ""
             isAttachmentPanelOpen = false
         }
+    }
+
+    private func activateNormalKeyboard() {
+        isAttachmentPanelOpen = false
+        prefersEmojiKeyboard = false
+        isMessageFieldFocused = true
+    }
+
+    private func toggleAttachmentPanel() {
+        prefersEmojiKeyboard = false
+        isMessageFieldFocused = false
+        hideKeyboard()
+        DispatchQueue.main.async {
+            hideKeyboard()
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+                isAttachmentPanelOpen.toggle()
+            }
+        }
+    }
+
+    private func openAttachmentPicker(_ option: String) {
+        prefersEmojiKeyboard = false
+        isMessageFieldFocused = false
+        withAnimation(AppMotion.quick) {
+            isAttachmentPanelOpen = false
+        }
+        hideKeyboard()
+        DispatchQueue.main.async {
+            hideKeyboard()
+            if option == "拍照" {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    isCameraPresented = true
+                } else {
+                    store.showToast("当前设备不可用相机")
+                }
+            } else {
+                isPhotoLibraryPresented = true
+            }
+        }
+    }
+
+    private func closeInputSurfaces() {
+        hideKeyboard()
+        isMessageFieldFocused = false
+        prefersEmojiKeyboard = false
+        withAnimation(AppMotion.quick) {
+            isAttachmentPanelOpen = false
+        }
+    }
+
+    private func handleExitSwipe(_ value: DragGesture.Value) {
+        guard value.translation.width > 86,
+              abs(value.translation.height) < 72 else { return }
+        closeInputSurfaces()
+        dismiss()
     }
 }
 
@@ -6648,6 +7376,7 @@ struct EmojiMessageTextField: UIViewRepresentable {
     @Binding var isFocused: Bool
     @Binding var prefersEmojiKeyboard: Bool
     let placeholder: String
+    let onTap: () -> Void
     let onSubmit: () -> Void
 
     func makeUIView(context: Context) -> EmojiUITextField {
@@ -6664,20 +7393,27 @@ struct EmojiMessageTextField: UIViewRepresentable {
             attributes: [.foregroundColor: UIColor.secondaryLabel]
         )
         textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.textFieldTapped(_:)))
+        tapRecognizer.cancelsTouchesInView = false
+        textField.addGestureRecognizer(tapRecognizer)
         return textField
     }
 
     func updateUIView(_ uiView: EmojiUITextField, context: Context) {
+        context.coordinator.parent = self
         if uiView.text != text {
             uiView.text = text
         }
+        let shouldReloadInputViews = uiView.prefersEmojiKeyboard != prefersEmojiKeyboard
         uiView.prefersEmojiKeyboard = prefersEmojiKeyboard
         if isFocused && !uiView.isFirstResponder {
             uiView.becomeFirstResponder()
         } else if !isFocused && uiView.isFirstResponder {
             uiView.resignFirstResponder()
         }
-        uiView.reloadInputViews()
+        if shouldReloadInputViews && uiView.isFirstResponder {
+            uiView.reloadInputViews()
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -6693,6 +7429,17 @@ struct EmojiMessageTextField: UIViewRepresentable {
 
         @objc func textDidChange(_ textField: UITextField) {
             parent.text = textField.text ?? ""
+        }
+
+        @objc func textFieldTapped(_ recognizer: UITapGestureRecognizer) {
+            parent.onTap()
+            guard let textField = recognizer.view as? EmojiUITextField else { return }
+            textField.prefersEmojiKeyboard = false
+            if textField.isFirstResponder {
+                textField.reloadInputViews()
+            } else {
+                textField.becomeFirstResponder()
+            }
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -6793,6 +7540,26 @@ struct ChatBubble: View {
                     Spacer(minLength: 34)
                 }
             }
+        } else if let imageData = message.imageData {
+            HStack(alignment: .bottom, spacing: 8) {
+                if isMine { Spacer(minLength: 48) }
+                if !isMine {
+                    AvatarView(user: store.user(id: message.senderID), size: 34)
+                }
+                UploadedImageView(data: imageData)
+                    .scaledToFill()
+                    .frame(width: 184, height: 184)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 0.5)
+                    }
+                if isMine {
+                    AvatarView(user: store.currentUser, size: 34)
+                } else {
+                    Spacer(minLength: 48)
+                }
+            }
         } else {
             HStack(alignment: .bottom, spacing: 8) {
                 if isMine { Spacer(minLength: 48) }
@@ -6883,7 +7650,7 @@ struct SharedProfileMessageCard: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
 
-                Text("笔记 · \(noteCount)  |  粉丝 · \(store.followerUsers(for: user.id).count)")
+                Text("制品 · \(noteCount)  |  粉丝 · \(store.followerUsers(for: user.id).count)")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Theme.subtext)
 
@@ -6919,12 +7686,12 @@ struct SharedProfileMessageCard: View {
 struct ProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isMenuOpen = false
-    @State private var selectedTab = "笔记"
+    @State private var selectedTab = "制品"
     @State private var isBioEditorPresented = false
     @State private var isShareSheetPresented = false
     @State private var bioDraft = ""
 
-    let profileTabs = ["笔记", "拼团合集", "收藏", "赞过"]
+    let profileTabs = ["制品", "拼团合集", "收藏", "赞过"]
 
     var body: some View {
         Group {
@@ -7105,7 +7872,7 @@ struct ProfileView: View {
                             .background(Theme.panel)
 
                             Group {
-                                if selectedTab == "笔记" {
+                                if selectedTab == "制品" {
                                     ProfileNotesPanel(userID: user.id, canManage: true)
                                 } else if selectedTab == "拼团合集" {
                                     ProfileCollectionsPanel(ownerID: user.id, canManage: true)
@@ -7326,6 +8093,14 @@ struct UserRelationListView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    guard value.translation.width > 86,
+                          abs(value.translation.height) < 72 else { return }
+                    dismiss()
+                }
+        )
     }
 }
 
@@ -7389,7 +8164,7 @@ struct ProfileEmptyNotesView: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 70, weight: .light))
                 .foregroundStyle(Theme.muted)
-            Text("分享你的打工日常")
+            Text("你还没有发布过制品")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.text.opacity(0.86))
             Button {
@@ -8011,7 +8786,7 @@ struct BrowsingHistoryView: View {
             HStack {
                 Spacer()
                 VStack(spacing: 7) {
-                    Text("笔记")
+                    Text("制品")
                         .font(.system(size: 22, weight: .black))
                         .foregroundStyle(Theme.text)
                     Capsule()
@@ -8240,13 +9015,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
 
-                    VStack(spacing: 10) {
-                        Text("《个人信息收集清单》    《第三方信息共享清单》")
-                        Text("《周边团用户服务协议》    《周边团用户隐私政策》")
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.subtext)
-                    .multilineTextAlignment(.center)
+                    SettingsLegalLinks()
                     .padding(.top, 14)
                     .padding(.bottom, 60)
                 }
@@ -8318,11 +9087,13 @@ struct GeneralSettingsView: View {
                     }
                 SettingsSeparator()
                 SettingsToggleRow(title: "未关注回复前最多两条私信", subtitle: "开启后，对方未关注你时，对方回复之前只能连续发送两条消息", isOn: $store.limitsUnrepliedMessages)
+                #if DEBUG
                 SettingsSeparator()
                 SettingsToggleRow(title: "阿里云后端测试", subtitle: "开启后使用 ECS + RDS + OSS 测试接口", isOn: $store.isBackendEnabled)
                     .onChange(of: store.isBackendEnabled) {
                         store.backendModeChanged()
                     }
+                #endif
             }
         }
     }
@@ -8753,6 +9524,8 @@ struct EditProfileView: View {
             backgroundImageName: backgroundImageName,
             avatarImageData: avatarImageData,
             backgroundImageData: backgroundImageData,
+            avatarURL: currentUser.avatarURL,
+            backgroundURL: currentUser.backgroundURL,
             lastNicknameChangedAt: currentUser.lastNicknameChangedAt
         )
 
@@ -8910,6 +9683,7 @@ struct EditProfileView: View {
                     .padding(.bottom, 30)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .background(Color(red: 0.95, green: 0.95, blue: 0.95).ignoresSafeArea())
         .navigationBarBackButtonHidden(true)
@@ -8977,8 +9751,9 @@ struct EditProfileView: View {
         guard let item else { return }
         Task {
             if let data = try? await item.loadTransferable(type: Data.self) {
+                let normalizedData = ImageDataNormalizer.jpegData(from: data, maxSide: 1800, compressionQuality: 0.8)
                 await MainActor.run {
-                    assign(data)
+                    assign(normalizedData)
                 }
             }
         }
@@ -9322,10 +10097,14 @@ struct TagContentView: View {
 }
 
 struct UserProfileView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     @State private var chatThreadID: String?
     @State private var isChatPresented = false
+    @State private var selectedTab = "制品"
     let userID: String
+
+    private let tabs = ["制品", "拼团合集"]
 
     var userPosts: [GroupBuyPost] {
         store.sortedFeedPosts(store.activePosts.filter { $0.authorID == userID })
@@ -9333,88 +10112,174 @@ struct UserProfileView: View {
 
     var body: some View {
         let user = store.user(id: userID)
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 14) {
-                        AvatarView(user: user, size: 74)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(user.nickname)
-                                .font(.system(size: 25, weight: .bold))
-                                .foregroundStyle(Theme.text)
-                            Text(user.bio)
-                                .font(.system(size: 14))
-                                .foregroundStyle(Theme.subtext)
-                        }
-                    }
-                    HStack(spacing: 18) {
-                        NavigationLink(value: Route.userRelations(user.id, .followers)) {
-                            StatItem(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
-                        }
-                        .buttonStyle(.plain)
-                        StatItem(value: "\(store.unfinishedCollectionCount(ownerID: user.id))", title: "未结合集")
-                        StatItem(value: "\(store.completedGroupTotal(for: user.id))", title: "完成团")
-                        Spacer()
-                    }
-                    if user.id != store.currentUserID {
-                        HStack {
-                            Spacer()
-                            Button {
-                                openChat(with: user)
-                            } label: {
-                                Label("私信", systemImage: "bubble.left.and.bubble.right.fill")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(Theme.hotPink)
-                                    .labelStyle(.titleAndIcon)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .background(Theme.hotPink.opacity(0.12), in: Capsule())
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let headerHeight: CGFloat = 486
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ZStack(alignment: .top) {
+                        UserBackgroundImage(user: user)
+                            .scaledToFill()
+                            .frame(width: width, height: headerHeight)
+                            .clipped()
+                            .overlay(.black.opacity(0.52))
+                            .overlay(
+                                LinearGradient(
+                                    colors: [.black.opacity(0.04), .black.opacity(0.28), Theme.background.opacity(0.82)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+
+                        VStack(alignment: .leading, spacing: 20) {
+                            HStack {
+                                Button {
+                                    dismiss()
+                                } label: {
+                                    Image(systemName: "chevron.left")
+                                        .font(.system(size: 31, weight: .medium))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 48, height: 48)
+                                        .background(.black.opacity(0.22), in: Circle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Spacer()
+                            }
+
+                            Spacer(minLength: 20)
+
+                            HStack(alignment: .center, spacing: 18) {
+                                AvatarView(user: user, size: 108)
+                                    .background(.white.opacity(0.92), in: Circle())
                                     .overlay {
-                                        Capsule().stroke(Theme.hotPink, lineWidth: 1)
+                                        Circle().stroke(.white.opacity(0.72), lineWidth: 1)
                                     }
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(user.nickname)
+                                        .font(.system(size: 31, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                    HStack(spacing: 8) {
+                                        Text("小红书号：\(store.registrationID(for: user.id))")
+                                        Image(systemName: "doc.on.doc")
+                                    }
+                                    .font(.system(size: 17, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.68))
+                                }
                             }
-                            .buttonStyle(.plain)
 
-                            Button {
-                                store.toggleFollow(userID: user.id)
-                            } label: {
-                                Text(store.followedUserIDs.contains(user.id) ? "已关注" : "关注")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(minWidth: 72)
-                                    .padding(.horizontal, 18)
-                                    .padding(.vertical, 10)
-                                    .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                            HStack(spacing: 26) {
+                                NavigationLink(value: Route.userRelations(user.id, .following)) {
+                                    StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
+                                }
+                                .buttonStyle(.plain)
+                                NavigationLink(value: Route.userRelations(user.id, .followers)) {
+                                    StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
+                                }
+                                .buttonStyle(.plain)
+                                StatInline(value: "\(userPosts.reduce(0) { $0 + $1.likedCount + $1.favoriteCount })", title: "获赞与收藏")
                             }
-                            .buttonStyle(.plain)
+
+                            Text(user.bio == "点击这里，填写简介" ? "这个人还没有填写简介" : user.bio)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineSpacing(6)
+                                .lineLimit(4)
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    store.toggleFollow(userID: user.id)
+                                } label: {
+                                    Text(user.id == store.currentUserID ? "自己的主页" : (store.followedUserIDs.contains(user.id) ? "已关注" : "关注"))
+                                        .font(.system(size: 20, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 15)
+                                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(user.id == store.currentUserID)
+
+                                Button {
+                                    openChat(with: user)
+                                } label: {
+                                    Text("发私信")
+                                        .font(.system(size: 20, weight: .black))
+                                        .foregroundStyle(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 15)
+                                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(user.id == store.currentUserID)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
+                        .frame(width: width, height: headerHeight, alignment: .top)
+                    }
+
+                    VStack(spacing: 0) {
+                        HStack(spacing: 0) {
+                            ForEach(tabs, id: \.self) { tab in
+                                Button {
+                                    withAnimation(AppMotion.quick) {
+                                        selectedTab = tab
+                                    }
+                                } label: {
+                                    VStack(spacing: 8) {
+                                        Text(tab)
+                                            .font(.system(size: 22, weight: selectedTab == tab ? .black : .bold))
+                                            .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
+                                        Capsule()
+                                            .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                            .frame(width: 48, height: 4)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 18)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        if selectedTab == "拼团合集" {
+                            ProfileCollectionsPanel(ownerID: userID, canManage: userID == store.currentUserID)
+                                .padding(.bottom, 24)
+                        } else if userPosts.isEmpty {
+                            ProfileEmptyNotesView()
+                                .frame(minHeight: 360)
+                        } else {
+                            WaterfallGrid(posts: userPosts)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 28)
                         }
                     }
+                    .background(Theme.background)
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
+                    .offset(y: -10)
                 }
-                .padding(16)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 16)
-
-                ProfileCollectionsPanel(ownerID: userID, canManage: userID == store.currentUserID)
-                    .padding(.bottom, 4)
-
-                Text("正在进行的团购")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 16)
-                WaterfallGrid(posts: userPosts)
-                    .padding(.horizontal, 12)
+                .padding(.bottom, 18)
             }
-            .padding(.top, 16)
-            .padding(.bottom, 28)
+            .background(Theme.background.ignoresSafeArea())
         }
-        .background(Theme.background.ignoresSafeArea())
-        .navigationTitle(user.nickname)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
         .navigationDestination(isPresented: $isChatPresented) {
             if let chatThreadID {
                 ChatView(threadID: chatThreadID)
             }
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    guard value.translation.width > 86,
+                          abs(value.translation.height) < 72 else { return }
+                    dismiss()
+                }
+        )
     }
 
     private func openChat(with user: User) {
