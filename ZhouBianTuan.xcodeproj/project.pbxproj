@@ -8,23 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
-		7D4E6E1B2C8A4A5100A10001 /* Assets.xcassets/merch_album.imageset/merch_album.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E232C8A4A5100A10001 /* Assets.xcassets/merch_album.imageset/merch_album.png */; };
-		7D4E6E1C2C8A4A5100A10001 /* Assets.xcassets/merch_badges.imageset/merch_badges.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E242C8A4A5100A10001 /* Assets.xcassets/merch_badges.imageset/merch_badges.png */; };
-		7D4E6E1D2C8A4A5100A10001 /* Assets.xcassets/merch_concert.imageset/merch_concert.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E252C8A4A5100A10001 /* Assets.xcassets/merch_concert.imageset/merch_concert.png */; };
-		7D4E6E1E2C8A4A5100A10001 /* Assets.xcassets/merch_jewelry.imageset/merch_jewelry.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E262C8A4A5100A10001 /* Assets.xcassets/merch_jewelry.imageset/merch_jewelry.png */; };
-		7D4E6E1F2C8A4A5100A10001 /* Assets.xcassets/merch_magazine.imageset/merch_magazine.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E272C8A4A5100A10001 /* Assets.xcassets/merch_magazine.imageset/merch_magazine.png */; };
-		7D4E6E202C8A4A5100A10001 /* Assets.xcassets/merch_photocards.imageset/merch_photocards.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E282C8A4A5100A10001 /* Assets.xcassets/merch_photocards.imageset/merch_photocards.png */; };
-		7D4E6E212C8A4A5100A10001 /* Assets.xcassets/merch_plush.imageset/merch_plush.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E292C8A4A5100A10001 /* Assets.xcassets/merch_plush.imageset/merch_plush.png */; };
-		7D4E6E222C8A4A5100A10001 /* Assets.xcassets/merch_standees.imageset/merch_standees.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E2A2C8A4A5100A10001 /* Assets.xcassets/merch_standees.imageset/merch_standees.png */; };
-		7D4E6E302C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3A2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@2x.png */; };
-		7D4E6E312C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3B2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@3x.png */; };
-		7D4E6E322C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3C2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@2x.png */; };
-		7D4E6E332C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3D2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@3x.png */; };
-		7D4E6E342C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3E2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@2x.png */; };
-		7D4E6E352C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E3F2C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@3x.png */; };
-		7D4E6E362C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E402C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png */; };
-		7D4E6E372C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E412C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
+		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -181,22 +166,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */,
-				7D4E6E302C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@2x.png in Resources */,
-				7D4E6E312C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-20@3x.png in Resources */,
-				7D4E6E322C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@2x.png in Resources */,
-				7D4E6E332C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-29@3x.png in Resources */,
-				7D4E6E342C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@2x.png in Resources */,
-				7D4E6E352C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-40@3x.png in Resources */,
-				7D4E6E362C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png in Resources */,
-				7D4E6E372C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png in Resources */,
-				7D4E6E1B2C8A4A5100A10001 /* Assets.xcassets/merch_album.imageset/merch_album.png in Resources */,
-				7D4E6E1C2C8A4A5100A10001 /* Assets.xcassets/merch_badges.imageset/merch_badges.png in Resources */,
-				7D4E6E1D2C8A4A5100A10001 /* Assets.xcassets/merch_concert.imageset/merch_concert.png in Resources */,
-				7D4E6E1E2C8A4A5100A10001 /* Assets.xcassets/merch_jewelry.imageset/merch_jewelry.png in Resources */,
-				7D4E6E1F2C8A4A5100A10001 /* Assets.xcassets/merch_magazine.imageset/merch_magazine.png in Resources */,
-				7D4E6E202C8A4A5100A10001 /* Assets.xcassets/merch_photocards.imageset/merch_photocards.png in Resources */,
-				7D4E6E212C8A4A5100A10001 /* Assets.xcassets/merch_plush.imageset/merch_plush.png in Resources */,
-				7D4E6E222C8A4A5100A10001 /* Assets.xcassets/merch_standees.imageset/merch_standees.png in Resources */,
+				7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -340,6 +310,8 @@
 		7D4E6E192C8A4A5100A10001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -364,6 +336,8 @@
 		7D4E6E1A2C8A4A5100A10001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
