@@ -12,6 +12,23 @@
 		7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E522C8A4A5100A10001 /* Utilities.swift */; };
 		7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E532C8A4A5100A10001 /* BackendClient.swift */; };
 		7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */; };
+		7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */; };
+		7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E612C8A4A5100A10001 /* AdminViews.swift */; };
+		7D4E6E802C8A4A5100A10001 /* HomeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E702C8A4A5100A10001 /* HomeViews.swift */; };
+		7D4E6E812C8A4A5100A10001 /* LegalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E712C8A4A5100A10001 /* LegalViews.swift */; };
+		7D4E6E822C8A4A5100A10001 /* AuthViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E722C8A4A5100A10001 /* AuthViews.swift */; };
+		7D4E6E832C8A4A5100A10001 /* MarketViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E732C8A4A5100A10001 /* MarketViews.swift */; };
+		7D4E6E842C8A4A5100A10001 /* SearchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E742C8A4A5100A10001 /* SearchViews.swift */; };
+		7D4E6E852C8A4A5100A10001 /* PostDetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E752C8A4A5100A10001 /* PostDetailViews.swift */; };
+		7D4E6E862C8A4A5100A10001 /* CreatePostViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E762C8A4A5100A10001 /* CreatePostViews.swift */; };
+		7D4E6E872C8A4A5100A10001 /* MessageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E772C8A4A5100A10001 /* MessageViews.swift */; };
+		7D4E6E882C8A4A5100A10001 /* ProfileViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E782C8A4A5100A10001 /* ProfileViews.swift */; };
+		7D4E6E892C8A4A5100A10001 /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E792C8A4A5100A10001 /* SettingsViews.swift */; };
+		7D4E6EA02C8A4A5100A10001 /* MockAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E902C8A4A5100A10001 /* MockAppStore.swift */; };
+		7D4E6EA12C8A4A5100A10001 /* ModerationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */; };
+		7D4E6EA22C8A4A5100A10001 /* ModerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E922C8A4A5100A10001 /* ModerationService.swift */; };
+		7D4E6EA32C8A4A5100A10001 /* MockModerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */; };
+		7D4E6EA42C8A4A5100A10001 /* AdminModerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */; };
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
 		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
@@ -23,6 +40,23 @@
 		7D4E6E522C8A4A5100A10001 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		7D4E6E532C8A4A5100A10001 /* BackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
 		7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
+		7D4E6E612C8A4A5100A10001 /* AdminViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminViews.swift; sourceTree = "<group>"; };
+		7D4E6E702C8A4A5100A10001 /* HomeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViews.swift; sourceTree = "<group>"; };
+		7D4E6E712C8A4A5100A10001 /* LegalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalViews.swift; sourceTree = "<group>"; };
+		7D4E6E722C8A4A5100A10001 /* AuthViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViews.swift; sourceTree = "<group>"; };
+		7D4E6E732C8A4A5100A10001 /* MarketViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketViews.swift; sourceTree = "<group>"; };
+		7D4E6E742C8A4A5100A10001 /* SearchViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViews.swift; sourceTree = "<group>"; };
+		7D4E6E752C8A4A5100A10001 /* PostDetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostDetailViews.swift; sourceTree = "<group>"; };
+		7D4E6E762C8A4A5100A10001 /* CreatePostViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreatePostViews.swift; sourceTree = "<group>"; };
+		7D4E6E772C8A4A5100A10001 /* MessageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageViews.swift; sourceTree = "<group>"; };
+		7D4E6E782C8A4A5100A10001 /* ProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViews.swift; sourceTree = "<group>"; };
+		7D4E6E792C8A4A5100A10001 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
+		7D4E6E902C8A4A5100A10001 /* MockAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAppStore.swift; sourceTree = "<group>"; };
+		7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationModels.swift; sourceTree = "<group>"; };
+		7D4E6E922C8A4A5100A10001 /* ModerationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationService.swift; sourceTree = "<group>"; };
+		7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockModerationService.swift; sourceTree = "<group>"; };
+		7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminModerationView.swift; sourceTree = "<group>"; };
 		7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZhouBianTuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhouBianTuanApp.swift; sourceTree = "<group>"; };
 		7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -82,6 +116,23 @@
 				7D4E6E522C8A4A5100A10001 /* Utilities.swift */,
 				7D4E6E532C8A4A5100A10001 /* BackendClient.swift */,
 				7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */,
+				7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */,
+				7D4E6E612C8A4A5100A10001 /* AdminViews.swift */,
+				7D4E6E702C8A4A5100A10001 /* HomeViews.swift */,
+				7D4E6E712C8A4A5100A10001 /* LegalViews.swift */,
+				7D4E6E722C8A4A5100A10001 /* AuthViews.swift */,
+				7D4E6E732C8A4A5100A10001 /* MarketViews.swift */,
+				7D4E6E742C8A4A5100A10001 /* SearchViews.swift */,
+				7D4E6E752C8A4A5100A10001 /* PostDetailViews.swift */,
+				7D4E6E762C8A4A5100A10001 /* CreatePostViews.swift */,
+				7D4E6E772C8A4A5100A10001 /* MessageViews.swift */,
+				7D4E6E782C8A4A5100A10001 /* ProfileViews.swift */,
+				7D4E6E792C8A4A5100A10001 /* SettingsViews.swift */,
+				7D4E6E902C8A4A5100A10001 /* MockAppStore.swift */,
+				7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */,
+				7D4E6E922C8A4A5100A10001 /* ModerationService.swift */,
+				7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */,
+				7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */,
 				7D4E6E382C8A4A5100A10001 /* Info.plist */,
 				7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */,
 				7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */,
@@ -197,6 +248,23 @@
 				7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */,
 				7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */,
 				7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */,
+				7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */,
+				7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */,
+				7D4E6E802C8A4A5100A10001 /* HomeViews.swift in Sources */,
+				7D4E6E812C8A4A5100A10001 /* LegalViews.swift in Sources */,
+				7D4E6E822C8A4A5100A10001 /* AuthViews.swift in Sources */,
+				7D4E6E832C8A4A5100A10001 /* MarketViews.swift in Sources */,
+				7D4E6E842C8A4A5100A10001 /* SearchViews.swift in Sources */,
+				7D4E6E852C8A4A5100A10001 /* PostDetailViews.swift in Sources */,
+				7D4E6E862C8A4A5100A10001 /* CreatePostViews.swift in Sources */,
+				7D4E6E872C8A4A5100A10001 /* MessageViews.swift in Sources */,
+				7D4E6E882C8A4A5100A10001 /* ProfileViews.swift in Sources */,
+				7D4E6E892C8A4A5100A10001 /* SettingsViews.swift in Sources */,
+				7D4E6EA02C8A4A5100A10001 /* MockAppStore.swift in Sources */,
+				7D4E6EA12C8A4A5100A10001 /* ModerationModels.swift in Sources */,
+				7D4E6EA22C8A4A5100A10001 /* ModerationService.swift in Sources */,
+				7D4E6EA32C8A4A5100A10001 /* MockModerationService.swift in Sources */,
+				7D4E6EA42C8A4A5100A10001 /* AdminModerationView.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
