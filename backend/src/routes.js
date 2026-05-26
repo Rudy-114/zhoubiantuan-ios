@@ -1,4 +1,5 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import express from "express";
 import { hashPassword, requireAuth, signToken, verifyPassword } from "./auth.js";
 import { loadBootstrap } from "./bootstrap.js";
@@ -6,7 +7,7 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
 import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
-import { createUploadTarget } from "./oss.js";
+import { createUploadTarget, signedReadUrl } from "./oss.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
 
@@ -28,6 +29,26 @@ export function createRouter() {
   router.get("/health", async (_req, res) => {
     await query("SELECT 1");
     res.json({ ok: true });
+  });
+
+  router.get("/assets/*", async (req, res, next) => {
+    try {
+      const objectKey = String(req.params[0] || "");
+      if (!/^(post|avatar|background)\//.test(objectKey) || objectKey.includes("..")) {
+        return res.status(404).json({ error: "图片不存在" });
+      }
+
+      const upstream = await fetch(signedReadUrl(objectKey, 60));
+      if (!upstream.ok || !upstream.body) {
+        return res.status(upstream.status || 404).json({ error: "图片不存在" });
+      }
+
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=300");
+      Readable.fromWeb(upstream.body).on("error", next).pipe(res);
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/auth/email/send-code", emailCodeLimiter, async (req, res, next) => {

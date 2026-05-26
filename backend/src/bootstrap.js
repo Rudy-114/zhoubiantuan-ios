@@ -2,7 +2,7 @@ import { collectionToClient, commentToClient, postToClient, reportToClient, user
 import { query } from "./db.js";
 
 export async function loadBootstrap(userId) {
-  const [usersResult, postsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult] = await Promise.all([
+  const [usersResult, postsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult, followsResult] = await Promise.all([
     query(`
       SELECT u.*,
         (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
@@ -34,8 +34,15 @@ export async function loadBootstrap(userId) {
     query("SELECT * FROM reports ORDER BY created_at DESC LIMIT 100"),
     query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
     query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
-    query("SELECT following_id FROM follows WHERE follower_id = $1", [userId])
+    query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
+    query("SELECT follower_id, following_id FROM follows")
   ]);
+
+  const followingByUserID = {};
+  for (const row of followsResult.rows) {
+    if (!followingByUserID[row.follower_id]) followingByUserID[row.follower_id] = [];
+    followingByUserID[row.follower_id].push(row.following_id);
+  }
 
   return {
     users: usersResult.rows.map((row) => userToClient(row, row)),
@@ -45,6 +52,7 @@ export async function loadBootstrap(userId) {
     reports: reportsResult.rows.map(reportToClient),
     likedPostIDs: likedResult.rows.map((row) => row.post_id),
     favoritePostIDs: favoriteResult.rows.map((row) => row.post_id),
-    followedUserIDs: followedResult.rows.map((row) => row.following_id)
+    followedUserIDs: followedResult.rows.map((row) => row.following_id),
+    followingByUserID
   };
 }

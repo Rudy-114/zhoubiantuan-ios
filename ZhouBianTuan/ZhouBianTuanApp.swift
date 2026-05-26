@@ -859,6 +859,7 @@ struct BackendPayload: Decodable {
     var likedPostIDs: [String]?
     var favoritePostIDs: [String]?
     var followedUserIDs: [String]?
+    var followingByUserID: [String: [String]]?
 }
 
 struct BackendUser: Decodable {
@@ -1432,9 +1433,8 @@ final class MockAppStore: ObservableObject {
     private static let browsingHistoryDefaultsKeyPrefix = "zhoubiantuan.browsingHistory"
     private static let messageThreadsDefaultsKey = "zhoubiantuan.messageThreads"
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
-    private static let defaultSearchHistory = ["Bucky", "Steve Rogers", "吧唧拼谷", "巡演小卡", "冬兵生日团", "Loki", "亚克力立牌", "自印团补款", "Tony Stark", "主角团角色位"]
-    private static let demoLikedPostIDs: Set<String> = ["p-card", "p-plush"]
-    private static let demoFavoritePostIDs: Set<String> = ["p-card", "p-album"]
+    private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
+    private static let currentLocalDataResetVersion = 1
     private let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
@@ -1472,9 +1472,53 @@ final class MockAppStore: ObservableObject {
         "\(browsingHistoryDefaultsKeyPrefix).\(userID)"
     }
 
+    private static var blankUser: User {
+        User(
+            id: demoUserID,
+            nickname: "未登录用户",
+            bio: "点击这里，填写简介",
+            followingCount: 0,
+            followersCount: 0,
+            postCount: 0,
+            isRestricted: false,
+            canShowContact: true,
+            avatarSymbol: "周",
+            avatarTint: .rose,
+            redBookID: "",
+            gender: "未设置",
+            birthday: "选择生日",
+            region: "未设置",
+            backgroundImageName: "merch_magazine",
+            phoneNumber: ""
+        )
+    }
+
     private static var messageThreadsStorageURL: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("zhoubiantuan-message-threads.json")
+    }
+
+    private static func resetLocalDataForEmptyBetaIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.integer(forKey: localDataResetDefaultsKey) < currentLocalDataResetVersion else { return }
+
+        defaults.removeObject(forKey: loginDefaultsKey)
+        defaults.removeObject(forKey: backendTokenDefaultsKey)
+        defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
+        defaults.removeObject(forKey: searchHistoryDefaultsKey)
+        defaults.removeObject(forKey: messageThreadsDefaultsKey)
+
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(browsingHistoryDefaultsKeyPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+
+        KeychainStore.delete(forKey: backendTokenDefaultsKey)
+        if let storageURL = messageThreadsStorageURL {
+            try? FileManager.default.removeItem(at: storageURL)
+        }
+
+        defaults.set(false, forKey: loginDefaultsKey)
+        defaults.set(currentLocalDataResetVersion, forKey: localDataResetDefaultsKey)
     }
 
     private func persistThreads() {
@@ -1502,6 +1546,7 @@ final class MockAppStore: ObservableObject {
     }
 
     init() {
+        Self.resetLocalDataForEmptyBetaIfNeeded()
         Self.migrateBackendTokenToKeychain()
         cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ?? UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
         let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
@@ -1509,80 +1554,22 @@ final class MockAppStore: ObservableObject {
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
         isBackendEnabled = UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) as? Bool ?? true
-        let now = Date()
-        let myCollectionID = "col-my-winter"
-        let winterCollectionID = "col-winter-bucky"
-        let tourCollectionID = "col-tour-cards"
-        let berryCollectionID = "col-berry-doll"
-        let blackCollectionID = "col-black-jewelry"
-        let moonMagazineCollectionID = "col-moon-magazine"
-        users = [
-            User(id: "u-me", nickname: "潘潘潘", bio: "点击这里，填写简介", followingCount: 2, followersCount: 1, postCount: 1, isRestricted: false, canShowContact: true, avatarSymbol: "潘", avatarTint: .amber, redBookID: "63844111650", gender: "未设置", birthday: "选择生日", region: "北京", backgroundImageName: "merch_magazine", phoneNumber: "+861391237122", password: "123456"),
-            User(id: "u-black", nickname: "黑贝果", bio: "原创设计小众饰品，开团前都会补细节说明。", followingCount: 88, followersCount: 12800, postCount: 36, isRestricted: false, canShowContact: true, avatarSymbol: "黑", avatarTint: .rose, redBookID: "BlackBagel2026", region: "上海", backgroundImageName: "merch_jewelry"),
-            User(id: "u-moon", nickname: "月光补货站", bio: "演唱会周边、立牌、吧唧团购整理。", followingCount: 54, followersCount: 5320, postCount: 22, isRestricted: false, canShowContact: true, avatarSymbol: "月", avatarTint: .violet, redBookID: "MoonPin0909", region: "广州", backgroundImageName: "merch_badges"),
-            User(id: "u-berry", nickname: "莓果小铺", bio: "娃娃衣和棉花娃配件长期团。", followingCount: 91, followersCount: 2401, postCount: 18, isRestricted: false, canShowContact: true, avatarSymbol: "莓", avatarTint: .amber, redBookID: "BerryDollClub", region: "杭州", backgroundImageName: "merch_plush"),
-            User(id: "u-echo", nickname: "Echo周边记录", bio: "专辑、杂志、明信片成团信息搬运。", followingCount: 37, followersCount: 901, postCount: 11, isRestricted: false, canShowContact: true, avatarSymbol: "E", avatarTint: .blue, redBookID: "EchoGB2026", region: "成都", backgroundImageName: "merch_album")
-        ]
-        let initialPosts = [
-            GroupBuyPost(id: "p-card", title: "巡演限定小卡套组二开，余量 30 份", imageNames: ["merch_photocards", "merch_magazine"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["小卡", "预售", "自印团"], fandomTags: ["欧美巡演", "收藏卡"], price: "¥42/套", deposit: "¥15 定金", deadline: Self.date(days: 1, hour: 22), condition: "满 60 套开团，未成团原路退定", isFormed: true, description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", externalLink: "https://forms.example/cards", createdAt: now.addingTimeInterval(-3600 * 2), likedCount: 9618, favoriteCount: 1280, commentCount: 86, reportCount: 0, status: .active, imageAspect: 1.12),
-            GroupBuyPost(id: "p-badge", title: "2026冬兵生日团吧唧拼谷，今晚截团", imageNames: ["merch_badges", "merch_jewelry"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["吧唧", "现货", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes"], price: "¥35/吧唧", deposit: "全款", deadline: Self.date(days: 0, hour: 23), condition: "主角团角色位优先成团，余量实时更新", isFormed: true, description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 5), likedCount: 880, favoriteCount: 282, commentCount: 24, reportCount: 1, status: .active, imageAspect: 0.86, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)]),
-            GroupBuyPost(id: "p-stand", title: "2026冬兵生日团亚克力立牌角色位", imageNames: ["merch_standees", "merch_album"], authorID: "u-moon", groupType: .splitGoods, collectionID: winterCollectionID, categoryTags: ["立牌", "预售", "拼谷"], fandomTags: ["Bucky Barnes", "Sam Wilson"], price: "¥68/立牌", deposit: "¥20 定金", deadline: Self.date(days: 3, hour: 20), condition: "满 120 套开模，角色位未满可继续认领", isFormed: true, description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "微信群复制微信后拉群", externalLink: "https://forms.example/standee", createdAt: now.addingTimeInterval(-3600 * 20), likedCount: 2301, favoriteCount: 911, commentCount: 51, reportCount: 0, status: .active, imageAspect: 1.24, pingguAveragePrice: "均价68元/立牌", pingguNote: "Bucky 和 Sam 位还可拼", unsoldRoles: [UnsoldRole(name: "Bucky Barnes", quantity: 2), UnsoldRole(name: "Sam Wilson", quantity: 1), UnsoldRole(name: "Natasha Romanoff", quantity: 2)]),
-            GroupBuyPost(id: "p-plush", title: "棉花娃睡衣和小配件自印团，粉色猫耳款", imageNames: ["merch_plush", "merch_concert"], authorID: "u-berry", collectionID: berryCollectionID, categoryTags: ["娃娃", "饰品", "自印团"], fandomTags: ["棉花娃", "娃衣"], price: "¥35 起", deposit: "¥10 定金", deadline: Self.date(days: 5, hour: 21), condition: "满 50 件成团，可混款", isFormed: false, description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 8), likedCount: 1490, favoriteCount: 507, commentCount: 39, reportCount: 0, status: .active, imageAspect: 1.06),
-            GroupBuyPost(id: "p-album", title: "巡演黑胶专辑 + 明信片补款提醒，明晚截止", imageNames: ["merch_album", "merch_photocards"], authorID: "u-echo", collectionID: tourCollectionID, categoryTags: ["专辑", "明信片", "补款"], fandomTags: ["黑胶", "欧美音乐"], price: "¥118/套", deposit: "已收 ¥30", deadline: Self.date(days: 1, hour: 20), condition: "已成团，补款后统一打包", isFormed: true, description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。", wechat: "EchoGB2026", qq: "82190477", groupInfo: "原补款群内公告", externalLink: "https://forms.example/album", createdAt: now.addingTimeInterval(-3600 * 30), likedCount: 620, favoriteCount: 308, commentCount: 17, reportCount: 0, status: .active, imageAspect: 0.98),
-            GroupBuyPost(id: "p-magazine", title: "杂志切页 + 拍立得风卡册自印团", imageNames: ["merch_magazine", "merch_badges"], authorID: "u-moon", collectionID: moonMagazineCollectionID, categoryTags: ["杂志", "小卡", "自印团"], fandomTags: ["切页", "卡册"], price: "¥26 起", deposit: "全款", deadline: Self.date(days: 2, hour: 18), condition: "满 30 本拆页，当前 21 本", isFormed: false, description: "杂志切页和拍立得风卡册拼团，可选单页/整套。开团后按编号排单。", wechat: "MoonPin0909", qq: "190443821", groupInfo: "QQ群 204 118 776", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 6), likedCount: 402, favoriteCount: 122, commentCount: 11, reportCount: 2, status: .active, imageAspect: 1.18),
-            GroupBuyPost(id: "p-jewelry", title: "银色星心挂件拼谷，Loki 位有余量", imageNames: ["merch_jewelry", "merch_badges"], authorID: "u-black", groupType: .splitGoods, collectionID: blackCollectionID, categoryTags: ["饰品", "孤品", "拼谷"], fandomTags: ["Loki", "Mobius"], price: "¥39-79", deposit: "全款", deadline: Self.date(days: 4, hour: 22), condition: "现货余量 18 件，拍完即止", isFormed: true, description: "星心元素挂件、项链、手链，适合挂包或日常佩戴。孤品数量少，不支持长时间占位。", wechat: "BlackBagel2026", qq: "60092118", groupInfo: "微信群，复制微信备注：星心", externalLink: "", createdAt: now.addingTimeInterval(-3600 * 12), likedCount: 734, favoriteCount: 241, commentCount: 29, reportCount: 0, status: .active, imageAspect: 0.92, pingguAveragePrice: "均价49元/挂件", pingguNote: "Loki 位还有少量可拼", unsoldRoles: [UnsoldRole(name: "Loki", quantity: 4), UnsoldRole(name: "Mobius", quantity: 1)]),
-            GroupBuyPost(id: "p-concert", title: "演唱会痛包挂件 + 应援棒收纳套", imageNames: ["merch_concert", "merch_standees"], authorID: "u-berry", collectionID: berryCollectionID, categoryTags: ["演唱会周边", "痛包", "自印团"], fandomTags: ["应援", "收纳"], price: "¥58/套", deposit: "¥20 定金", deadline: Self.date(days: 6, hour: 20), condition: "满 100 套生产，当前 73 套", isFormed: false, description: "黑粉色痛包挂件、证件卡套、应援棒收纳套组合。适合巡演现场携带。", wechat: "BerryDollClub", qq: "448102930", groupInfo: "QQ群 518 221 974", externalLink: "https://forms.example/concertbag", createdAt: now.addingTimeInterval(-3600 * 3), likedCount: 1188, favoriteCount: 609, commentCount: 41, reportCount: 0, status: .active, imageAspect: 1.08),
-            GroupBuyPost(id: "p-my-pinggu", title: "2026冬兵生日团角色余量更新", imageNames: ["merch_badges", "merch_standees"], authorID: "u-me", groupType: .splitGoods, collectionID: myCollectionID, categoryTags: ["吧唧", "立牌", "拼谷"], fandomTags: ["Steve Rogers", "Bucky Barnes", "Tony Stark"], price: "¥35-68", deposit: "全款/定金", deadline: Self.date(days: 4, hour: 22), condition: "角色位有余量即可认领，售罄后从列表隐藏", isFormed: true, description: "这里是团长本人可维护的拼谷演示帖，可以在详情页实时编辑未售角色和数量。", wechat: "PanPanGroup", qq: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", externalLink: "", createdAt: now.addingTimeInterval(-1800), likedCount: 126, favoriteCount: 48, commentCount: 3, reportCount: 0, status: .active, imageAspect: 1.04, pingguAveragePrice: "均价35元/吧唧", pingguNote: "目前还缺主角团角色位", unsoldRoles: [UnsoldRole(name: "Steve Rogers", quantity: 2), UnsoldRole(name: "Bucky Barnes", quantity: 3), UnsoldRole(name: "Tony Stark", quantity: 5)])
-        ]
-        posts = initialPosts
-        collections = [
-            GroupCollection(id: myCollectionID, ownerID: "u-me", name: "2026冬兵生日团", contactWechat: "PanPanGroup", contactQQ: "638441116", groupInfo: "QQ群 638 441 116，备注：冬兵生日团", deadline: Self.date(days: 4, hour: 22), defaultNote: "同一拼谷团内的宣传、进度、角色余量更新共用联系方式和截团时间。", postIDs: ["p-my-pinggu"], createdAt: now.addingTimeInterval(-3600 * 3)),
-            GroupCollection(id: winterCollectionID, ownerID: "u-moon", name: "2026冬兵生日团", contactWechat: "MoonPin0909", contactQQ: "190443821", groupInfo: "微信群复制微信后拉群，备注：冬兵生日团", deadline: Self.date(days: 3, hour: 23), defaultNote: "同一生日团内宣传、进度和余量更新共用联系方式与截团时间。", postIDs: ["p-badge", "p-stand"], createdAt: now.addingTimeInterval(-3600 * 26)),
-            GroupCollection(id: tourCollectionID, ownerID: "u-echo", name: "巡演补款小卡团", contactWechat: "EchoGB2026", contactQQ: "82190477", groupInfo: "QQ群 743 219 008，答案：小卡", deadline: Self.date(days: 1, hour: 22), defaultNote: "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。", postIDs: ["p-card", "p-album"], createdAt: now.addingTimeInterval(-3600 * 42)),
-            GroupCollection(id: berryCollectionID, ownerID: "u-berry", name: "棉花娃衣配件团", contactWechat: "BerryDollClub", contactQQ: "448102930", groupInfo: "QQ群 518 221 974", deadline: Self.date(days: 6, hour: 20), defaultNote: "棉花娃娃衣、痛包配件和收纳周边统一更新余量与截团时间。", postIDs: ["p-plush", "p-concert"], createdAt: now.addingTimeInterval(-3600 * 18)),
-            GroupCollection(id: blackCollectionID, ownerID: "u-black", name: "星心饰品拼谷团", contactWechat: "BlackBagel2026", contactQQ: "60092118", groupInfo: "微信群，复制微信备注：星心", deadline: Self.date(days: 4, hour: 22), defaultNote: "小众饰品和孤品拼谷信息统一放在这里，余量按帖子更新。", postIDs: ["p-jewelry"], createdAt: now.addingTimeInterval(-3600 * 16)),
-            GroupCollection(id: moonMagazineCollectionID, ownerID: "u-moon", name: "杂志切页自印团", contactWechat: "MoonPin0909", contactQQ: "190443821", groupInfo: "QQ群 204 118 776", deadline: Self.date(days: 2, hour: 18), defaultNote: "杂志切页、卡册和相关自印内容统一登记，进度与补款后续在合集内更新。", postIDs: ["p-magazine"], createdAt: now.addingTimeInterval(-3600 * 10))
-        ]
-        reviews = [
-            ReviewPost(id: "r-1", imageName: "merch_badges", body: "上一团吧唧到货，电镀质感比预期好。", groupBuyPostID: "p-badge", publisherID: "u-moon", authorID: "u-me", likedCount: 88, commentCount: 9, createdAt: now.addingTimeInterval(-86400 * 3))
-        ]
-        comments = [
-            Comment(id: "c-1", body: "还能上车吗？想要两套小卡。", authorID: "u-me", postID: "p-card", replyToID: nil, createdAt: now.addingTimeInterval(-1400), status: .active),
-            Comment(id: "c-2", body: "可以，表单里备注昵称就行，今晚统一拉群。", authorID: "u-echo", postID: "p-card", replyToID: "c-1", createdAt: now.addingTimeInterval(-1100), status: .active),
-            Comment(id: "c-3", body: "立牌会有单人拆卖吗？", authorID: "u-berry", postID: "p-stand", replyToID: nil, createdAt: now.addingTimeInterval(-2800), status: .active),
-            Comment(id: "c-4", body: "蹲补款提醒，怕错过。", authorID: "u-me", postID: "p-album", replyToID: nil, createdAt: now.addingTimeInterval(-5200), status: .active)
-        ]
-        threads = [
-            MessageThread(id: "t-card", buyerUserID: "u-me", publisherUserID: "u-echo", relatedPostID: "p-card", messages: [
-                DirectMessage(id: "m-1", senderID: "u-me", body: "小卡套组还能上车吗？", createdAt: now.addingTimeInterval(-3600)),
-                DirectMessage(id: "m-2", senderID: "u-echo", body: "可以，复制微信备注“巡演小卡”我拉你进群。", createdAt: now.addingTimeInterval(-3200)),
-                DirectMessage(id: "m-share-card", senderID: "u-me", body: "分享了制品：巡演限定小卡套组二开", createdAt: now.addingTimeInterval(-2600), sharedPostID: "p-card")
-            ], unreadCount: 1, updatedAt: now.addingTimeInterval(-3200)),
-            MessageThread(id: "t-plush", buyerUserID: "u-me", publisherUserID: "u-berry", relatedPostID: "p-plush", messages: [
-                DirectMessage(id: "m-3", senderID: "u-berry", body: "15cm 娃衣还有粉色和灰色。", createdAt: now.addingTimeInterval(-9200))
-            ], unreadCount: 0, updatedAt: now.addingTimeInterval(-9200))
-        ]
-        reports = [
-            Report(id: "rp-1", target: .post("p-badge"), reason: "无效联系方式", detail: "用户反馈微信搜索不到，需团长确认。", reporterID: "u-me", status: .pending, adminResult: nil, handledAt: nil),
-            Report(id: "rp-2", target: .post("p-magazine"), reason: "过期未处理", detail: "评论里有人说截团时间不一致。", reporterID: "u-black", status: .pending, adminResult: nil, handledAt: nil)
-        ]
-        reminders = [
-            Reminder(id: "re-card", userID: "u-me", postID: "p-card", deadline: initialPosts[0].deadline, remindAt: initialPosts[0].deadline.addingTimeInterval(-3600 * 3), hasReminded: false),
-            Reminder(id: "re-album", userID: "u-me", postID: "p-album", deadline: initialPosts[4].deadline, remindAt: initialPosts[4].deadline.addingTimeInterval(-3600 * 6), hasReminded: true)
-        ]
-        let initialFollowedUserIDs: Set<String> = ["u-echo", "u-black"]
-        likedPostIDs = startsLoggedIn ? Self.demoLikedPostIDs : []
-        favoritePostIDs = startsLoggedIn ? Self.demoFavoritePostIDs : []
-        followedUserIDs = startsLoggedIn ? initialFollowedUserIDs : []
-        followingIDsByUserID = [
-            "u-me": initialFollowedUserIDs,
-            "u-berry": ["u-me"],
-            "u-echo": ["u-moon", "u-me"],
-            "u-black": ["u-echo", "u-me"],
-            "u-moon": ["u-black"]
-        ]
-        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: Self.demoUserID)) ?? []
-        searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? Self.defaultSearchHistory
+        let blankUser = Self.blankUser
+        users = [blankUser]
+        currentUserID = blankUser.id
+        posts = []
+        collections = []
+        reviews = []
+        comments = []
+        threads = []
+        reports = []
+        reminders = []
+        likedPostIDs = []
+        favoritePostIDs = []
+        followedUserIDs = []
+        followingIDsByUserID = [blankUser.id: []]
+        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
+        searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
         restorePersistedThreads()
         if isBackendEnabled {
             if backendToken == nil {
@@ -1594,7 +1581,7 @@ final class MockAppStore: ObservableObject {
     }
 
     var currentUser: User {
-        users.first(where: { $0.id == currentUserID })!
+        users.first(where: { $0.id == currentUserID }) ?? users.first ?? Self.blankUser
     }
 
     func loadBackendIfNeeded() async {
@@ -1625,9 +1612,32 @@ final class MockAppStore: ObservableObject {
                 showToast("云端数据已同步")
             }
         } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSession(silent: silent)
+                return
+            }
             if !silent {
                 showToast(error.localizedDescription)
             }
+        }
+    }
+
+    private func isAuthExpiredError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "AliyunBackendClient" && [401, 403].contains(nsError.code)
+    }
+
+    private func expireCloudSession(silent: Bool = false) {
+        backendToken = nil
+        isLoggedIn = false
+        isAuthPromptPresented = !silent
+        likedPostIDs.removeAll()
+        favoritePostIDs.removeAll()
+        followedUserIDs.removeAll()
+        followingIDsByUserID[currentUserID] = []
+        authSessionVersion = UUID()
+        if !silent {
+            showToast("登录已失效，请重新注册或登录")
         }
     }
 
@@ -1661,6 +1671,9 @@ final class MockAppStore: ObservableObject {
         if let followedUserIDs = payload.followedUserIDs {
             self.followedUserIDs = Set(followedUserIDs)
         }
+        if let followingByUserID = payload.followingByUserID {
+            self.followingIDsByUserID = followingByUserID.mapValues { Set($0) }
+        }
         if let currentUser = payload.currentUser?.localUser() {
             if !users.contains(where: { $0.id == currentUser.id }) {
                 users.append(currentUser)
@@ -1669,7 +1682,7 @@ final class MockAppStore: ObservableObject {
             browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: currentUser.id)) ?? []
         }
         followingIDsByUserID[currentUserID] = followedUserIDs
-        isLoggedIn = payload.currentUser != nil || backendToken != nil
+        isLoggedIn = payload.currentUser != nil
         isAuthPromptPresented = false
         if previousUserID != currentUserID || previousLoggedIn != isLoggedIn {
             authSessionVersion = UUID()
@@ -1967,7 +1980,7 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
             }
             showToast("已取消关注")
-            runBackendMutation { token in
+            runBackendMutation(refreshAfterSuccess: true) { token in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
             }
         } else {
@@ -1980,7 +1993,7 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount += 1
             }
             showToast("已关注团长")
-            runBackendMutation { token in
+            runBackendMutation(refreshAfterSuccess: true) { token in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
             }
         }
@@ -2142,9 +2155,20 @@ final class MockAppStore: ObservableObject {
         isLoggedIn = false
         isAuthPromptPresented = false
         backendToken = nil
+        users = [Self.blankUser]
+        currentUserID = Self.demoUserID
+        posts.removeAll()
+        collections.removeAll()
+        reviews.removeAll()
+        comments.removeAll()
+        threads.removeAll()
+        reports.removeAll()
+        reminders.removeAll()
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
+        followingIDsByUserID = [Self.demoUserID: []]
+        browsingHistoryIDs.removeAll()
         authSessionVersion = UUID()
         showToast("已退出当前账号")
     }
@@ -2315,8 +2339,8 @@ final class MockAppStore: ObservableObject {
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: userID)) ?? []
         followedUserIDs = followingIDsByUserID[userID] ?? []
         followingIDsByUserID[userID] = followedUserIDs
-        likedPostIDs = userID == Self.demoUserID ? Self.demoLikedPostIDs : []
-        favoritePostIDs = userID == Self.demoUserID ? Self.demoFavoritePostIDs : []
+        likedPostIDs = []
+        favoritePostIDs = []
         isLoggedIn = true
         isAuthPromptPresented = false
         authSessionVersion = UUID()

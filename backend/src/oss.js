@@ -26,6 +26,16 @@ export function signedReadUrl(objectKey, expires = 900) {
   return readClient.signatureUrl(objectKey, { expires, method: "GET" });
 }
 
+export function publicAssetUrl(objectKey) {
+  if (!objectKey) return "";
+  const baseURL = config.publicApiBaseUrl.replace(/\/+$/, "");
+  const encodedPath = String(objectKey)
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${baseURL}/assets/${encodedPath}`;
+}
+
 export function createUploadTarget({ userId, kind, filename, contentType }) {
   const ext = extensionFor(filename, contentType);
   const safeKind = ["post", "avatar", "background"].includes(kind) ? kind : "post";

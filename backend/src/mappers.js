@@ -1,4 +1,4 @@
-import { signedReadUrl } from "./oss.js";
+import { publicAssetUrl } from "./oss.js";
 
 export function userToClient(row, counts = {}) {
   return {
@@ -18,8 +18,8 @@ export function userToClient(row, counts = {}) {
     birthday: row.birthday || "选择生日",
     region: row.region || "未设置",
     backgroundImageName: row.background_image_name || "merch_magazine",
-    avatarURL: signedReadUrl(row.avatar_object_key),
-    backgroundURL: signedReadUrl(row.background_object_key),
+    avatarURL: publicAssetUrl(row.avatar_object_key),
+    backgroundURL: publicAssetUrl(row.background_object_key),
     phoneNumber: row.phone_number || "",
     lastNicknameChangedAt: row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null
   };
@@ -31,7 +31,7 @@ export function postToClient(row, counts = {}) {
     id: row.id,
     title: row.title,
     imageNames: row.image_names || [],
-    remoteImageURLs: imageKeys.map((key) => signedReadUrl(key)),
+    remoteImageURLs: imageKeys.map((key) => publicAssetUrl(key)),
     imageObjectKeys: imageKeys,
     authorID: row.author_id,
     groupType: row.group_type,
