@@ -7,12 +7,22 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7D4E6E552C8A4A5100A10001 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E502C8A4A5100A10001 /* Theme.swift */; };
+		7D4E6E562C8A4A5100A10001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E512C8A4A5100A10001 /* Models.swift */; };
+		7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E522C8A4A5100A10001 /* Utilities.swift */; };
+		7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E532C8A4A5100A10001 /* BackendClient.swift */; };
+		7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */; };
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
 		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		7D4E6E502C8A4A5100A10001 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		7D4E6E512C8A4A5100A10001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		7D4E6E522C8A4A5100A10001 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
+		7D4E6E532C8A4A5100A10001 /* BackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
+		7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZhouBianTuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhouBianTuanApp.swift; sourceTree = "<group>"; };
 		7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -67,6 +77,11 @@
 			isa = PBXGroup;
 			children = (
 				7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */,
+				7D4E6E502C8A4A5100A10001 /* Theme.swift */,
+				7D4E6E512C8A4A5100A10001 /* Models.swift */,
+				7D4E6E522C8A4A5100A10001 /* Utilities.swift */,
+				7D4E6E532C8A4A5100A10001 /* BackendClient.swift */,
+				7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */,
 				7D4E6E382C8A4A5100A10001 /* Info.plist */,
 				7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */,
 				7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */,
@@ -177,6 +192,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D4E6E552C8A4A5100A10001 /* Theme.swift in Sources */,
+				7D4E6E562C8A4A5100A10001 /* Models.swift in Sources */,
+				7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */,
+				7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */,
+				7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
