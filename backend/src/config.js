@@ -38,6 +38,17 @@ export const config = {
     accessKeyId: required("ALIYUN_ACCESS_KEY_ID"),
     accessKeySecret: required("ALIYUN_ACCESS_KEY_SECRET")
   },
+  moderation: {
+    provider: process.env.MODERATION_PROVIDER || (process.env.NODE_ENV === "production" ? "aliyun" : "mock"),
+    failMode: process.env.MODERATION_FAIL_MODE || "review",
+    endpoint: process.env.ALIYUN_MODERATION_ENDPOINT || "https://green-cip.cn-shanghai.aliyuncs.com",
+    textService: process.env.ALIYUN_TEXT_MODERATION_SERVICE || "comment_detection",
+    imageService: process.env.ALIYUN_IMAGE_MODERATION_SERVICE || "baselineCheck",
+    adminEmails: String(process.env.ADMIN_EMAILS || "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean)
+  },
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
     from: process.env.EMAIL_FROM || "",

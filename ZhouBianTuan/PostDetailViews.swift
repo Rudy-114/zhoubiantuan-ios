@@ -41,6 +41,7 @@ struct PostDetailView: View {
                                     .font(.system(size: 28, weight: .bold))
                                     .foregroundStyle(Theme.text)
                                     .fixedSize(horizontal: false, vertical: true)
+                                ModerationInlineNotice(status: post.status, reason: post.moderationReason)
                                 Text(post.description)
                                     .font(.system(size: 17, weight: .regular))
                                     .lineSpacing(6)
@@ -1144,6 +1145,7 @@ struct CommentRow: View {
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.text.opacity(0.86))
                     .fixedSize(horizontal: false, vertical: true)
+                ModerationInlineNotice(status: comment.status, reason: comment.moderationReason)
             }
             Spacer()
         }

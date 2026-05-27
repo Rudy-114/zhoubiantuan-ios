@@ -110,10 +110,15 @@ enum Route: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var store: MockAppStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
 
     private var isAuthenticated: Bool {
         store.isLoggedIn
+    }
+
+    private var unreadMessageCount: Int {
+        isAuthenticated ? store.unreadMessageCount : 0
     }
 
     var body: some View {
@@ -152,6 +157,7 @@ struct RootView: View {
                         .withAppDestinations()
                 }
                 .tabItem { Label(AppTab.messages.title, systemImage: AppTab.messages.icon) }
+                .badge(unreadMessageCount)
                 .tag(AppTab.messages)
 
                 NavigationStack {
@@ -182,6 +188,15 @@ struct RootView: View {
             }
             .task {
                 await store.loadBackendIfNeeded()
+                store.startBackendAutoRefresh()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    store.startBackendAutoRefresh()
+                    Task { await store.refreshFromBackend(silent: true) }
+                } else {
+                    store.stopBackendAutoRefresh()
+                }
             }
         }
     }
@@ -241,7 +256,7 @@ extension View {
             case .notificationSettings:
                 NotificationSettingsView()
             case .admin:
-                AdminReportView()
+                AdminModerationView()
             }
         }
     }
@@ -281,9 +296,9 @@ extension View {
     .preferredColorScheme(.dark)
 }
 
-#Preview("举报后台") {
+#Preview("审核后台") {
     NavigationStack {
-        AdminReportView()
+        AdminModerationView()
     }
     .environmentObject(MockAppStore())
     .tint(Theme.hotPink)

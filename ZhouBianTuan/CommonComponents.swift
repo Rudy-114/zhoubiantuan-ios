@@ -1,6 +1,62 @@
 import SwiftUI
 import UIKit
 
+@MainActor
+final class RemoteImageLoader: ObservableObject {
+    enum State {
+        case idle
+        case loading
+        case loaded(UIImage)
+        case failed
+    }
+
+    @Published private(set) var state: State = .idle
+    private var task: Task<Void, Never>?
+    private var loadedURLString = ""
+
+    deinit {
+        task?.cancel()
+    }
+
+    func load(urlString: String) {
+        guard !urlString.isEmpty else {
+            state = .failed
+            return
+        }
+        if loadedURLString == urlString, case .loaded = state {
+            return
+        }
+        task?.cancel()
+        loadedURLString = urlString
+        state = .loading
+        task = Task { [weak self] in
+            guard let url = URL(string: urlString) else {
+                await MainActor.run { self?.state = .failed }
+                return
+            }
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard
+                    !Task.isCancelled,
+                    let http = response as? HTTPURLResponse,
+                    (200..<300).contains(http.statusCode),
+                    let image = UIImage(data: data)
+                else {
+                    if !Task.isCancelled {
+                        await MainActor.run { self?.state = .failed }
+                    }
+                    return
+                }
+                await MainActor.run { self?.state = .loaded(image) }
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run { self?.state = .failed }
+                }
+            }
+        }
+    }
+}
+
 struct BundleImage: View {
     let name: String
 
@@ -42,23 +98,50 @@ struct UploadedImageView: View {
 
 struct RemoteImageView: View {
     let urlString: String
+    @StateObject private var loader = RemoteImageLoader()
 
     var body: some View {
-        if let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable()
-                case .failure:
-                    imagePlaceholder
-                case .empty:
-                    imagePlaceholder
-                @unknown default:
-                    imagePlaceholder
-                }
+        Group {
+            switch loader.state {
+            case .loaded(let image):
+                Image(uiImage: image).resizable()
+            case .idle, .loading, .failed:
+                imagePlaceholder
             }
-        } else {
-            imagePlaceholder
+        }
+        .task(id: urlString) {
+            loader.load(urlString: urlString)
+        }
+    }
+
+    private var imagePlaceholder: some View {
+        Rectangle()
+            .fill(Theme.panelRaised)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+            }
+    }
+}
+
+struct RemoteImagePreview: View {
+    let urlString: String
+    @StateObject private var loader = RemoteImageLoader()
+
+    var body: some View {
+        Group {
+            switch loader.state {
+            case .loaded(let image):
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            case .idle, .loading, .failed:
+                imagePlaceholder
+            }
+        }
+        .task(id: urlString) {
+            loader.load(urlString: urlString)
         }
     }
 

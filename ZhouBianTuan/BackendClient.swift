@@ -32,11 +32,54 @@ struct BackendPayload: Decodable {
     var posts: [BackendPost]?
     var collections: [BackendCollection]?
     var comments: [BackendComment]?
+    var messageThreads: [BackendMessageThread]?
     var reports: [BackendReport]?
     var likedPostIDs: [String]?
     var favoritePostIDs: [String]?
     var followedUserIDs: [String]?
     var followingByUserID: [String: [String]]?
+}
+
+enum BackendAssetURLMapper {
+    static func normalized(_ urlString: String?) -> String {
+        guard let urlString, !urlString.isEmpty else { return "" }
+        return normalized(urlString)
+    }
+
+    static func normalized(_ urlString: String) -> String {
+        #if DEBUG
+        guard
+            let defaultBase = URLComponents(string: AliyunBackendClient.defaultBaseURL),
+            let currentBase = URLComponents(string: AliyunBackendClient.currentBaseURLString),
+            defaultBase.host != currentBase.host || defaultBase.scheme != currentBase.scheme || defaultBase.port != currentBase.port,
+            var incoming = URLComponents(string: urlString),
+            incoming.host == defaultBase.host,
+            incoming.scheme == defaultBase.scheme
+        else {
+            return urlString
+        }
+
+        let defaultPath = defaultBase.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let currentPath = currentBase.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let incomingPath = incoming.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard incomingPath == defaultPath || incomingPath.hasPrefix("\(defaultPath)/") else {
+            return urlString
+        }
+
+        let suffix = incomingPath.dropFirst(defaultPath.count).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        incoming.scheme = currentBase.scheme
+        incoming.host = currentBase.host
+        incoming.port = currentBase.port
+        incoming.path = "/" + ([currentPath, suffix].filter { !$0.isEmpty }.joined(separator: "/"))
+        return incoming.url?.absoluteString ?? urlString
+        #else
+        return urlString
+        #endif
+    }
+
+    static func normalized(_ urlStrings: [String]) -> [String] {
+        urlStrings.map(normalized(_:))
+    }
 }
 
 struct BackendUser: Decodable {
@@ -60,6 +103,9 @@ struct BackendUser: Decodable {
     let backgroundURL: String?
     let phoneNumber: String?
     let lastNicknameChangedAt: String?
+    let moderationStatus: String?
+    let moderationReason: String?
+    let reviewID: String?
 
     func localUser() -> User {
         User(
@@ -79,9 +125,12 @@ struct BackendUser: Decodable {
             birthday: birthday,
             region: region,
             backgroundImageName: backgroundImageName,
-            avatarURL: avatarURL ?? "",
-            backgroundURL: backgroundURL ?? "",
+            avatarURL: BackendAssetURLMapper.normalized(avatarURL),
+            backgroundURL: BackendAssetURLMapper.normalized(backgroundURL),
             lastNicknameChangedAt: lastNicknameChangedAt.map(BackendDateParser.date(from:)),
+            moderationStatus: moderationStatus.map(ContentStatus.backendValue(_:)),
+            moderationReason: moderationReason ?? "",
+            reviewID: reviewID ?? "",
             phoneNumber: phoneNumber ?? ""
         )
     }
@@ -125,6 +174,8 @@ struct BackendPost: Decodable {
     let commentCount: Int
     let reportCount: Int
     let status: String
+    let moderationReason: String?
+    let reviewID: String?
     let imageAspect: Double
     let pingguAveragePrice: String
     let pingguNote: String
@@ -135,7 +186,7 @@ struct BackendPost: Decodable {
             id: id,
             title: title,
             imageNames: imageNames,
-            remoteImageURLs: remoteImageURLs ?? [],
+            remoteImageURLs: BackendAssetURLMapper.normalized(remoteImageURLs ?? []),
             imageObjectKeys: imageObjectKeys ?? [],
             authorID: authorID,
             groupType: GroupBuyType.backendValue(groupType),
@@ -158,6 +209,8 @@ struct BackendPost: Decodable {
             commentCount: commentCount,
             reportCount: reportCount,
             status: ContentStatus.backendValue(status),
+            moderationReason: moderationReason ?? "",
+            reviewID: reviewID ?? "",
             imageAspect: imageAspect,
             pingguAveragePrice: pingguAveragePrice,
             pingguNote: pingguNote,
@@ -177,6 +230,7 @@ struct BackendCollection: Decodable {
     let defaultNote: String
     let postIDs: [String]
     let createdAt: String
+    let status: String?
 
     func localCollection() -> GroupCollection {
         GroupCollection(
@@ -189,7 +243,8 @@ struct BackendCollection: Decodable {
             deadline: BackendDateParser.date(from: deadline),
             defaultNote: defaultNote,
             postIDs: postIDs,
-            createdAt: BackendDateParser.date(from: createdAt)
+            createdAt: BackendDateParser.date(from: createdAt),
+            status: ContentStatus.backendValue(status ?? "active")
         )
     }
 }
@@ -202,9 +257,11 @@ struct BackendComment: Decodable {
     let replyToID: String?
     let createdAt: String
     let status: String
+    let moderationReason: String?
+    let reviewID: String?
 
     func localComment() -> Comment {
-        Comment(id: id, body: body, authorID: authorID, postID: postID, replyToID: replyToID, createdAt: BackendDateParser.date(from: createdAt), status: ContentStatus.backendValue(status))
+        Comment(id: id, body: body, authorID: authorID, postID: postID, replyToID: replyToID, createdAt: BackendDateParser.date(from: createdAt), status: ContentStatus.backendValue(status), moderationReason: moderationReason ?? "", reviewID: reviewID ?? "")
     }
 }
 
@@ -229,6 +286,52 @@ struct BackendReport: Decodable {
     }
 }
 
+struct BackendMessageThread: Decodable {
+    let id: String
+    let buyerUserID: String
+    let publisherUserID: String
+    let relatedPostID: String?
+    let messages: [BackendDirectMessage]
+    let unreadCount: Int
+    let updatedAt: String
+
+    func localThread() -> MessageThread {
+        MessageThread(
+            id: id,
+            buyerUserID: buyerUserID,
+            publisherUserID: publisherUserID,
+            relatedPostID: relatedPostID,
+            messages: messages.map { $0.localMessage() },
+            unreadCount: unreadCount,
+            updatedAt: BackendDateParser.date(from: updatedAt)
+        )
+    }
+}
+
+struct BackendDirectMessage: Decodable {
+    let id: String
+    let senderID: String
+    let body: String
+    let createdAt: String
+    let sharedPostID: String?
+    let sharedProfileUserID: String?
+
+    func localMessage() -> DirectMessage {
+        DirectMessage(
+            id: id,
+            senderID: senderID,
+            body: body,
+            createdAt: BackendDateParser.date(from: createdAt),
+            sharedPostID: sharedPostID,
+            sharedProfileUserID: sharedProfileUserID
+        )
+    }
+}
+
+struct BackendMessageThreadResponse: Decodable {
+    let thread: BackendMessageThread
+}
+
 struct UploadTarget: Decodable {
     let objectKey: String
     let uploadUrl: String
@@ -237,6 +340,7 @@ struct UploadTarget: Decodable {
 final class AliyunBackendClient {
     static let baseURLDefaultsKey = "zhoubiantuan.backendBaseURL"
     static let defaultBaseURL = "https://api.zhoubiantuanmail.top/api"
+    static var currentBaseURLString: String { configuredBaseURL }
 
     private let baseURL: URL
     private let session: URLSession
@@ -304,7 +408,8 @@ final class AliyunBackendClient {
         try await request("/bootstrap", token: token)
     }
 
-    func updateProfile(token: String, user: User, avatarObjectKey: String? = nil, backgroundObjectKey: String? = nil) async throws {
+    @discardableResult
+    func updateProfile(token: String, user: User, avatarObjectKey: String? = nil, backgroundObjectKey: String? = nil) async throws -> BackendProfileUpdateResponse {
         var body: [String: Any] = [
             "nickname": user.nickname,
             "bio": user.bio,
@@ -322,7 +427,7 @@ final class AliyunBackendClient {
         if let backgroundObjectKey {
             body["backgroundObjectKey"] = backgroundObjectKey
         }
-        let _: EmptyResponse = try await request("/me", method: "PATCH", token: token, body: body)
+        return try await request("/me", method: "PATCH", token: token, body: body)
     }
 
     func createCollection(token: String, collection: GroupCollection) async throws {
@@ -341,9 +446,10 @@ final class AliyunBackendClient {
         try await emptyRequest("/collections/\(collectionID)", method: "DELETE", token: token)
     }
 
-    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String]) async throws {
+    @discardableResult
+    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String]) async throws -> BackendPostMutationResponse {
         let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity, "priceAdjustment": $0.priceAdjustment] as [String: Any] }
-        let _: EmptyResponse = try await request("/posts", method: "POST", token: token, body: [
+        return try await request("/posts", method: "POST", token: token, body: [
             "id": post.id,
             "title": post.title,
             "imageNames": post.imageNames,
@@ -381,11 +487,42 @@ final class AliyunBackendClient {
         try await emptyRequest("/users/\(userID)/follow", method: enabled ? "POST" : "DELETE", token: token)
     }
 
-    func addComment(token: String, postID: String, body: String, replyToID: String? = nil) async throws {
-        let _: EmptyResponse = try await request("/posts/\(postID)/comments", method: "POST", token: token, body: [
+    @discardableResult
+    func sendDirectMessage(token: String, thread: MessageThread, recipientUserID: String, message: DirectMessage) async throws -> BackendMessageThreadResponse {
+        try await request("/messages/threads/\(thread.id)/messages", method: "POST", token: token, body: [
+            "recipientUserID": recipientUserID,
+            "relatedPostID": thread.relatedPostID ?? "",
+            "messageID": message.id,
+            "body": message.body,
+            "sharedPostID": message.sharedPostID ?? "",
+            "sharedProfileUserID": message.sharedProfileUserID ?? ""
+        ])
+    }
+
+    func markDirectMessageThreadRead(token: String, threadID: String) async throws {
+        try await emptyRequest("/messages/threads/\(threadID)/read", method: "POST", token: token)
+    }
+
+    @discardableResult
+    func addComment(token: String, postID: String, body: String, replyToID: String? = nil) async throws -> BackendCommentMutationResponse {
+        return try await request("/posts/\(postID)/comments", method: "POST", token: token, body: [
             "body": body,
             "replyToID": replyToID ?? ""
         ])
+    }
+
+    func moderationReviews(token: String, status: String = "review") async throws -> [ModerationReview] {
+        let payload: BackendModerationReviewsResponse = try await request("/moderation/reviews?status=\(status)", token: token)
+        return payload.reviews.map { $0.localReview() }
+    }
+
+    @discardableResult
+    func decideModerationReview(token: String, reviewID: String, decision: String, reason: String = "") async throws -> ModerationReview {
+        let payload: BackendModerationReviewResponse = try await request("/moderation/reviews/\(reviewID)/decision", method: "POST", token: token, body: [
+            "decision": decision,
+            "reason": reason
+        ])
+        return payload.review.localReview()
     }
 
     func deleteComment(token: String, commentID: String) async throws {
@@ -436,7 +573,14 @@ final class AliyunBackendClient {
     }
 
     private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let requestURL: URL
+        if trimmedPath.contains("?") {
+            requestURL = URL(string: "\(baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/\(trimmedPath)") ?? baseURL
+        } else {
+            requestURL = baseURL.appendingPathComponent(trimmedPath)
+        }
+        var request = URLRequest(url: requestURL)
         request.httpMethod = method
         request.timeoutInterval = 18
         request.setValue("application/json", forHTTPHeaderField: "Accept")

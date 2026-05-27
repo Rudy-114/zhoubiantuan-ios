@@ -14,6 +14,7 @@ final class MockAppStore: ObservableObject {
             persistThreads()
         }
     }
+    @Published var moderationReviews: [ModerationReview]
     @Published var reports: [Report]
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
@@ -69,10 +70,13 @@ final class MockAppStore: ObservableObject {
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
-    private let backendClient = AliyunBackendClient()
+    private static let backendAutoRefreshIntervalNanoseconds: UInt64 = 5_000_000_000
+    let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
-    private var backendToken: String? {
+    private var backendRefreshTask: Task<Void, Never>?
+    private var isRefreshingFromBackend = false
+    var backendToken: String? {
         get {
             cachedBackendToken ??
             KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ??
@@ -200,6 +204,7 @@ final class MockAppStore: ObservableObject {
         reviews = []
         comments = []
         threads = []
+        moderationReviews = []
         reports = []
         reminders = []
         likedPostIDs = []
@@ -229,6 +234,22 @@ final class MockAppStore: ObservableObject {
         await refreshFromBackend(silent: true)
     }
 
+    func startBackendAutoRefresh() {
+        guard backendRefreshTask == nil else { return }
+        backendRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.backendAutoRefreshIntervalNanoseconds)
+                guard !Task.isCancelled else { break }
+                await self?.refreshFromBackend(silent: true)
+            }
+        }
+    }
+
+    func stopBackendAutoRefresh() {
+        backendRefreshTask?.cancel()
+        backendRefreshTask = nil
+    }
+
     func backendModeChanged() {
         if isBackendEnabled {
             if backendToken == nil {
@@ -245,6 +266,9 @@ final class MockAppStore: ObservableObject {
 
     func refreshFromBackend(silent: Bool = false) async {
         guard isBackendEnabled, let backendToken else { return }
+        guard !isRefreshingFromBackend else { return }
+        isRefreshingFromBackend = true
+        defer { isRefreshingFromBackend = false }
         do {
             let payload = try await backendClient.bootstrap(token: backendToken)
             applyBackendPayload(payload)
@@ -299,6 +323,9 @@ final class MockAppStore: ObservableObject {
         if let comments = payload.comments {
             self.comments = comments.map { $0.localComment() }
         }
+        if let messageThreads = payload.messageThreads {
+            self.threads = mergedMessageThreads(from: messageThreads.map { $0.localThread() })
+        }
         if let reports = payload.reports {
             self.reports = reports.map { $0.localReport() }
         }
@@ -329,6 +356,29 @@ final class MockAppStore: ObservableObject {
         }
     }
 
+    private func mergedMessageThreads(from backendThreads: [MessageThread]) -> [MessageThread] {
+        let recentCutoff = Date().addingTimeInterval(-120)
+        var merged = Dictionary(uniqueKeysWithValues: backendThreads.map { ($0.id, $0) })
+        for localThread in threads where isCurrentUserThread(localThread) {
+            if var backendThread = merged[localThread.id] {
+                let backendMessageIDs = Set(backendThread.messages.map(\.id))
+                let localOnlyMessages = localThread.messages.filter { !backendMessageIDs.contains($0.id) && $0.createdAt > recentCutoff }
+                if !localOnlyMessages.isEmpty {
+                    backendThread.messages.append(contentsOf: localOnlyMessages)
+                    backendThread.messages.sort { $0.createdAt < $1.createdAt }
+                    backendThread.updatedAt = max(backendThread.updatedAt, localThread.updatedAt)
+                    merged[localThread.id] = backendThread
+                }
+                continue
+            }
+            let hasRecentDraft = localThread.updatedAt > recentCutoff || localThread.messages.contains { $0.createdAt > recentCutoff }
+            if hasRecentDraft {
+                merged[localThread.id] = localThread
+            }
+        }
+        return merged.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     private func runBackendMutation(refreshAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String) async throws -> Void) {
         guard isBackendEnabled, let backendToken else { return }
         Task {
@@ -352,10 +402,21 @@ final class MockAppStore: ObservableObject {
         posts.filter { $0.status == .active }
     }
 
+    func profilePosts(userID: String) -> [GroupBuyPost] {
+        let source = userID == currentUserID ? posts.filter { $0.authorID == userID && $0.status != .deleted } : activePosts.filter { $0.authorID == userID }
+        return sortedFeedPosts(source)
+    }
+
     var messageThreads: [MessageThread] {
         threads
             .filter(isCurrentUserThread)
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    var unreadMessageCount: Int {
+        messageThreads.reduce(0) { total, thread in
+            total + max(thread.unreadCount, 0)
+        }
     }
 
     var currentUserReminders: [Reminder] {
@@ -449,7 +510,7 @@ final class MockAppStore: ObservableObject {
 
     func posts(in collectionID: String) -> [GroupBuyPost] {
         guard let collection = collection(id: collectionID) else { return [] }
-        return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active })
+        return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active || $0.authorID == currentUserID })
     }
 
     func sortedFeedPosts(_ posts: [GroupBuyPost]) -> [GroupBuyPost] {
@@ -547,7 +608,12 @@ final class MockAppStore: ObservableObject {
     }
 
     func comments(for postID: String) -> [Comment] {
-        comments.filter { $0.postID == postID && $0.status == .active }.sorted { $0.createdAt < $1.createdAt }
+        comments
+            .filter { comment in
+                comment.postID == postID &&
+                (comment.status == .active || comment.authorID == currentUserID)
+            }
+            .sorted { $0.createdAt < $1.createdAt }
     }
 
     func comment(id: String) -> Comment? {
@@ -653,14 +719,24 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能评论") else { return }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if isBackendEnabled {
+            Task {
+                guard let backendToken else { return }
+                do {
+                    let response = try await backendClient.addComment(token: backendToken, postID: postID, body: trimmed, replyToID: replyToID)
+                    await refreshFromBackend(silent: true)
+                    showToast(response.moderation?.userMessage ?? "评论已发布")
+                } catch {
+                    showToast(error.localizedDescription)
+                }
+            }
+            return
+        }
         comments.append(Comment(id: "c-\(UUID().uuidString)", body: trimmed, authorID: currentUserID, postID: postID, replyToID: replyToID, createdAt: Date(), status: .active))
         if let index = posts.firstIndex(where: { $0.id == postID }) {
             posts[index].commentCount += 1
         }
         showToast("评论已发布")
-        runBackendMutation { token in
-            try await self.backendClient.addComment(token: token, postID: postID, body: trimmed, replyToID: replyToID)
-        }
     }
 
     func copyComment(_ comment: Comment) {
@@ -747,7 +823,25 @@ final class MockAppStore: ObservableObject {
 
     func updateCurrentBio(_ bio: String) {
         guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
-        users[index].bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
+        var updatedUser = users[index]
+        updatedUser.bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
+        if isBackendEnabled {
+            Task {
+                guard let backendToken else { return }
+                do {
+                    let response = try await backendClient.updateProfile(token: backendToken, user: updatedUser)
+                    if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
+                        users[userIndex] = response.user.localUser()
+                    }
+                    await refreshFromBackend(silent: true)
+                    showToast(response.moderation?.userMessage ?? "简介已保存")
+                } catch {
+                    showToast(error.localizedDescription)
+                }
+            }
+            return
+        }
+        users[index] = updatedUser
         showToast("简介已保存")
     }
 
@@ -755,44 +849,60 @@ final class MockAppStore: ObservableObject {
         guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
         var rejectedNicknameChange = false
         let trimmedNickname = nickname.trimmed
-        if !trimmedNickname.isEmpty && trimmedNickname != users[index].nickname {
-            if canChangeNickname(for: users[index]) {
-                users[index].nickname = trimmedNickname
-                users[index].lastNicknameChangedAt = Date()
+        var proposedUser = users[index]
+        if !trimmedNickname.isEmpty && trimmedNickname != proposedUser.nickname {
+            if canChangeNickname(for: proposedUser) {
+                proposedUser.nickname = trimmedNickname
+                proposedUser.lastNicknameChangedAt = Date()
             } else {
                 rejectedNicknameChange = true
             }
         }
-        users[index].redBookID = redBookID.trimmed
-        users[index].bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
-        users[index].gender = gender.trimmed
-        users[index].birthday = birthday.trimmed
-        users[index].region = region.trimmed
-        users[index].avatarSymbol = avatarSymbol.trimmed.isEmpty ? users[index].avatarSymbol : String(avatarSymbol.trimmed.prefix(1))
-        users[index].avatarTint = avatarTint
-        users[index].backgroundImageName = backgroundImageName
-        users[index].avatarImageData = avatarImageData
-        users[index].backgroundImageData = backgroundImageData
-        showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
-        let updatedUser = users[index]
+        proposedUser.redBookID = redBookID.trimmed
+        proposedUser.bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
+        proposedUser.gender = gender.trimmed
+        proposedUser.birthday = birthday.trimmed
+        proposedUser.region = region.trimmed
+        proposedUser.avatarSymbol = avatarSymbol.trimmed.isEmpty ? proposedUser.avatarSymbol : String(avatarSymbol.trimmed.prefix(1))
+        proposedUser.avatarTint = avatarTint
+        proposedUser.backgroundImageName = backgroundImageName
         let avatarUploadData = avatarImageData
         let backgroundUploadData = backgroundImageData
-        runBackendMutation(refreshAfterSuccess: true) { token in
-            var avatarObjectKey: String?
-            if let avatarUploadData {
-                avatarObjectKey = try await self.backendClient.uploadProfileImage(token: token, data: avatarUploadData, kind: "avatar")
+
+        if isBackendEnabled {
+            Task {
+                guard let backendToken else { return }
+                do {
+                    var avatarObjectKey: String?
+                    if let avatarUploadData {
+                        avatarObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: avatarUploadData, kind: "avatar")
+                    }
+                    var backgroundObjectKey: String?
+                    if let backgroundUploadData {
+                        backgroundObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: backgroundUploadData, kind: "background")
+                    }
+                    let response = try await backendClient.updateProfile(
+                        token: backendToken,
+                        user: proposedUser,
+                        avatarObjectKey: avatarObjectKey,
+                        backgroundObjectKey: backgroundObjectKey
+                    )
+                    if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
+                        users[userIndex] = response.user.localUser()
+                    }
+                    await refreshFromBackend(silent: true)
+                    showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : response.moderation?.userMessage ?? "资料已保存")
+                } catch {
+                    showToast(error.localizedDescription)
+                }
             }
-            var backgroundObjectKey: String?
-            if let backgroundUploadData {
-                backgroundObjectKey = try await self.backendClient.uploadProfileImage(token: token, data: backgroundUploadData, kind: "background")
-            }
-            try await self.backendClient.updateProfile(
-                token: token,
-                user: updatedUser,
-                avatarObjectKey: avatarObjectKey,
-                backgroundObjectKey: backgroundObjectKey
-            )
+            return
         }
+
+        proposedUser.avatarImageData = avatarImageData
+        proposedUser.backgroundImageData = backgroundImageData
+        users[index] = proposedUser
+        showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
     }
 
     // MARK: - Authentication
@@ -817,6 +927,7 @@ final class MockAppStore: ObservableObject {
         comments.removeAll()
         threads.removeAll()
         reports.removeAll()
+        moderationReviews.removeAll()
         reminders.removeAll()
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
@@ -1006,18 +1117,19 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let post = post(id: postID),
               let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return }
-        threads[index].messages.append(
-            DirectMessage(
-                id: "m-\(UUID().uuidString)",
-                senderID: currentUserID,
-                body: "分享了制品：\(post.title)",
-                createdAt: Date(),
-                sharedPostID: postID
-            )
+        let message = DirectMessage(
+            id: "m-\(UUID().uuidString)",
+            senderID: currentUserID,
+            body: "分享了制品：\(post.title)",
+            createdAt: Date(),
+            sharedPostID: postID
         )
+        threads[index].messages.append(message)
         threads[index].updatedAt = Date()
+        threads[index].unreadCount = 0
+        let thread = threads[index]
         persistThreads()
-        showToast("已分享给站内好友")
+        syncMessageToBackendIfNeeded(thread: thread, message: message, successToast: "已分享给站内好友")
     }
 
     func sharePostToUser(postID: String, userID: String) {
@@ -1030,18 +1142,19 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能私信分享") else { return }
         guard let user = users.first(where: { $0.id == userID }),
               let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return }
-        threads[index].messages.append(
-            DirectMessage(
-                id: "m-\(UUID().uuidString)",
-                senderID: currentUserID,
-                body: "分享了主页：\(user.nickname)",
-                createdAt: Date(),
-                sharedProfileUserID: userID
-            )
+        let message = DirectMessage(
+            id: "m-\(UUID().uuidString)",
+            senderID: currentUserID,
+            body: "分享了主页：\(user.nickname)",
+            createdAt: Date(),
+            sharedProfileUserID: userID
         )
+        threads[index].messages.append(message)
         threads[index].updatedAt = Date()
+        threads[index].unreadCount = 0
+        let thread = threads[index]
         persistThreads()
-        showToast("已分享给站内好友")
+        syncMessageToBackendIfNeeded(thread: thread, message: message, successToast: "已分享给站内好友")
     }
 
     func shareProfileToUser(profileUserID: String, recipientUserID: String) {
@@ -1062,6 +1175,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func ensureMutualFriendThreads() {
+        guard !isBackendEnabled else { return }
         for friend in mutualFriendUsers() where !threads.contains(where: { isCurrentUserThread($0) && peerUserID(for: $0) == friend.id && $0.relatedPostID == nil }) {
             let threadID = "t-\(UUID().uuidString)"
             let thread = MessageThread(
@@ -1084,10 +1198,10 @@ final class MockAppStore: ObservableObject {
         if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID && $0.relatedPostID == relatedPostID }) {
             return existing.id
         }
-        if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
+        if !isBackendEnabled, let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
             return existing.id
         }
-        let threadID = "t-\(UUID().uuidString)"
+        let threadID = isBackendEnabled ? stableThreadID(forRecipient: userID, relatedPostID: relatedPostID) : "t-\(UUID().uuidString)"
         let thread = MessageThread(
             id: threadID,
             buyerUserID: currentUserID,
@@ -1102,6 +1216,14 @@ final class MockAppStore: ObservableObject {
         return threadID
     }
 
+    private func stableThreadID(forRecipient userID: String, relatedPostID: String?) -> String {
+        let pair = [currentUserID, userID].sorted().joined(separator: "-")
+        if let relatedPostID, !relatedPostID.isEmpty {
+            return "t-post-\(relatedPostID)-\(pair)"
+        }
+        return "t-dm-\(pair)"
+    }
+
     func sendMessage(threadID: String, body: String) -> Bool {
         guard requireLogin(prompt: "登录后才能发私信") else { return false }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1111,10 +1233,13 @@ final class MockAppStore: ObservableObject {
             showToast("对方未关注你时，回复前最多发送两条消息")
             return false
         }
-        threads[index].messages.append(DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date()))
+        let message = DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date())
+        threads[index].messages.append(message)
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
+        let thread = threads[index]
         persistThreads()
+        syncMessageToBackendIfNeeded(thread: thread, message: message)
         return true
     }
 
@@ -1126,19 +1251,43 @@ final class MockAppStore: ObservableObject {
             return false
         }
         let storedImageData = Self.normalizedMessageImageData(imageData)
-        threads[index].messages.append(
-            DirectMessage(
-                id: "m-\(UUID().uuidString)",
-                senderID: currentUserID,
-                body: "[图片]",
-                createdAt: Date(),
-                imageData: storedImageData
-            )
+        let message = DirectMessage(
+            id: "m-\(UUID().uuidString)",
+            senderID: currentUserID,
+            body: "[图片]",
+            createdAt: Date(),
+            imageData: storedImageData
         )
+        threads[index].messages.append(message)
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
+        let thread = threads[index]
         persistThreads()
+        syncMessageToBackendIfNeeded(thread: thread, message: message)
         return true
+    }
+
+    private func syncMessageToBackendIfNeeded(thread: MessageThread, message: DirectMessage, successToast: String? = nil) {
+        guard isBackendEnabled else {
+            if let successToast {
+                showToast(successToast)
+            }
+            return
+        }
+        guard let backendToken else { return }
+        let recipientUserID = peerUserID(for: thread)
+        Task {
+            do {
+                _ = try await backendClient.sendDirectMessage(token: backendToken, thread: thread, recipientUserID: recipientUserID, message: message)
+                await refreshFromBackend(silent: true)
+                if let successToast {
+                    showToast(successToast)
+                }
+            } catch {
+                showToast(error.localizedDescription)
+                await refreshFromBackend(silent: true)
+            }
+        }
     }
 
     private func canSendMessage(in thread: MessageThread) -> Bool {
@@ -1154,6 +1303,11 @@ final class MockAppStore: ObservableObject {
               threads[index].unreadCount > 0 else { return }
         threads[index].unreadCount = 0
         persistThreads()
+        if isBackendEnabled, let backendToken {
+            Task {
+                try? await backendClient.markDirectMessageThreadRead(token: backendToken, threadID: threadID)
+            }
+        }
     }
 
     // MARK: - Collections and Posts
@@ -1306,11 +1460,6 @@ final class MockAppStore: ObservableObject {
             pingguNote: groupType == .splitGoods ? pingguNote : "",
             unsoldRoles: groupType == .splitGoods ? unsoldRoles.filter(\.isAvailable) : []
         )
-        posts.insert(post, at: 0)
-        if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
-            collections[index].postIDs.insert(postID, at: 0)
-        }
-        showToast("发布成功，已进入\(groupType.moduleTitle)模块")
         if isBackendEnabled {
             Task {
                 guard let backendToken else { return }
@@ -1318,14 +1467,20 @@ final class MockAppStore: ObservableObject {
                     let objectKeys = try await backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
                     var remotePost = post
                     remotePost.imageObjectKeys = objectKeys
-                    try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys)
+                    let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys)
                     await refreshFromBackend(silent: true)
-                    showToast("发布成功，已同步到云端")
+                    showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
                 } catch {
                     showToast(error.localizedDescription)
                 }
             }
+            return
         }
+        posts.insert(post, at: 0)
+        if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
+            collections[index].postIDs.insert(postID, at: 0)
+        }
+        showToast("发布成功，已进入\(groupType.moduleTitle)模块")
     }
 
     // MARK: - Toasts

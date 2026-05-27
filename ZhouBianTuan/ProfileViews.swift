@@ -511,7 +511,7 @@ struct ProfileNotesPanel: View {
     var canManage = false
 
     var posts: [GroupBuyPost] {
-        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == userID })
+        store.profilePosts(userID: userID)
     }
 
     var body: some View {
@@ -975,7 +975,7 @@ struct CollectionPostManager: View {
     let collection: GroupCollection
 
     var manageablePosts: [GroupBuyPost] {
-        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == collection.ownerID })
+        store.profilePosts(userID: collection.ownerID)
     }
 
     var body: some View {
@@ -1309,6 +1309,12 @@ struct ProfileSideMenu: View {
 
                 NavigationLink(value: Route.settings) {
                     DrawerRowContent(icon: "gearshape", title: "设置")
+                }
+                .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
+                .buttonStyle(.plain)
+
+                NavigationLink(value: Route.admin) {
+                    DrawerRowContent(icon: "checkmark.shield", title: "审核后台")
                 }
                 .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
                 .buttonStyle(.plain)
@@ -1939,7 +1945,7 @@ struct UserProfileView: View {
     private let tabs = ["制品", "拼团合集"]
 
     var userPosts: [GroupBuyPost] {
-        store.sortedFeedPosts(store.activePosts.filter { $0.authorID == userID })
+        store.profilePosts(userID: userID)
     }
 
     var body: some View {

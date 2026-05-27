@@ -23,6 +23,9 @@ struct User: Identifiable, Hashable {
     var avatarURL: String = ""
     var backgroundURL: String = ""
     var lastNicknameChangedAt: Date? = nil
+    var moderationStatus: ContentStatus? = nil
+    var moderationReason: String = ""
+    var reviewID: String = ""
     var phoneNumber: String = ""
     var password: String = ""
 }
@@ -55,6 +58,8 @@ struct GroupBuyPost: Identifiable, Hashable {
     var commentCount: Int
     var reportCount: Int
     var status: ContentStatus
+    var moderationReason: String = ""
+    var reviewID: String = ""
     var imageAspect: Double
     var pingguAveragePrice: String = ""
     var pingguNote: String = ""
@@ -157,6 +162,7 @@ struct GroupCollection: Identifiable, Hashable {
     var defaultNote: String
     var postIDs: [String]
     var createdAt: Date
+    var status: ContentStatus = .active
 
     var isEnded: Bool {
         deadline <= Date()
@@ -183,6 +189,8 @@ struct Comment: Identifiable, Hashable {
     var replyToID: String?
     var createdAt: Date
     var status: ContentStatus
+    var moderationReason: String = ""
+    var reviewID: String = ""
 }
 
 struct MessageThread: Identifiable, Hashable, Codable {
@@ -231,7 +239,10 @@ enum ReportTarget: Hashable {
 }
 
 enum ContentStatus: String, Hashable {
+    case pending = "待处理"
+    case review = "审核中"
     case active = "公开"
+    case rejected = "已驳回"
     case hidden = "已隐藏"
     case removed = "已下架"
     case deleted = "已删除"
@@ -271,8 +282,14 @@ enum ColorToken: String, Hashable {
 extension ContentStatus {
     static func backendValue(_ value: String) -> ContentStatus {
         switch value {
+        case "pending", "待处理":
+            return .pending
+        case "review", "审核中", "待人工审核":
+            return .review
         case "active", "公开":
             return .active
+        case "rejected", "已驳回":
+            return .rejected
         case "hidden", "已隐藏":
             return .hidden
         case "removed", "已下架":

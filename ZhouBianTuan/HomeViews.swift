@@ -224,6 +224,8 @@ struct PostCard: View {
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
 
+                        ModerationStatusBadge(status: livePost.status, reason: livePost.moderationReason)
+
                         if livePost.groupType == .splitGoods {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(livePost.pingguAveragePrice.isEmpty ? livePost.price : livePost.pingguAveragePrice)

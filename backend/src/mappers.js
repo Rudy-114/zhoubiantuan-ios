@@ -21,7 +21,10 @@ export function userToClient(row, counts = {}) {
     avatarURL: publicAssetUrl(row.avatar_object_key),
     backgroundURL: publicAssetUrl(row.background_object_key),
     phoneNumber: row.phone_number || "",
-    lastNicknameChangedAt: row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null
+    lastNicknameChangedAt: row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null,
+    moderationStatus: row.moderation_status || "",
+    moderationReason: row.moderation_reason || "",
+    reviewID: row.review_id || ""
   };
 }
 
@@ -54,6 +57,8 @@ export function postToClient(row, counts = {}) {
     commentCount: Number(counts.comment_count ?? row.comment_count ?? 0),
     reportCount: Number(counts.report_count ?? row.report_count ?? 0),
     status: row.status,
+    moderationReason: row.moderation_reason || "",
+    reviewID: row.review_id || "",
     imageAspect: Number(row.image_aspect || 1.08),
     pingguAveragePrice: row.pinggu_average_price || "",
     pingguNote: row.pinggu_note || "",
@@ -72,7 +77,8 @@ export function collectionToClient(row, postIDs = []) {
     deadline: row.deadline.toISOString(),
     defaultNote: row.default_note || "",
     postIDs,
-    createdAt: row.created_at.toISOString()
+    createdAt: row.created_at.toISOString(),
+    status: row.status || "active"
   };
 }
 
@@ -84,7 +90,32 @@ export function commentToClient(row) {
     postID: row.post_id,
     replyToID: row.reply_to_id,
     createdAt: row.created_at.toISOString(),
-    status: row.status
+    status: row.status,
+    moderationReason: row.moderation_reason || "",
+    reviewID: row.review_id || ""
+  };
+}
+
+export function directMessageToClient(row) {
+  return {
+    id: row.id,
+    senderID: row.sender_id,
+    body: row.body || "",
+    createdAt: row.created_at.toISOString(),
+    sharedPostID: row.shared_post_id || null,
+    sharedProfileUserID: row.shared_profile_user_id || null
+  };
+}
+
+export function messageThreadToClient(row, messages = []) {
+  return {
+    id: row.id,
+    buyerUserID: row.buyer_user_id,
+    publisherUserID: row.publisher_user_id,
+    relatedPostID: row.related_post_id || null,
+    messages,
+    unreadCount: Number(row.unread_count || 0),
+    updatedAt: row.updated_at.toISOString()
   };
 }
 
@@ -98,5 +129,28 @@ export function reportToClient(row) {
     status: row.status,
     adminResult: row.admin_result,
     handledAt: row.handled_at ? row.handled_at.toISOString() : null
+  };
+}
+
+export function moderationReviewToClient(row) {
+  return {
+    id: row.id,
+    targetType: row.target_type,
+    targetID: row.target_id,
+    ownerID: row.owner_id || "",
+    status: row.status,
+    decision: row.decision || null,
+    source: row.source || "systemRule",
+    riskLevel: row.risk_level || "none",
+    reason: row.reason || "",
+    textSnapshot: row.text_snapshot || "",
+    imageObjectKeys: row.image_object_keys || [],
+    imageURLs: (row.image_object_keys || []).map((key) => publicAssetUrl(key)),
+    snapshot: row.snapshot || {},
+    rawSummary: row.raw_summary || {},
+    handledBy: row.handled_by || "",
+    handledAt: row.handled_at ? row.handled_at.toISOString() : null,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
   };
 }
