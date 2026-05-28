@@ -17,6 +17,13 @@ export function signToken(user) {
   });
 }
 
+export async function userForToken(token) {
+  if (!token) return null;
+  const payload = jwt.verify(token, config.jwtSecret);
+  const { rows } = await query("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [payload.sub]);
+  return rows[0] || null;
+}
+
 export async function requireAuth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
@@ -24,12 +31,11 @@ export async function requireAuth(req, res, next) {
     if (!token) {
       return res.status(401).json({ error: "需要登录" });
     }
-    const payload = jwt.verify(token, config.jwtSecret);
-    const { rows } = await query("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [payload.sub]);
-    if (!rows[0]) {
+    const user = await userForToken(token);
+    if (!user) {
       return res.status(401).json({ error: "登录已失效" });
     }
-    req.user = rows[0];
+    req.user = user;
     next();
   } catch {
     return res.status(401).json({ error: "登录已失效" });

@@ -70,12 +70,17 @@ final class MockAppStore: ObservableObject {
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
-    private static let backendAutoRefreshIntervalNanoseconds: UInt64 = 5_000_000_000
+    private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 10_000_000_000
+    private static let backendFallbackGraceInterval: TimeInterval = 15
     let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
     private var backendRefreshTask: Task<Void, Never>?
     private var isRefreshingFromBackend = false
+    private var isSyncingFromBackend = false
+    private var realtimeConnection: RealtimeConnection?
+    private var isRealtimeConnected = false
+    private var lastRealtimeActivityAt = Date.distantPast
     var backendToken: String? {
         get {
             cachedBackendToken ??
@@ -195,7 +200,8 @@ final class MockAppStore: ObservableObject {
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
-        isBackendEnabled = UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) as? Bool ?? true
+        UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
+        isBackendEnabled = true
         let blankUser = Self.blankUser
         users = [blankUser]
         currentUserID = blankUser.id
@@ -235,12 +241,14 @@ final class MockAppStore: ObservableObject {
     }
 
     func startBackendAutoRefresh() {
+        guard isBackendEnabled, let backendToken else { return }
+        startRealtimeConnection(token: backendToken)
         guard backendRefreshTask == nil else { return }
         backendRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.backendAutoRefreshIntervalNanoseconds)
+                try? await Task.sleep(nanoseconds: Self.backendFallbackRefreshIntervalNanoseconds)
                 guard !Task.isCancelled else { break }
-                await self?.refreshFromBackend(silent: true)
+                await self?.runFallbackSyncIfNeeded()
             }
         }
     }
@@ -248,6 +256,8 @@ final class MockAppStore: ObservableObject {
     func stopBackendAutoRefresh() {
         backendRefreshTask?.cancel()
         backendRefreshTask = nil
+        realtimeConnection?.disconnect()
+        isRealtimeConnected = false
     }
 
     func backendModeChanged() {
@@ -257,8 +267,10 @@ final class MockAppStore: ObservableObject {
                 showToast("已切换到阿里云后端，请登录测试账号")
             } else {
                 Task { await refreshFromBackend() }
+                startBackendAutoRefresh()
             }
         } else {
+            stopBackendAutoRefresh()
             backendToken = nil
             showToast("已切换到本地 Mock 数据")
         }
@@ -286,12 +298,79 @@ final class MockAppStore: ObservableObject {
         }
     }
 
+    func syncFromBackend(reason: String = "manual") async {
+        guard isBackendEnabled, let backendToken else { return }
+        guard !isRefreshingFromBackend, !isSyncingFromBackend else { return }
+        guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
+            await refreshFromBackend(silent: true)
+            return
+        }
+        isSyncingFromBackend = true
+        defer { isSyncingFromBackend = false }
+        do {
+            let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
+            applySyncPayload(payload)
+            if payload.hasMore {
+                Task { await syncFromBackend(reason: "\(reason).more") }
+            }
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSession(silent: true)
+                return
+            }
+            if reason == "foreground" || reason == "manual" {
+                await refreshFromBackend(silent: true)
+            }
+        }
+    }
+
+    private func startRealtimeConnection(token: String) {
+        if realtimeConnection == nil {
+            realtimeConnection = RealtimeConnection(
+                backendClient: backendClient,
+                onEvent: { [weak self] event in
+                    await self?.handleRealtimeEvent(event)
+                },
+                onStateChange: { [weak self] connected in
+                    self?.handleRealtimeStateChange(connected)
+                }
+            )
+        }
+        realtimeConnection?.connect(token: token)
+    }
+
+    private func handleRealtimeStateChange(_ connected: Bool) {
+        isRealtimeConnected = connected
+        lastRealtimeActivityAt = Date()
+        if connected {
+            Task {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                await syncFromBackend(reason: "websocket.connected")
+            }
+        }
+    }
+
+    private func handleRealtimeEvent(_ event: BackendRealtimeEvent) async {
+        guard event.type == "sync.available" else { return }
+        lastRealtimeActivityAt = Date()
+        await syncFromBackend(reason: "websocket.\(event.eventType ?? "event")")
+    }
+
+    private func runFallbackSyncIfNeeded() async {
+        guard isBackendEnabled, backendToken != nil else { return }
+        guard !isRealtimeConnected,
+              Date().timeIntervalSince(lastRealtimeActivityAt) >= Self.backendFallbackGraceInterval else { return }
+        await syncFromBackend(reason: "fallback")
+    }
+
     private func isAuthExpiredError(_ error: Error) -> Bool {
         let nsError = error as NSError
         return nsError.domain == "AliyunBackendClient" && [401, 403].contains(nsError.code)
     }
 
     private func expireCloudSession(silent: Bool = false) {
+        stopBackendAutoRefresh()
+        SyncCursorStore.remove(for: currentUserID)
         backendToken = nil
         isLoggedIn = false
         isAuthPromptPresented = !silent
@@ -351,8 +430,18 @@ final class MockAppStore: ObservableObject {
         followingIDsByUserID[currentUserID] = followedUserIDs
         isLoggedIn = payload.currentUser != nil
         isAuthPromptPresented = false
+        if let syncCursor = payload.syncCursor {
+            SyncCursorStore.set(syncCursor, for: currentUserID)
+        }
         if previousUserID != currentUserID || previousLoggedIn != isLoggedIn {
             authSessionVersion = UUID()
+        }
+        if isBackendEnabled, backendToken != nil, isLoggedIn {
+            startBackendAutoRefresh()
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                await syncFromBackend(reason: "bootstrap.cursor")
+            }
         }
     }
 
@@ -379,13 +468,110 @@ final class MockAppStore: ObservableObject {
         return merged.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private func runBackendMutation(refreshAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String) async throws -> Void) {
+    private func applySyncPayload(_ payload: BackendSyncPayload) {
+        mergeUsers(payload.users?.map { $0.localUser() } ?? [])
+        mergePosts(payload.posts?.map { $0.localPost() } ?? [])
+        mergeCollections(payload.collections?.map { $0.localCollection() } ?? [])
+        mergeComments(payload.comments?.map { $0.localComment() } ?? [])
+        mergeChangedMessageThreads(from: payload.messageThreads.map { $0.localThread() })
+        if let likedPostIDs = payload.likedPostIDs {
+            self.likedPostIDs = Set(likedPostIDs)
+        }
+        if let favoritePostIDs = payload.favoritePostIDs {
+            self.favoritePostIDs = Set(favoritePostIDs)
+        }
+        if let followedUserIDs = payload.followedUserIDs {
+            self.followedUserIDs = Set(followedUserIDs)
+        }
+        if let followingByUserID = payload.followingByUserID {
+            self.followingIDsByUserID = followingByUserID.mapValues { Set($0) }
+        }
+        followingIDsByUserID[currentUserID] = followedUserIDs
+        SyncCursorStore.set(payload.nextCursor, for: currentUserID)
+    }
+
+    private func mergeUsers(_ backendUsers: [User]) {
+        guard !backendUsers.isEmpty else { return }
+        var usersByID = Dictionary(uniqueKeysWithValues: users.map { ($0.id, $0) })
+        var order = users.map(\.id)
+        for user in backendUsers {
+            if usersByID[user.id] == nil {
+                order.append(user.id)
+            }
+            usersByID[user.id] = user
+        }
+        users = order.compactMap { usersByID[$0] }
+    }
+
+    private func mergePosts(_ backendPosts: [GroupBuyPost]) {
+        guard !backendPosts.isEmpty else { return }
+        var postsByID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
+        var order = posts.map(\.id)
+        for post in backendPosts {
+            if postsByID[post.id] == nil {
+                guard post.status != .deleted else { continue }
+                order.insert(post.id, at: 0)
+            }
+            postsByID[post.id] = post
+        }
+        posts = order.compactMap { postsByID[$0] }
+    }
+
+    private func mergeCollections(_ backendCollections: [GroupCollection]) {
+        guard !backendCollections.isEmpty else { return }
+        var collectionsByID = Dictionary(uniqueKeysWithValues: collections.map { ($0.id, $0) })
+        var order = collections.map(\.id)
+        for collection in backendCollections {
+            if collectionsByID[collection.id] == nil {
+                guard collection.status != .deleted else { continue }
+                order.append(collection.id)
+            }
+            collectionsByID[collection.id] = collection
+        }
+        collections = order.compactMap { collectionsByID[$0] }
+    }
+
+    private func mergeComments(_ backendComments: [Comment]) {
+        guard !backendComments.isEmpty else { return }
+        var commentsByID = Dictionary(uniqueKeysWithValues: comments.map { ($0.id, $0) })
+        var order = comments.map(\.id)
+        for comment in backendComments {
+            if commentsByID[comment.id] == nil {
+                order.append(comment.id)
+            }
+            commentsByID[comment.id] = comment
+        }
+        comments = order.compactMap { commentsByID[$0] }
+    }
+
+    private func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
+        guard !backendThreads.isEmpty else { return }
+        let recentCutoff = Date().addingTimeInterval(-120)
+        var merged = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        for var backendThread in backendThreads {
+            if let localThread = merged[backendThread.id] {
+                let backendMessageIDs = Set(backendThread.messages.map(\.id))
+                let localOnlyMessages = localThread.messages.filter { !backendMessageIDs.contains($0.id) && $0.createdAt > recentCutoff }
+                if !localOnlyMessages.isEmpty {
+                    backendThread.messages.append(contentsOf: localOnlyMessages)
+                    backendThread.messages.sort { $0.createdAt < $1.createdAt }
+                }
+                backendThread.updatedAt = max(backendThread.updatedAt, localThread.updatedAt)
+            }
+            merged[backendThread.id] = backendThread
+        }
+        threads = merged.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String) async throws -> Void) {
         guard isBackendEnabled, let backendToken else { return }
         Task {
             do {
                 try await operation(backendToken)
                 if refreshAfterSuccess {
                     await refreshFromBackend(silent: true)
+                } else if syncAfterSuccess {
+                    await syncFromBackend(reason: "mutation")
                 }
             } catch {
                 showToast(error.localizedDescription)
@@ -611,7 +797,7 @@ final class MockAppStore: ObservableObject {
         comments
             .filter { comment in
                 comment.postID == postID &&
-                (comment.status == .active || comment.authorID == currentUserID)
+                (comment.status == .active || (comment.authorID == currentUserID && comment.status != .deleted))
             }
             .sorted { $0.createdAt < $1.createdAt }
     }
@@ -644,13 +830,13 @@ final class MockAppStore: ObservableObject {
         if likedPostIDs.contains(postID) {
             likedPostIDs.remove(postID)
             posts[index].likedCount = max(0, posts[index].likedCount - 1)
-            runBackendMutation { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
             }
         } else {
             likedPostIDs.insert(postID)
             posts[index].likedCount += 1
-            runBackendMutation { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
             }
         }
@@ -664,7 +850,7 @@ final class MockAppStore: ObservableObject {
             posts[index].favoriteCount = max(0, posts[index].favoriteCount - 1)
             reminders.removeAll { $0.postID == postID && $0.userID == currentUserID }
             showToast("已取消收藏和截团提醒")
-            runBackendMutation { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
             }
         } else {
@@ -673,7 +859,7 @@ final class MockAppStore: ObservableObject {
             let post = posts[index]
             reminders.append(Reminder(id: "re-\(postID)-\(Int(Date().timeIntervalSince1970))", userID: currentUserID, postID: postID, deadline: post.deadline, remindAt: post.deadline.addingTimeInterval(-3600 * 3), hasReminded: false))
             showToast("已收藏，截团前会提醒你")
-            runBackendMutation { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
             }
         }
@@ -694,7 +880,7 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
             }
             showToast("已取消关注")
-            runBackendMutation(refreshAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
             }
         } else {
@@ -707,7 +893,7 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount += 1
             }
             showToast("已关注团长")
-            runBackendMutation(refreshAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { token in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
             }
         }
@@ -724,7 +910,13 @@ final class MockAppStore: ObservableObject {
                 guard let backendToken else { return }
                 do {
                     let response = try await backendClient.addComment(token: backendToken, postID: postID, body: trimmed, replyToID: replyToID)
-                    await refreshFromBackend(silent: true)
+                    let localComment = response.comment.localComment()
+                    let alreadyHadComment = comments.contains { $0.id == localComment.id }
+                    mergeComments([localComment])
+                    if !alreadyHadComment, localComment.status == .active, let index = posts.firstIndex(where: { $0.id == postID }) {
+                        posts[index].commentCount += 1
+                    }
+                    await syncFromBackend(reason: "comment.created")
                     showToast(response.moderation?.userMessage ?? "评论已发布")
                 } catch {
                     showToast(error.localizedDescription)
@@ -758,7 +950,7 @@ final class MockAppStore: ObservableObject {
             posts[postIndex].commentCount = max(0, posts[postIndex].commentCount - 1)
         }
         showToast("评论已删除")
-        runBackendMutation { token in
+        runBackendMutation(syncAfterSuccess: true) { token in
             try await self.backendClient.deleteComment(token: token, commentID: commentID)
         }
     }
@@ -916,6 +1108,8 @@ final class MockAppStore: ObservableObject {
     }
 
     func logOut() {
+        stopBackendAutoRefresh()
+        SyncCursorStore.remove(for: currentUserID)
         isLoggedIn = false
         isAuthPromptPresented = false
         backendToken = nil
@@ -1278,8 +1472,9 @@ final class MockAppStore: ObservableObject {
         let recipientUserID = peerUserID(for: thread)
         Task {
             do {
-                _ = try await backendClient.sendDirectMessage(token: backendToken, thread: thread, recipientUserID: recipientUserID, message: message)
-                await refreshFromBackend(silent: true)
+                let response = try await backendClient.sendDirectMessage(token: backendToken, thread: thread, recipientUserID: recipientUserID, message: message)
+                mergeChangedMessageThreads(from: [response.thread.localThread()])
+                await syncFromBackend(reason: "message.sent")
                 if let successToast {
                     showToast(successToast)
                 }
@@ -1306,6 +1501,7 @@ final class MockAppStore: ObservableObject {
         if isBackendEnabled, let backendToken {
             Task {
                 try? await backendClient.markDirectMessageThreadRead(token: backendToken, threadID: threadID)
+                await syncFromBackend(reason: "message.read")
             }
         }
     }
@@ -1395,7 +1591,7 @@ final class MockAppStore: ObservableObject {
             collections[collectionIndex].postIDs.removeAll { $0 == postID }
         }
         showToast("帖子已删除")
-        runBackendMutation { token in
+        runBackendMutation(syncAfterSuccess: true) { token in
             try await self.backendClient.deletePost(token: token, postID: postID)
         }
     }
@@ -1468,7 +1664,14 @@ final class MockAppStore: ObservableObject {
                     var remotePost = post
                     remotePost.imageObjectKeys = objectKeys
                     let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys)
-                    await refreshFromBackend(silent: true)
+                    let localPost = response.post.localPost()
+                    mergePosts([localPost])
+                    if let collectionID = localPost.collectionID,
+                       let index = collections.firstIndex(where: { $0.id == collectionID }),
+                       !collections[index].postIDs.contains(localPost.id) {
+                        collections[index].postIDs.insert(localPost.id, at: 0)
+                    }
+                    await syncFromBackend(reason: "post.created")
                     showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
                 } catch {
                     showToast(error.localizedDescription)

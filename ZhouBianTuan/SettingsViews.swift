@@ -70,9 +70,9 @@ struct AccountSecuritySettingsView: View {
             SettingsDetailGroup {
                 SettingsValueRow(title: "邮箱", value: store.currentUser.email.isEmpty ? "未绑定" : "已绑定")
                 SettingsSeparator()
-                SettingsValueRow(title: "密码登录", value: store.isBackendEnabled ? "已启用" : "已设置")
+                SettingsValueRow(title: "密码登录", value: "已启用")
                 SettingsSeparator()
-                SettingsValueRow(title: "邮箱验证码", value: store.isBackendEnabled ? "可用" : "本地模式不可用")
+                SettingsValueRow(title: "邮箱验证码", value: "可用")
             }
 
             SettingsDetailGroup {
@@ -118,13 +118,6 @@ struct GeneralSettingsView: View {
                     }
                 SettingsSeparator()
                 SettingsToggleRow(title: "未关注回复前最多两条私信", subtitle: "开启后，对方未关注你时，对方回复之前只能连续发送两条消息", isOn: $store.limitsUnrepliedMessages)
-                #if DEBUG
-                SettingsSeparator()
-                SettingsToggleRow(title: "阿里云后端测试", subtitle: "开启后使用 ECS + RDS + OSS 测试接口", isOn: $store.isBackendEnabled)
-                    .onChange(of: store.isBackendEnabled) {
-                        store.backendModeChanged()
-                    }
-                #endif
             }
         }
     }

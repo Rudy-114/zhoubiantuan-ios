@@ -27,6 +27,7 @@ enum BackendDateParser {
 
 struct BackendPayload: Decodable {
     var token: String?
+    var syncCursor: String?
     var currentUser: BackendUser?
     var users: [BackendUser]?
     var posts: [BackendPost]?
@@ -332,6 +333,59 @@ struct BackendMessageThreadResponse: Decodable {
     let thread: BackendMessageThread
 }
 
+struct BackendSyncPayload: Decodable {
+    let nextCursor: String
+    let hasMore: Bool
+    let events: [BackendSyncEvent]
+    let users: [BackendUser]?
+    let posts: [BackendPost]?
+    let collections: [BackendCollection]?
+    let comments: [BackendComment]?
+    let messageThreads: [BackendMessageThread]
+    let unreadMessageCount: Int
+    let likedPostIDs: [String]?
+    let favoritePostIDs: [String]?
+    let followedUserIDs: [String]?
+    let followingByUserID: [String: [String]]?
+}
+
+struct BackendSyncEvent: Decodable {
+    let id: String
+    let userID: String?
+    let eventType: String
+    let entityType: String
+    let entityID: String
+    let threadID: String?
+    let createdAt: String
+}
+
+struct BackendRealtimeEvent: Decodable {
+    let type: String
+    let cursor: String?
+    let eventType: String?
+    let threadID: String?
+}
+
+enum SyncCursorStore {
+    private static let prefix = "zhoubiantuan.syncCursor"
+
+    static func cursor(for userID: String) -> String? {
+        UserDefaults.standard.string(forKey: key(for: userID))
+    }
+
+    static func set(_ cursor: String, for userID: String) {
+        UserDefaults.standard.set(cursor, forKey: key(for: userID))
+    }
+
+    static func remove(for userID: String) {
+        UserDefaults.standard.removeObject(forKey: key(for: userID))
+    }
+
+    private static func key(for userID: String) -> String {
+        "\(prefix).\(userID)"
+    }
+}
+
 struct UploadTarget: Decodable {
     let objectKey: String
     let uploadUrl: String
@@ -340,6 +394,9 @@ struct UploadTarget: Decodable {
 final class AliyunBackendClient {
     static let baseURLDefaultsKey = "zhoubiantuan.backendBaseURL"
     static let defaultBaseURL = "https://api.zhoubiantuanmail.top/api"
+    #if DEBUG
+    static let debugDefaultBaseURL = "http://127.0.0.1:18080/api"
+    #endif
     static var currentBaseURLString: String { configuredBaseURL }
 
     private let baseURL: URL
@@ -355,7 +412,7 @@ final class AliyunBackendClient {
 
     private static var configuredBaseURL: String {
         #if DEBUG
-        return UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? defaultBaseURL
+        return UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? debugDefaultBaseURL
         #else
         return defaultBaseURL
         #endif
@@ -364,6 +421,16 @@ final class AliyunBackendClient {
     init(baseURLString: String = AliyunBackendClient.configuredBaseURL, session: URLSession = AliyunBackendClient.defaultSession) {
         self.baseURL = URL(string: baseURLString) ?? URL(string: Self.defaultBaseURL)!
         self.session = session
+    }
+
+    var webSocketURL: URL {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return baseURL
+        }
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = "/" + ([basePath, "ws"].filter { !$0.isEmpty }.joined(separator: "/"))
+        return components.url ?? baseURL
     }
 
     func register(email: String, password: String, nickname: String) async throws -> BackendPayload {
@@ -406,6 +473,11 @@ final class AliyunBackendClient {
 
     func bootstrap(token: String) async throws -> BackendPayload {
         try await request("/bootstrap", token: token)
+    }
+
+    func sync(token: String, cursor: String, limit: Int = 100) async throws -> BackendSyncPayload {
+        let encodedCursor = cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "0"
+        return try await request("/sync?cursor=\(encodedCursor)&limit=\(limit)", token: token)
     }
 
     @discardableResult
@@ -633,3 +705,129 @@ struct BackendDateParserString {
 }
 
 struct EmptyResponse: Decodable {}
+
+@MainActor
+final class RealtimeConnection {
+    private let backendClient: AliyunBackendClient
+    private let session: URLSession
+    private let onEvent: (BackendRealtimeEvent) async -> Void
+    private let onStateChange: (Bool) -> Void
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var receiveTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
+    private var token: String?
+    private var shouldReconnect = false
+    private var reconnectAttempt = 0
+    private var isConnected = false
+
+    init(
+        backendClient: AliyunBackendClient,
+        session: URLSession = .shared,
+        onEvent: @escaping (BackendRealtimeEvent) async -> Void,
+        onStateChange: @escaping (Bool) -> Void
+    ) {
+        self.backendClient = backendClient
+        self.session = session
+        self.onEvent = onEvent
+        self.onStateChange = onStateChange
+    }
+
+    func connect(token: String) {
+        self.token = token
+        shouldReconnect = true
+        guard webSocketTask == nil else { return }
+        open()
+    }
+
+    func disconnect() {
+        shouldReconnect = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        updateConnected(false)
+    }
+
+    private func open() {
+        guard shouldReconnect, let token else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+
+        var request = URLRequest(url: backendClient.webSocketURL)
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let task = session.webSocketTask(with: request)
+        webSocketTask = task
+        task.resume()
+        updateConnected(true)
+        startReceiveLoop(for: task)
+        resetAttemptAfterStableConnection()
+    }
+
+    private func startReceiveLoop(for task: URLSessionWebSocketTask) {
+        receiveTask?.cancel()
+        receiveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    let message = try await task.receive()
+                    await self?.handle(message)
+                } catch {
+                    self?.handleDisconnect()
+                    return
+                }
+            }
+        }
+    }
+
+    private func handle(_ message: URLSessionWebSocketTask.Message) async {
+        let data: Data?
+        switch message {
+        case .string(let string):
+            data = string.data(using: .utf8)
+        case .data(let incomingData):
+            data = incomingData
+        @unknown default:
+            data = nil
+        }
+        guard let data,
+              let event = try? JSONDecoder().decode(BackendRealtimeEvent.self, from: data) else { return }
+        reconnectAttempt = 0
+        await onEvent(event)
+    }
+
+    private func handleDisconnect() {
+        webSocketTask = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+        updateConnected(false)
+        scheduleReconnectIfNeeded()
+    }
+
+    private func scheduleReconnectIfNeeded() {
+        guard shouldReconnect, reconnectTask == nil else { return }
+        let delays: [UInt64] = [1, 2, 5, 10, 30]
+        let delay = delays[min(reconnectAttempt, delays.count - 1)]
+        reconnectAttempt += 1
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            self?.open()
+        }
+    }
+
+    private func resetAttemptAfterStableConnection() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, self.isConnected else { return }
+            self.reconnectAttempt = 0
+        }
+    }
+
+    private func updateConnected(_ connected: Bool) {
+        guard isConnected != connected else { return }
+        isConnected = connected
+        onStateChange(connected)
+    }
+}

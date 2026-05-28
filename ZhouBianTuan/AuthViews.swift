@@ -167,7 +167,7 @@ enum AccountAuthMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static func available(isBackendEnabled: Bool) -> [AccountAuthMode] {
-        isBackendEnabled ? Self.allCases : [.register, .passwordLogin]
+        Self.allCases
     }
 }
 
@@ -188,17 +188,16 @@ struct AccountAuthView: View {
         switch mode {
         case .register:
             !nickname.trimmed.isEmpty &&
-            (store.isBackendEnabled ? email.trimmed.contains("@") : email.trimmed.count >= 6) &&
+            email.trimmed.contains("@") &&
             password.trimmed.count >= 6 &&
             password == confirmPassword &&
-            (!store.isBackendEnabled || code.trimmed.count == 6) &&
+            code.trimmed.count == 6 &&
             hasAcceptedTerms
         case .passwordLogin:
-            (store.isBackendEnabled ? email.trimmed.contains("@") : email.trimmed.count >= 6) &&
+            email.trimmed.contains("@") &&
             !password.trimmed.isEmpty &&
             hasAcceptedTerms
         case .codeLogin:
-            store.isBackendEnabled &&
             email.trimmed.contains("@") &&
             code.trimmed.count == 6 &&
             hasAcceptedTerms
@@ -206,11 +205,11 @@ struct AccountAuthView: View {
     }
 
     var shouldShowCodeField: Bool {
-        store.isBackendEnabled && (mode == .register || mode == .codeLogin)
+        mode == .register || mode == .codeLogin
     }
 
     var canRequestCode: Bool {
-        store.isBackendEnabled && email.trimmed.contains("@") && !isSendingCode && codeResendSecondsRemaining == 0
+        email.trimmed.contains("@") && !isSendingCode && codeResendSecondsRemaining == 0
     }
 
     var body: some View {
@@ -272,11 +271,11 @@ struct AccountAuthView: View {
                             AuthTextField(title: "昵称", placeholder: "设置你的昵称", text: $nickname)
                         }
                         AuthTextField(
-                            title: store.isBackendEnabled ? "邮箱" : "手机号",
-                            placeholder: store.isBackendEnabled ? "输入邮箱" : "输入手机号",
+                            title: "邮箱",
+                            placeholder: "输入邮箱",
                             text: $email,
-                            keyboardType: store.isBackendEnabled ? .emailAddress : .phonePad,
-                            textContentType: store.isBackendEnabled ? .emailAddress : .telephoneNumber
+                            keyboardType: .emailAddress,
+                            textContentType: .emailAddress
                         )
                         if shouldShowCodeField {
                             HStack(alignment: .bottom, spacing: 10) {
@@ -341,9 +340,6 @@ struct AccountAuthView: View {
     }
 
     private var titleText: String {
-        if !store.isBackendEnabled {
-            return mode == .register ? "手机号注册" : "手机号登录"
-        }
         switch mode {
         case .register: return "邮箱注册"
         case .passwordLogin: return "密码登录"
@@ -352,9 +348,6 @@ struct AccountAuthView: View {
     }
 
     private var subtitleText: String {
-        if !store.isBackendEnabled {
-            return mode == .register ? "创建账号后会自动进入个人主页。" : "输入已注册手机号和密码继续。"
-        }
         switch mode {
         case .register:
             return "先获取验证码，设置密码后即可创建账号。"

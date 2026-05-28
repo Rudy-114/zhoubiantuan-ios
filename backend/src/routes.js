@@ -6,11 +6,14 @@ import { loadBootstrap } from "./bootstrap.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
-import { collectionToClient, commentToClient, directMessageToClient, messageThreadToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
+import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
+import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { createUploadTarget, signedReadUrl } from "./oss.js";
 import { createRateLimiter } from "./rateLimit.js";
+import { notifySyncEvents } from "./realtime.js";
+import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
 
 export function createRouter() {
@@ -157,7 +160,18 @@ export function createRouter() {
   });
 
   router.get("/bootstrap", requireAuth, async (req, res) => {
-    res.json({ currentUser: userToClient(req.user), ...(await loadBootstrap(req.user.id)) });
+    const syncCursor = await getCurrentSyncCursor();
+    res.json({ currentUser: userToClient(req.user), syncCursor, ...(await loadBootstrap(req.user.id)) });
+  });
+
+  router.get("/sync", requireAuth, async (req, res, next) => {
+    try {
+      const payload = await loadSyncPayload(req.user.id, { cursor: req.query.cursor, limit: req.query.limit });
+      console.log(`sync cursor request user=${req.user.id} cursor=${String(req.query.cursor || "0")} next=${payload.nextCursor} events=${payload.events.length}`);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/me", requireAuth, async (req, res) => {
@@ -358,7 +372,7 @@ export function createRouter() {
         text: publicContentModerationText(postSnapshot),
         imageObjectKeys
       });
-      const post = await withTransaction(async (client) => {
+      const { post, syncEvents } = await withTransaction(async (client) => {
         const { rows } = await client.query(
           `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, image_object_keys, group_type,
@@ -407,18 +421,48 @@ export function createRouter() {
             snapshot: postSnapshot
           });
         }
-        return rows[0];
+        const audience = await syncAudienceForPublicContent(client, [req.user.id], moderation.status === "active");
+        const syncEvents = await createSyncEventsForUsers(client, {
+          userIds: audience,
+          eventType: "post.created",
+          entityType: "post",
+          entityId: postId
+        });
+        return { post: rows[0], syncEvents };
       });
+      if (syncEvents.length) {
+        console.log(`post created id=${postId} status=${moderation.status} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
       res.status(201).json({ post: postToClient(post), moderation });
     } catch (error) {
       next(error);
     }
   });
 
-  router.delete("/posts/:id", requireAuth, async (req, res) => {
-    const { rows } = await query("UPDATE posts SET status = 'deleted', updated_at = now() WHERE id = $1 AND author_id = $2 RETURNING id", [req.params.id, req.user.id]);
-    if (!rows[0]) return res.status(404).json({ error: "只能删除自己的帖子" });
-    res.status(204).end();
+  router.delete("/posts/:id", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await withTransaction(async (client) => {
+        const { rows } = await client.query(
+          "UPDATE posts SET status = 'deleted', updated_at = now() WHERE id = $1 AND author_id = $2 RETURNING id",
+          [req.params.id, req.user.id]
+        );
+        if (!rows[0]) return null;
+        const audience = await activeUserIds(client);
+        return createSyncEventsForUsers(client, {
+          userIds: audience,
+          eventType: "post.deleted",
+          entityType: "post",
+          entityId: req.params.id
+        });
+      });
+      if (!syncEvents) return res.status(404).json({ error: "只能删除自己的帖子" });
+      console.log(`post deleted id=${req.params.id} events=${syncEvents.length}`);
+      notifySyncEvents(syncEvents);
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/posts/:id/comments", requireAuth, async (req, res, next) => {
@@ -426,7 +470,7 @@ export function createRouter() {
       const body = trimmedString(req.body.body);
       const replyToID = trimmedString(req.body.replyToID);
       if (!body) throw badRequest("评论不能为空");
-      const post = await query("SELECT id FROM posts WHERE id = $1 AND status = 'active'", [req.params.id]);
+      const post = await query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [req.params.id]);
       if (!post.rows[0]) throw badRequest("帖子不存在或不可评论");
       if (replyToID) {
         const reply = await query("SELECT id FROM comments WHERE id = $1 AND post_id = $2 AND status = 'active'", [replyToID, req.params.id]);
@@ -439,7 +483,7 @@ export function createRouter() {
         ownerId: req.user.id,
         text: body
       });
-      const comment = await withTransaction(async (client) => {
+      const { comment, syncEvents } = await withTransaction(async (client) => {
         const { rows } = await client.query(
           "INSERT INTO comments (id, post_id, author_id, body, reply_to_id, status) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6) RETURNING *",
           [commentId, req.params.id, req.user.id, body, replyToID, moderation.status]
@@ -454,58 +498,133 @@ export function createRouter() {
             snapshot: { body, postID: req.params.id, replyToID }
           });
         }
-        return rows[0];
+        const audience = await syncAudienceForPublicContent(client, [req.user.id, post.rows[0].author_id], moderation.status === "active");
+        const syncEvents = await createSyncEventsForUsers(client, {
+          userIds: audience,
+          eventType: "comment.created",
+          entityType: "comment",
+          entityId: commentId
+        });
+        return { comment: rows[0], syncEvents };
       });
+      if (syncEvents.length) {
+        console.log(`comment created id=${commentId} post=${req.params.id} status=${moderation.status} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
       res.status(201).json({ comment: commentToClient(comment), moderation });
     } catch (error) {
       next(error);
     }
   });
 
-  router.delete("/comments/:id", requireAuth, async (req, res) => {
-    const { rows } = await query(
-      `UPDATE comments c
-       SET status = 'deleted'
-       FROM posts p
-       WHERE c.id = $1
-         AND c.post_id = p.id
-         AND c.status = 'active'
-         AND (c.author_id = $2 OR p.author_id = $2)
-       RETURNING c.id`,
-      [req.params.id, req.user.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: "只能删除自己的评论或自己帖子下的评论" });
-    res.status(204).end();
+  router.delete("/comments/:id", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await withTransaction(async (client) => {
+        const { rows } = await client.query(
+          `UPDATE comments c
+           SET status = 'deleted'
+           FROM posts p
+           WHERE c.id = $1
+             AND c.post_id = p.id
+             AND c.status = 'active'
+             AND (c.author_id = $2 OR p.author_id = $2)
+           RETURNING c.id, c.post_id`,
+          [req.params.id, req.user.id]
+        );
+        if (!rows[0]) return null;
+        const audience = await activeUserIds(client);
+        return createSyncEventsForUsers(client, {
+          userIds: audience,
+          eventType: "comment.deleted",
+          entityType: "comment",
+          entityId: req.params.id
+        });
+      });
+      if (!syncEvents) return res.status(404).json({ error: "只能删除自己的评论或自己帖子下的评论" });
+      console.log(`comment deleted id=${req.params.id} events=${syncEvents.length}`);
+      notifySyncEvents(syncEvents);
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.post("/posts/:id/like", requireAuth, async (req, res) => {
-    await query("INSERT INTO post_likes (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.post("/posts/:id/like", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.liked", enabled: true });
+      if (syncEvents.length) {
+        console.log(`post liked post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.delete("/posts/:id/like", requireAuth, async (req, res) => {
-    await query("DELETE FROM post_likes WHERE user_id = $1 AND post_id = $2", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.delete("/posts/:id/like", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.unliked", enabled: false });
+      if (syncEvents.length) {
+        console.log(`post unliked post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.post("/posts/:id/favorite", requireAuth, async (req, res) => {
-    await query("INSERT INTO post_favorites (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.post("/posts/:id/favorite", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.favorited", enabled: true });
+      if (syncEvents.length) {
+        console.log(`post favorited post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.delete("/posts/:id/favorite", requireAuth, async (req, res) => {
-    await query("DELETE FROM post_favorites WHERE user_id = $1 AND post_id = $2", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.delete("/posts/:id/favorite", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.unfavorited", enabled: false });
+      if (syncEvents.length) {
+        console.log(`post unfavorited post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.post("/users/:id/follow", requireAuth, async (req, res) => {
-    await query("INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.post("/users/:id/follow", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: true });
+      if (syncEvents.length) {
+        console.log(`user followed follower=${req.user.id} following=${req.params.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.delete("/users/:id/follow", requireAuth, async (req, res) => {
-    await query("DELETE FROM follows WHERE follower_id = $1 AND following_id = $2", [req.user.id, req.params.id]);
-    res.status(204).end();
+  router.delete("/users/:id/follow", requireAuth, async (req, res, next) => {
+    try {
+      const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: false });
+      if (syncEvents.length) {
+        console.log(`user unfollowed follower=${req.user.id} following=${req.params.id} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/messages/threads/:id/messages", requireAuth, async (req, res, next) => {
@@ -531,7 +650,7 @@ export function createRouter() {
         if (!post.rows[0]) throw badRequest("关联帖子不存在");
       }
 
-      const thread = await withTransaction(async (client) => {
+      const { thread, syncEvents } = await withTransaction(async (client) => {
         const existing = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
         if (existing.rows[0]) {
           const row = existing.rows[0];
@@ -546,22 +665,40 @@ export function createRouter() {
           );
         }
 
-        await client.query(
+        const insertedMessage = await client.query(
           `INSERT INTO direct_messages (id, thread_id, sender_id, body, shared_post_id, shared_profile_user_id)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING`,
+           ON CONFLICT (id) DO NOTHING
+           RETURNING id`,
           [messageId, threadId, req.user.id, body, sharedPostID, sharedProfileUserID]
         );
-        await client.query("UPDATE message_threads SET updated_at = now() WHERE id = $1", [threadId]);
-        await client.query(
-          `INSERT INTO message_thread_reads (thread_id, user_id, read_at)
-           VALUES ($1, $2, now())
-           ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
-          [threadId, req.user.id]
-        );
-        return loadMessageThreadForUser(client, threadId, req.user.id);
+        let syncEvents = [];
+        if (insertedMessage.rows[0]) {
+          await client.query("UPDATE message_threads SET updated_at = now() WHERE id = $1", [threadId]);
+          await client.query(
+            `INSERT INTO message_thread_reads (thread_id, user_id, read_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
+            [threadId, req.user.id]
+          );
+          syncEvents = await createThreadSyncEvents(client, {
+            userIds: [req.user.id, recipientUserID],
+            eventType: "message.created",
+            entityType: "direct_message",
+            entityId: messageId,
+            threadId
+          });
+        }
+        return {
+          thread: await loadMessageThreadForUser(client, threadId, req.user.id),
+          syncEvents
+        };
       });
 
+      if (syncEvents.length) {
+        console.log(`message created thread=${threadId} message=${messageId} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
       res.status(201).json({ thread });
     } catch (error) {
       next(error);
@@ -571,17 +708,34 @@ export function createRouter() {
   router.post("/messages/threads/:id/read", requireAuth, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
-      const participant = await query(
-        "SELECT id FROM message_threads WHERE id = $1 AND (buyer_user_id = $2 OR publisher_user_id = $2)",
-        [threadId, req.user.id]
-      );
-      if (!participant.rows[0]) return res.status(404).json({ error: "会话不存在" });
-      await query(
-        `INSERT INTO message_thread_reads (thread_id, user_id, read_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
-        [threadId, req.user.id]
-      );
+      const syncEvents = await withTransaction(async (client) => {
+        const participant = await client.query(
+          "SELECT * FROM message_threads WHERE id = $1 AND (buyer_user_id = $2 OR publisher_user_id = $2) FOR UPDATE",
+          [threadId, req.user.id]
+        );
+        const thread = participant.rows[0];
+        if (!thread) {
+          const error = new Error("会话不存在");
+          error.status = 404;
+          throw error;
+        }
+        await client.query(
+          `INSERT INTO message_thread_reads (thread_id, user_id, read_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
+          [threadId, req.user.id]
+        );
+        const peerUserID = thread.buyer_user_id === req.user.id ? thread.publisher_user_id : thread.buyer_user_id;
+        return createThreadSyncEvents(client, {
+          userIds: [req.user.id, peerUserID],
+          eventType: "message.read",
+          entityType: "message_thread",
+          entityId: threadId,
+          threadId
+        });
+      });
+      console.log(`read ack thread=${threadId} user=${req.user.id} events=${syncEvents.length}`);
+      notifySyncEvents(syncEvents);
       res.status(204).end();
     } catch (error) {
       next(error);
@@ -771,28 +925,6 @@ async function consumeEmailCode(client, { email, purpose, code }) {
   await client.query("UPDATE email_verification_codes SET consumed_at = now() WHERE id = $1", [record.id]);
 }
 
-async function loadMessageThreadForUser(client, threadId, userId) {
-  const thread = await client.query(
-    `SELECT mt.*,
-      (SELECT count(*)
-       FROM direct_messages dm
-       WHERE dm.thread_id = mt.id
-         AND dm.sender_id <> $2
-         AND dm.created_at > COALESCE(
-           (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id = mt.id AND r.user_id = $2),
-           '-infinity'::timestamptz
-         )) AS unread_count
-     FROM message_threads mt
-     WHERE mt.id = $1
-       AND (mt.buyer_user_id = $2 OR mt.publisher_user_id = $2)`,
-    [threadId, userId]
-  );
-  const row = thread.rows[0];
-  if (!row) throw badRequest("会话不存在");
-  const messages = await client.query("SELECT * FROM direct_messages WHERE thread_id = $1 ORDER BY created_at ASC", [threadId]);
-  return messageThreadToClient(row, messages.rows.map(directMessageToClient));
-}
-
 function hashEmailCode({ email, purpose, code }) {
   return createHash("sha256")
     .update(`${email}:${purpose}:${code}:${config.email.codeSecret}`)
@@ -800,11 +932,76 @@ function hashEmailCode({ email, purpose, code }) {
 }
 
 async function authPayload(user) {
+  const syncCursor = await getCurrentSyncCursor();
   return {
     token: signToken(user),
     currentUser: userToClient(user),
+    syncCursor,
     ...(await loadBootstrap(user.id))
   };
+}
+
+async function activeUserIds(client) {
+  const { rows } = await client.query("SELECT id FROM users WHERE deleted_at IS NULL AND status = 'active'");
+  return rows.map((row) => row.id);
+}
+
+async function syncAudienceForPublicContent(client, seedUserIds, shouldBroadcast) {
+  if (shouldBroadcast) return activeUserIds(client);
+  return uniqueIds(seedUserIds);
+}
+
+async function setPostReaction({ userId, postId, table, eventType, enabled }) {
+  if (!["post_likes", "post_favorites"].includes(table)) {
+    throw badRequest("互动类型无效");
+  }
+  return withTransaction(async (client) => {
+    const post = await client.query("SELECT id FROM posts WHERE id = $1 AND status = 'active'", [postId]);
+    if (!post.rows[0]) return [];
+
+    const result = enabled
+      ? await client.query(`INSERT INTO ${table} (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [userId, postId])
+      : await client.query(`DELETE FROM ${table} WHERE user_id = $1 AND post_id = $2`, [userId, postId]);
+    if (!result.rowCount) return [];
+
+    const audience = await activeUserIds(client);
+    return createSyncEventsForUsers(client, {
+      userIds: audience,
+      eventType,
+      entityType: "post",
+      entityId: postId
+    });
+  });
+}
+
+async function setFollowState({ followerId, followingId, enabled }) {
+  if (followerId === followingId) return [];
+  return withTransaction(async (client) => {
+    const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [followingId]);
+    if (!target.rows[0]) return [];
+
+    const result = enabled
+      ? await client.query("INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [followerId, followingId])
+      : await client.query("DELETE FROM follows WHERE follower_id = $1 AND following_id = $2", [followerId, followingId]);
+    if (!result.rowCount) return [];
+
+    const audience = uniqueIds([followerId, followingId]);
+    const entityIds = uniqueIds([followerId, followingId]);
+    const syncEvents = [];
+    for (const entityId of entityIds) {
+      syncEvents.push(...(await createSyncEventsForUsers(client, {
+        userIds: audience,
+        eventType: enabled ? "user.followed" : "user.unfollowed",
+        entityType: "user",
+        entityId
+      })));
+    }
+    return syncEvents;
+  });
+}
+
+function uniqueIds(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 async function createCollection(userId, body) {

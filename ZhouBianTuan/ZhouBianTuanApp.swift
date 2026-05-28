@@ -193,7 +193,7 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     store.startBackendAutoRefresh()
-                    Task { await store.refreshFromBackend(silent: true) }
+                    Task { await store.syncFromBackend(reason: "foreground") }
                 } else {
                     store.stopBackendAutoRefresh()
                 }
