@@ -5,6 +5,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 struct CreatePostView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     @State private var title = ""
     @State private var selectedGroupType: GroupBuyType?
@@ -26,9 +27,16 @@ struct CreatePostView: View {
     @State private var newRoleQuantity = "1"
     @State private var newRolePriceAdjustment = ""
     @State private var roleDrafts: [UnsoldRole] = []
+    @State private var loadedRepublishPostID = ""
+    @State private var isLoadingRepublishImages = false
     @State private var isCollectionPickerPresented = false
     @State private var isCreatingCollection = false
     @State private var isPhotoLibraryPresented = false
+    let republishingPostID: String?
+
+    init(republishingPostID: String? = nil) {
+        self.republishingPostID = republishingPostID
+    }
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
     let noCollectionID = "none"
@@ -39,6 +47,10 @@ struct CreatePostView: View {
 
     var usesCollection: Bool {
         selectedCollection != nil
+    }
+
+    var isRepublishing: Bool {
+        republishingPostID != nil
     }
 
     var isSplitGoods: Bool {
@@ -74,7 +86,7 @@ struct CreatePostView: View {
         if store.isLoggedIn {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    HeaderTitle(title: "发布团购帖", subtitle: "每个帖子必须归入一个拼团合集")
+                    HeaderTitle(title: isRepublishing ? "重新编辑团购帖" : "发布团购帖", subtitle: isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
                 VStack(alignment: .leading, spacing: 14) {
                     RequiredLabel("拼团类型")
                     HStack(spacing: 10) {
@@ -151,6 +163,11 @@ struct CreatePostView: View {
                     Text(uploadedImageData.isEmpty ? "点击加号从相册导入图片。" : "拖动图片调整顺序，第一张会作为信息流封面。")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Theme.muted)
+                    if isLoadingRepublishImages {
+                        Label("正在载入旧帖图片", systemImage: "arrow.down.circle")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.hotPink)
+                    }
                 }
                 .padding(.horizontal, 16)
 
@@ -271,11 +288,15 @@ struct CreatePostView: View {
 
                 Button {
                     if let selectedGroupType, let selectedCollection {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts)
-                        reset()
+                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID)
+                        if isRepublishing {
+                            dismiss()
+                        } else {
+                            reset()
+                        }
                     }
                 } label: {
-                    Text(canPublish ? "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块" : "补齐必填字段后发布")
+                    Text(canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
                         .font(.system(size: 17, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
@@ -291,6 +312,9 @@ struct CreatePostView: View {
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
+            .task(id: republishingPostID) {
+                await loadRepublishDraftIfNeeded()
+            }
             .sheet(isPresented: $isCollectionPickerPresented) {
                 CollectionPickerSheet(
                     collections: store.collections(ownerID: store.currentUserID),
@@ -338,6 +362,50 @@ struct CreatePostView: View {
         newRoleQuantity = "1"
         newRolePriceAdjustment = ""
         roleDrafts = []
+    }
+
+    @MainActor
+    func loadRepublishDraftIfNeeded() async {
+        guard let republishingPostID,
+              loadedRepublishPostID != republishingPostID,
+              let post = store.post(id: republishingPostID) else { return }
+        loadedRepublishPostID = republishingPostID
+        title = post.title
+        selectedGroupType = post.groupType
+        selectedCollectionID = post.collectionID ?? noCollectionID
+        selectedTags = Set(post.categoryTags)
+        let priceBounds = draftPriceBounds(from: post.price)
+        priceLowerBound = priceBounds.lower
+        priceUpperBound = priceBounds.upper
+        depositPercent = draftDepositPercent(from: post.deposit)
+        condition = post.condition
+        description = post.description
+        pingguAveragePrice = post.pingguAveragePrice
+        pingguNote = post.pingguNote
+        roleDrafts = post.unsoldRoles
+        wechat = post.wechat
+        qq = post.qq
+        groupInfo = post.groupInfo
+        deadline = post.deadline
+        uploadedImageData = post.uploadedImageData
+        if uploadedImageData.isEmpty && !post.remoteImageURLs.isEmpty {
+            isLoadingRepublishImages = true
+            uploadedImageData = await loadImageData(from: post.remoteImageURLs)
+            isLoadingRepublishImages = false
+        }
+    }
+
+    func loadImageData(from urlStrings: [String]) async -> [Data] {
+        var loaded: [Data] = []
+        for urlString in urlStrings.prefix(16) {
+            guard let url = URL(string: urlString),
+                  let (data, response) = try? await URLSession.shared.data(from: url),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  UIImage(data: data) != nil else { continue }
+            loaded.append(data)
+        }
+        return loaded
     }
 
     func addRoleDraft() {
@@ -1116,4 +1184,23 @@ struct CollectionPickerOption: View {
         .saturation(isEnded ? 0 : 1)
         .opacity(isEnded ? 0.56 : 1)
     }
+}
+
+private func draftPriceBounds(from value: String) -> (lower: String, upper: String) {
+    let numbers = draftNumbers(from: value)
+    guard let first = numbers.first else { return ("", "") }
+    return (first, numbers.dropFirst().first ?? first)
+}
+
+private func draftDepositPercent(from value: String) -> String {
+    guard !value.contains("无") else { return "" }
+    return draftNumbers(from: value).first ?? ""
+}
+
+private func draftNumbers(from value: String) -> [String] {
+    value.split { character in
+        !(character.isNumber || character == ".")
+    }
+    .map(String.init)
+    .filter { !$0.isEmpty }
 }

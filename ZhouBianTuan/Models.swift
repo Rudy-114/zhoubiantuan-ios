@@ -307,6 +307,24 @@ enum ContentStatus: String, Hashable {
     case hidden = "已隐藏"
     case removed = "已下架"
     case deleted = "已删除"
+
+    var needsOwnerAttention: Bool {
+        switch self {
+        case .pending, .review, .rejected, .hidden, .removed:
+            return true
+        case .active, .deleted:
+            return false
+        }
+    }
+
+    var canRepublish: Bool {
+        switch self {
+        case .rejected, .hidden, .removed:
+            return true
+        case .pending, .review, .active, .deleted:
+            return false
+        }
+    }
 }
 
 enum ReportStatus: String, Hashable {

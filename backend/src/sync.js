@@ -50,6 +50,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   const threadIds = rows.map((row) => row.thread_id).filter(Boolean);
   const commentIds = unique(rows.filter((row) => row.entity_type === "comment").map((row) => row.entity_id));
   const initialPostIds = unique(rows.filter((row) => row.entity_type === "post").map((row) => row.entity_id));
+  const initialCollectionIds = unique(rows.filter((row) => row.entity_type === "collection").map((row) => row.entity_id));
   const initialUserIds = unique(rows.filter((row) => row.entity_type === "user").map((row) => row.entity_id));
 
   const [messageThreads, unreadMessageCount, comments, relationships] = await Promise.all([
@@ -60,7 +61,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   ]);
   const postIds = unique([...initialPostIds, ...comments.map((comment) => comment.postID)]);
   const posts = await loadPostsForSync(userId, postIds);
-  const collectionIds = unique(posts.map((post) => post.collectionID).filter(Boolean));
+  const collectionIds = unique([...initialCollectionIds, ...posts.map((post) => post.collectionID).filter(Boolean)]);
   const collections = await loadCollectionsForSync(userId, collectionIds);
   const userIds = unique([
     ...initialUserIds,

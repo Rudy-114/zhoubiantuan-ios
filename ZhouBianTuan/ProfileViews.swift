@@ -514,12 +514,20 @@ struct ProfileNotesPanel: View {
         store.profilePosts(userID: userID)
     }
 
+    var attentionPosts: [GroupBuyPost] {
+        canManage ? store.profileAttentionPosts(userID: userID) : []
+    }
+
+    var attentionSectionTitle: String {
+        attentionPosts.contains { !$0.status.canRepublish } ? "审核处理" : "未通过审核"
+    }
+
     var body: some View {
-        if posts.isEmpty {
+        if posts.isEmpty && attentionPosts.isEmpty {
             ProfileEmptyNotesView()
         } else {
             VStack(spacing: 12) {
-                if canManage {
+                if canManage && !posts.isEmpty {
                     HStack {
                         Text("我的帖子")
                             .font(.system(size: 18, weight: .black))
@@ -543,7 +551,7 @@ struct ProfileNotesPanel: View {
                     .padding(.top, 14)
                 }
 
-                if isManaging {
+                if !posts.isEmpty && isManaging {
                     VStack(spacing: 10) {
                         ForEach(posts) { post in
                             ProfilePostManageRow(post: post)
@@ -551,13 +559,117 @@ struct ProfileNotesPanel: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 28)
-                } else {
+                } else if !posts.isEmpty {
                     WaterfallGrid(posts: posts)
                         .padding(.horizontal, 12)
                         .padding(.top, canManage ? 0 : 14)
                         .padding(.bottom, 28)
                 }
+
+                if !attentionPosts.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(attentionSectionTitle)
+                                .font(.system(size: 18, weight: .black))
+                                .foregroundStyle(Theme.text)
+                            Spacer()
+                            Text("\(attentionPosts.count)")
+                                .font(.system(size: 13, weight: .black))
+                                .foregroundStyle(Theme.hotPink)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                        }
+                        ForEach(attentionPosts) { post in
+                            ProfileAttentionPostRow(post: post)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, posts.isEmpty ? 14 : 0)
+                    .padding(.bottom, 28)
+                }
             }
+        }
+    }
+}
+
+struct ProfileAttentionPostRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let post: GroupBuyPost
+
+    var subtitle: String {
+        if post.moderationReason.trimmed.isEmpty {
+            return post.status == .review || post.status == .pending ? "正在等待审核结果" : "可以重新编辑后再发布"
+        }
+        return post.moderationReason
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                PostImageView(post: post)
+                    .scaledToFill()
+                    .frame(width: 62, height: 62)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .saturation(0.65)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(post.title)
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                        .lineLimit(2)
+                    Text(post.status.rawValue)
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(post.status.canRepublish ? Theme.hotPink : Theme.muted)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background((post.status.canRepublish ? Theme.hotPink.opacity(0.13) : Theme.panelRaised), in: Capsule())
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                if post.status.canRepublish {
+                    NavigationLink(value: Route.editRejectedPost(post.id)) {
+                        Label("重新编辑", systemImage: "pencil")
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.hotPink, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Label("等待审核", systemImage: "clock")
+                        .font(.system(size: 14, weight: .black))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.panelRaised, in: Capsule())
+                }
+
+                Button {
+                    store.deleteOwnPost(postID: post.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Theme.hotPink)
+                        .frame(width: 44, height: 40)
+                        .background(Theme.hotPink.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 1)
         }
     }
 }
@@ -865,6 +977,7 @@ struct CollectionCard: View {
 struct CreateCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    let editingCollection: GroupCollection?
     var onCreated: ((String) -> Void)? = nil
     @State private var name = ""
     @State private var wechat = ""
@@ -874,6 +987,22 @@ struct CreateCollectionSheet: View {
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var note = ""
 
+    init(editingCollection: GroupCollection? = nil, onCreated: ((String) -> Void)? = nil) {
+        self.editingCollection = editingCollection
+        self.onCreated = onCreated
+        _name = State(initialValue: editingCollection?.name ?? "")
+        _wechat = State(initialValue: editingCollection?.contactWechat ?? "")
+        _qq = State(initialValue: editingCollection?.contactQQ ?? "")
+        _groupNumber = State(initialValue: editingCollection?.contactGroupNumber ?? "")
+        _groupInfo = State(initialValue: editingCollection?.groupInfo ?? "")
+        _deadline = State(initialValue: editingCollection?.deadline ?? Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date())
+        _note = State(initialValue: editingCollection?.defaultNote ?? "")
+    }
+
+    var isEditing: Bool {
+        editingCollection != nil
+    }
+
     var canCreate: Bool {
         !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty) && !note.trimmed.isEmpty
     }
@@ -882,7 +1011,7 @@ struct CreateCollectionSheet: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HeaderTitle(title: "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
+                    HeaderTitle(title: isEditing ? "编辑拼团信息" : "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
                     PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
                     HStack(spacing: 10) {
                         PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
@@ -897,12 +1026,14 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
-                        if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
+                        if let editingCollection {
+                            store.updateCollection(id: editingCollection.id, name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
+                        } else if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
                             onCreated?(collectionID)
                         }
                         dismiss()
                     } label: {
-                        Text(canCreate ? "创建合集" : "补齐必填字段")
+                        Text(canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段")
                             .font(.system(size: 17, weight: .bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
@@ -928,6 +1059,7 @@ struct CreateCollectionSheet: View {
 
 struct CollectionDetailView: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var isEditingCollection = false
     let collectionID: String
 
     var body: some View {
@@ -937,6 +1069,20 @@ struct CollectionDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     HeaderTitle(title: collection.name, subtitle: "合集共享信息会自动继承到新发布帖子")
+                    if canManage {
+                        Button {
+                            isEditingCollection = true
+                        } label: {
+                            Label("编辑拼团信息", systemImage: "pencil")
+                                .font(.system(size: 15, weight: .black))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Theme.hotPink, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                    }
                     CollectionSharedInfoCard(collection: collection)
                         .padding(.horizontal, 16)
                     if canManage {
@@ -965,6 +1111,11 @@ struct CollectionDetailView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $isEditingCollection) {
+                CreateCollectionSheet(editingCollection: collection)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
         } else {
             ContentUnavailableView("合集不存在", systemImage: "rectangle.stack.badge.minus")
                 .background(Theme.background)

@@ -343,6 +343,10 @@ struct BackendMessageThreadResponse: Decodable {
     let thread: BackendMessageThread
 }
 
+struct BackendCollectionMutationResponse: Decodable {
+    let collection: BackendCollection
+}
+
 struct BackendSyncPayload: Decodable {
     let nextCursor: String
     let hasMore: Bool
@@ -515,6 +519,19 @@ final class AliyunBackendClient {
     func createCollection(token: String, collection: GroupCollection) async throws {
         let _: EmptyResponse = try await request("/collections", method: "POST", token: token, body: [
             "id": collection.id,
+            "name": collection.name,
+            "wechat": collection.contactWechat,
+            "qq": collection.contactQQ,
+            "groupNumber": collection.contactGroupNumber,
+            "groupInfo": collection.groupInfo,
+            "deadline": BackendDateParserString.string(from: collection.deadline),
+            "defaultNote": collection.defaultNote
+        ])
+    }
+
+    @discardableResult
+    func updateCollection(token: String, collection: GroupCollection) async throws -> BackendCollectionMutationResponse {
+        try await request("/collections/\(collection.id)", method: "PATCH", token: token, body: [
             "name": collection.name,
             "wechat": collection.contactWechat,
             "qq": collection.contactQQ,

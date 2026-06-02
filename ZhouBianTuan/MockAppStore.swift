@@ -608,7 +608,13 @@ final class MockAppStore: ObservableObject {
     }
 
     func profilePosts(userID: String) -> [GroupBuyPost] {
-        let source = userID == currentUserID ? posts.filter { $0.authorID == userID && $0.status != .deleted } : activePosts.filter { $0.authorID == userID }
+        let source = activePosts.filter { $0.authorID == userID }
+        return sortedFeedPosts(source)
+    }
+
+    func profileAttentionPosts(userID: String) -> [GroupBuyPost] {
+        guard userID == currentUserID else { return [] }
+        let source = posts.filter { $0.authorID == userID && $0.status.needsOwnerAttention }
         return sortedFeedPosts(source)
     }
 
@@ -737,7 +743,7 @@ final class MockAppStore: ObservableObject {
 
     func posts(in collectionID: String) -> [GroupBuyPost] {
         guard let collection = collection(id: collectionID) else { return [] }
-        return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active || $0.authorID == currentUserID })
+        return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active })
     }
 
     func sortedFeedPosts(_ posts: [GroupBuyPost]) -> [GroupBuyPost] {
@@ -1655,6 +1661,46 @@ final class MockAppStore: ObservableObject {
         return collection.id
     }
 
+    func updateCollection(id: String, name: String, wechat: String, qq: String, groupNumber: String, groupInfo: String, deadline: Date, defaultNote: String) {
+        guard let index = collections.firstIndex(where: { $0.id == id && $0.ownerID == currentUserID }) else { return }
+        guard !name.trimmed.isEmpty else {
+            showToast("请先填写合集名称")
+            return
+        }
+        guard !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty else {
+            showToast("微信、QQ、QQ群号至少填写一个")
+            return
+        }
+        guard !defaultNote.trimmed.isEmpty else {
+            showToast("请填写默认说明")
+            return
+        }
+        var updated = collections[index]
+        updated.name = name.trimmed
+        updated.contactWechat = wechat.trimmed
+        updated.contactQQ = qq.trimmed
+        updated.contactGroupNumber = groupNumber.trimmed
+        updated.groupInfo = groupInfo.trimmed
+        updated.deadline = deadline
+        updated.defaultNote = defaultNote.trimmed.isEmpty ? "该合集内帖子共享联系方式、截团时间和默认说明。" : defaultNote.trimmed
+        collections[index] = updated
+        showToast("合集信息已保存")
+        if isBackendEnabled {
+            Task {
+                guard let backendToken else { return }
+                do {
+                    let response = try await backendClient.updateCollection(token: backendToken, collection: updated)
+                    mergeCollections([response.collection.localCollection()])
+                    await syncFromBackend(reason: "collection.updated")
+                    showToast("合集信息已同步")
+                } catch {
+                    showToast(error.localizedDescription)
+                    await refreshFromBackend(silent: true)
+                }
+            }
+        }
+    }
+
     func deleteCollections(ids: Set<String>) {
         let ownedIDs = Set(collections.filter { ids.contains($0.id) && $0.ownerID == currentUserID }.map(\.id))
         guard !ownedIDs.isEmpty else {
@@ -1702,6 +1748,16 @@ final class MockAppStore: ObservableObject {
     func deleteOwnPost(postID: String) {
         guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
               posts[postIndex].authorID == currentUserID else { return }
+        markOwnPostDeleted(postID)
+        showToast("帖子已删除")
+        runBackendMutation(syncAfterSuccess: true) { token in
+            try await self.backendClient.deletePost(token: token, postID: postID)
+        }
+    }
+
+    private func markOwnPostDeleted(_ postID: String) {
+        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
+              posts[postIndex].authorID == currentUserID else { return }
         posts[postIndex].status = .deleted
         likedPostIDs.remove(postID)
         favoritePostIDs.remove(postID)
@@ -1709,10 +1765,6 @@ final class MockAppStore: ObservableObject {
         browsingHistoryIDs.removeAll { $0 == postID }
         for collectionIndex in collections.indices {
             collections[collectionIndex].postIDs.removeAll { $0 == postID }
-        }
-        showToast("帖子已删除")
-        runBackendMutation(syncAfterSuccess: true) { token in
-            try await self.backendClient.deletePost(token: token, postID: postID)
         }
     }
 
@@ -1739,7 +1791,7 @@ final class MockAppStore: ObservableObject {
         showToast("已删除角色")
     }
 
-    func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole]) {
+    func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole], replacingPostID: String? = nil) {
         guard let inherited = collection(id: collectionID) else {
             showToast("请先选择拼团合集")
             return
@@ -1792,7 +1844,15 @@ final class MockAppStore: ObservableObject {
                        !collections[index].postIDs.contains(localPost.id) {
                         collections[index].postIDs.insert(localPost.id, at: 0)
                     }
-                    await syncFromBackend(reason: "post.created")
+                    if let replacingPostID {
+                        markOwnPostDeleted(replacingPostID)
+                        do {
+                            try await backendClient.deletePost(token: backendToken, postID: replacingPostID)
+                        } catch {
+                            showToast("新帖已发布，旧版本删除失败，请稍后刷新")
+                        }
+                    }
+                    await syncFromBackend(reason: replacingPostID == nil ? "post.created" : "post.republished")
                     showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
                 } catch {
                     showToast(error.localizedDescription)
@@ -1804,7 +1864,10 @@ final class MockAppStore: ObservableObject {
         if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
             collections[index].postIDs.insert(postID, at: 0)
         }
-        showToast("发布成功，已进入\(groupType.moduleTitle)模块")
+        if let replacingPostID {
+            markOwnPostDeleted(replacingPostID)
+        }
+        showToast(replacingPostID == nil ? "发布成功，已进入\(groupType.moduleTitle)模块" : "已重新发布，旧版本已删除")
     }
 
     // MARK: - Toasts

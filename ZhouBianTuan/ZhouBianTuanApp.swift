@@ -94,6 +94,7 @@ enum Route: Hashable {
     case collectionDetail(String)
     case tag(String)
     case chat(String)
+    case editRejectedPost(String)
     case userProfile(String)
     case userRelations(String, UserRelationKind)
     case editProfile
@@ -233,6 +234,8 @@ extension View {
                 TagContentView(tag: tag)
             case .chat(let id):
                 ChatView(threadID: id)
+            case .editRejectedPost(let id):
+                CreatePostView(republishingPostID: id)
             case .userProfile(let id):
                 UserProfileView(userID: id)
             case .userRelations(let id, let kind):

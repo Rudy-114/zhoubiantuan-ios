@@ -342,6 +342,19 @@ export function createRouter() {
     }
   });
 
+  router.patch("/collections/:id", requireAuth, async (req, res, next) => {
+    try {
+      const { collection, syncEvents } = await updateCollection(req.user.id, req.params.id, req.body);
+      if (syncEvents.length) {
+        console.log(`collection updated id=${req.params.id} status=${collection.status} events=${syncEvents.length}`);
+        notifySyncEvents(syncEvents);
+      }
+      res.json({ collection });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.delete("/collections/:id", requireAuth, async (req, res, next) => {
     try {
       const { rowCount } = await query("DELETE FROM group_collections WHERE id = $1 AND owner_id = $2", [req.params.id, req.user.id]);
@@ -1138,17 +1151,7 @@ async function createCollection(userId, body) {
   const deadline = parseDate(body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
   const requestedId = trimmedString(body.id);
   const collectionId = requestedId.startsWith("col-") ? requestedId : `col-${randomUUID()}`;
-  const snapshot = {
-    name,
-    wechat: trimmedString(body.wechat),
-    qq: trimmedString(body.qq),
-    groupNumber: trimmedString(body.groupNumber),
-    groupInfo: trimmedString(body.groupInfo),
-    defaultNote: trimmedString(body.defaultNote, "该合集内帖子共享联系方式、截团时间和默认说明。")
-  };
-  if (!snapshot.wechat && !snapshot.qq && !snapshot.groupNumber) {
-    throw badRequest("微信、QQ、QQ群号至少填写一个");
-  }
+  const snapshot = collectionSnapshot(body, { name });
   const moderation = await reviewSubmission({
     targetType: "collection",
     targetId: collectionId,
@@ -1183,6 +1186,112 @@ async function createCollection(userId, body) {
     });
   }
   return collectionToClient(rows[0], []);
+}
+
+async function updateCollection(userId, collectionId, body) {
+  const current = (await query("SELECT * FROM group_collections WHERE id = $1 AND owner_id = $2", [collectionId, userId])).rows[0];
+  if (!current) {
+    const error = new Error("合集不存在");
+    error.status = 404;
+    throw error;
+  }
+  const name = trimmedString(body.name, current.name);
+  if (!name) throw badRequest("请填写合集名称");
+  const deadline = parseDate(body.deadline) || current.deadline || new Date(Date.now() + 7 * 86400 * 1000);
+  const snapshot = collectionSnapshot(body, {
+    name,
+    wechat: current.contact_wechat,
+    qq: current.contact_qq,
+    groupNumber: current.contact_group_number,
+    groupInfo: current.group_info,
+    defaultNote: current.default_note
+  });
+  const moderation = await reviewSubmission({
+    targetType: "collection",
+    targetId: collectionId,
+    ownerId: userId,
+    text: publicContentModerationText(snapshot)
+  });
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE group_collections
+       SET name = $3,
+           contact_wechat = $4,
+           contact_qq = $5,
+           contact_group_number = $6,
+           group_info = $7,
+           deadline = $8,
+           default_note = $9,
+           status = $10,
+           updated_at = now()
+       WHERE id = $1 AND owner_id = $2
+       RETURNING *`,
+      [
+        collectionId,
+        userId,
+        name,
+        snapshot.wechat,
+        snapshot.qq,
+        snapshot.groupNumber,
+        snapshot.groupInfo,
+        deadline,
+        snapshot.defaultNote,
+        moderation.status
+      ]
+    );
+    if (moderation.status !== "active") {
+      await createModerationReview(client, {
+        targetType: "collection",
+        targetId: collectionId,
+        ownerId: userId,
+        result: moderation,
+        textSnapshot: publicContentModerationText(snapshot),
+        snapshot
+      });
+    }
+    const postIds = await collectionPostIds(client, collectionId, userId);
+    const syncEvents = await createSyncEventsForUsers(client, {
+      userIds: [userId],
+      eventType: "collection.updated",
+      entityType: "collection",
+      entityId: collectionId
+    });
+    return { collection: collectionToClient(rows[0], postIds), syncEvents };
+  });
+}
+
+function collectionSnapshot(body, fallback = {}) {
+  const field = (key, fallbackValue = "") =>
+    Object.prototype.hasOwnProperty.call(body, key) ? trimmedString(body[key]) : trimmedString(fallbackValue);
+  const snapshot = {
+    name: field("name", fallback.name || ""),
+    wechat: field("wechat", fallback.wechat || ""),
+    qq: field("qq", fallback.qq || ""),
+    groupNumber: field("groupNumber", fallback.groupNumber || ""),
+    groupInfo: field("groupInfo", fallback.groupInfo || ""),
+    defaultNote: field("defaultNote", fallback.defaultNote || "该合集内帖子共享联系方式、截团时间和默认说明。")
+  };
+  if (!snapshot.wechat && !snapshot.qq && !snapshot.groupNumber) {
+    throw badRequest("微信、QQ、QQ群号至少填写一个");
+  }
+  if (!snapshot.defaultNote) {
+    snapshot.defaultNote = "该合集内帖子共享联系方式、截团时间和默认说明。";
+  }
+  return snapshot;
+}
+
+async function collectionPostIds(client, collectionId, userId) {
+  const { rows } = await client.query(
+    `SELECT COALESCE(array_agg(id ORDER BY created_at DESC), ARRAY[]::text[]) AS post_ids
+     FROM posts
+     WHERE collection_id = $1
+       AND (
+         status = 'active'
+         OR (author_id = $2 AND status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
+       )`,
+    [collectionId, userId]
+  );
+  return rows[0]?.post_ids || [];
 }
 
 async function reviewRegistrationText(nickname) {
