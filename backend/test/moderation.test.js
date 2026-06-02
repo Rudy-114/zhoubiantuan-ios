@@ -32,14 +32,16 @@ test("moderation errors fail into review", () => {
   assert.match(result.reason, /人工审核/);
 });
 
-test("public content moderation excludes structured contact handles", () => {
+test("public content moderation includes structured contact fields", () => {
   const snapshot = postModerationSnapshot(
     {
       title: "普通团",
       description: "正常描述",
       wechat: "wx-114514",
       qq: "114514",
-      groupInfo: "正常群说明"
+      groupNumber: "743219008",
+      groupInfo: "正常群说明",
+      externalLink: "https://example.com/group"
     },
     null,
     "普通团"
@@ -48,8 +50,49 @@ test("public content moderation excludes structured contact handles", () => {
 
   assert.match(text, /普通团/);
   assert.match(text, /正常描述/);
-  assert.doesNotMatch(text, /wechat/i);
-  assert.doesNotMatch(text, /\bqq\b/i);
-  assert.doesNotMatch(text, /wx-114514/);
-  assert.doesNotMatch(text, /114514/);
+  assert.match(text, /wechat/i);
+  assert.match(text, /\bqq\b/i);
+  assert.match(text, /wx-114514/);
+  assert.match(text, /114514/);
+  assert.match(text, /743219008/);
+  assert.match(text, /正常群说明/);
+  assert.match(text, /example\.com/);
+});
+
+test("aliyun text moderation uses configured detection agent", async () => {
+  process.env.OSS_BUCKET ||= "test-bucket";
+  process.env.OSS_REGION ||= "cn-shanghai";
+  process.env.OSS_ENDPOINT ||= "oss-cn-shanghai.aliyuncs.com";
+  process.env.ALIYUN_ACCESS_KEY_ID ||= "test-key";
+  process.env.ALIYUN_ACCESS_KEY_SECRET ||= "test-secret";
+  process.env.ALIYUN_TEXT_AGENT_APP_ID = "txt_check_agent_01";
+
+  const { AliyunModerationProvider } = await import(`../src/moderation/aliyunProvider.js?agent=${Date.now()}`);
+  const provider = Object.create(AliyunModerationProvider.prototype);
+  let capturedRequest;
+  provider.request = async (action, params) => {
+    capturedRequest = { action, params };
+    return {
+      Code: 200,
+      Data: {
+        RiskLevel: "none",
+        Result: [{ Label: "nonLabel", Description: "未检测出风险" }]
+      }
+    };
+  };
+
+  const result = await provider.reviewText({
+    text: "开团说明".repeat(1000),
+    ownerId: "u-1",
+    targetId: "post/unsafe id"
+  });
+  const serviceParameters = JSON.parse(capturedRequest.params.ServiceParameters);
+
+  assert.equal(capturedRequest.action, "MultiModalAgent");
+  assert.equal(capturedRequest.params.AppID, "txt_check_agent_01");
+  assert.equal(serviceParameters.accountId, "u-1");
+  assert.equal(serviceParameters.dataId, "post_unsafe_id");
+  assert.equal(serviceParameters.content.length, 2000);
+  assert.equal(result.status, "active");
+  assert.equal(result.source, "textAgent");
 });

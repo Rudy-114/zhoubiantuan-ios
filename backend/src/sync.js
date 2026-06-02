@@ -104,6 +104,8 @@ async function loadUnreadMessageCount(userId) {
        FROM message_threads mt
        JOIN direct_messages dm ON dm.thread_id = mt.id
        WHERE (mt.buyer_user_id = $1 OR mt.publisher_user_id = $1)
+         AND dm.revoked_at IS NULL
+         AND NOT ($1 = ANY(dm.deleted_for_user_ids))
          AND dm.sender_id <> $1
          AND dm.created_at > COALESCE(
            (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id = mt.id AND r.user_id = $1),

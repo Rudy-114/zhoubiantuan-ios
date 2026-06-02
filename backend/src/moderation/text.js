@@ -1,7 +1,5 @@
 import { arrayOfStrings } from "../validators.js";
 
-const contactFieldKeys = new Set(["wechat", "qq"]);
-
 export function moderationText(fields, options = {}) {
   if (typeof fields === "string") return fields;
   const omitKeys = new Set(options.omitKeys || []);
@@ -13,7 +11,7 @@ export function moderationText(fields, options = {}) {
 }
 
 export function publicContentModerationText(fields) {
-  return moderationText(fields, { omitKeys: contactFieldKeys });
+  return moderationText(fields);
 }
 
 export function postModerationSnapshot(body, collection, title) {
@@ -27,6 +25,7 @@ export function postModerationSnapshot(body, collection, title) {
     description: String(body.description || "").trim(),
     wechat: String(body.wechat ?? collection?.contact_wechat ?? "").trim(),
     qq: String(body.qq ?? collection?.contact_qq ?? "").trim(),
+    groupNumber: String(body.groupNumber ?? collection?.contact_group_number ?? "").trim(),
     groupInfo: String(body.groupInfo ?? collection?.group_info ?? "").trim(),
     externalLink: String(body.externalLink || "").trim(),
     pingguAveragePrice: String(body.pingguAveragePrice || "").trim(),

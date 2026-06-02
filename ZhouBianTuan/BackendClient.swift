@@ -167,6 +167,7 @@ struct BackendPost: Decodable {
     let description: String
     let wechat: String
     let qq: String
+    let groupNumber: String?
     let groupInfo: String
     let externalLink: String
     let createdAt: String
@@ -202,6 +203,7 @@ struct BackendPost: Decodable {
             description: description,
             wechat: wechat,
             qq: qq,
+            groupNumber: groupNumber ?? "",
             groupInfo: groupInfo,
             externalLink: externalLink,
             createdAt: BackendDateParser.date(from: createdAt),
@@ -226,6 +228,7 @@ struct BackendCollection: Decodable {
     let name: String
     let contactWechat: String
     let contactQQ: String
+    let contactGroupNumber: String?
     let groupInfo: String
     let deadline: String
     let defaultNote: String
@@ -240,6 +243,7 @@ struct BackendCollection: Decodable {
             name: name,
             contactWechat: contactWechat,
             contactQQ: contactQQ,
+            contactGroupNumber: contactGroupNumber ?? "",
             groupInfo: groupInfo,
             deadline: BackendDateParser.date(from: deadline),
             defaultNote: defaultNote,
@@ -314,6 +318,9 @@ struct BackendDirectMessage: Decodable {
     let senderID: String
     let body: String
     let createdAt: String
+    let imageURL: String?
+    let isRevoked: Bool?
+    let isDeletedForMe: Bool?
     let sharedPostID: String?
     let sharedProfileUserID: String?
 
@@ -323,6 +330,9 @@ struct BackendDirectMessage: Decodable {
             senderID: senderID,
             body: body,
             createdAt: BackendDateParser.date(from: createdAt),
+            remoteImageURL: BackendAssetURLMapper.normalized(imageURL ?? ""),
+            isRevoked: isRevoked ?? false,
+            isDeletedForMe: isDeletedForMe ?? false,
             sharedPostID: sharedPostID,
             sharedProfileUserID: sharedProfileUserID
         )
@@ -508,6 +518,7 @@ final class AliyunBackendClient {
             "name": collection.name,
             "wechat": collection.contactWechat,
             "qq": collection.contactQQ,
+            "groupNumber": collection.contactGroupNumber,
             "groupInfo": collection.groupInfo,
             "deadline": BackendDateParserString.string(from: collection.deadline),
             "defaultNote": collection.defaultNote
@@ -538,6 +549,7 @@ final class AliyunBackendClient {
             "description": post.description,
             "wechat": post.wechat,
             "qq": post.qq,
+            "groupNumber": post.groupNumber,
             "groupInfo": post.groupInfo,
             "externalLink": post.externalLink,
             "imageAspect": post.imageAspect,
@@ -566,6 +578,7 @@ final class AliyunBackendClient {
             "relatedPostID": thread.relatedPostID ?? "",
             "messageID": message.id,
             "body": message.body,
+            "imageObjectKey": message.imageObjectKey,
             "sharedPostID": message.sharedPostID ?? "",
             "sharedProfileUserID": message.sharedProfileUserID ?? ""
         ])
@@ -573,6 +586,16 @@ final class AliyunBackendClient {
 
     func markDirectMessageThreadRead(token: String, threadID: String) async throws {
         try await emptyRequest("/messages/threads/\(threadID)/read", method: "POST", token: token)
+    }
+
+    @discardableResult
+    func deleteDirectMessage(token: String, threadID: String, messageID: String) async throws -> BackendMessageThreadResponse {
+        try await request("/messages/threads/\(threadID)/messages/\(messageID)", method: "DELETE", token: token)
+    }
+
+    @discardableResult
+    func revokeDirectMessage(token: String, threadID: String, messageID: String) async throws -> BackendMessageThreadResponse {
+        try await request("/messages/threads/\(threadID)/messages/\(messageID)/revoke", method: "POST", token: token)
     }
 
     @discardableResult
@@ -616,6 +639,10 @@ final class AliyunBackendClient {
 
     func uploadProfileImage(token: String, data: Data, kind: String) async throws -> String {
         try await uploadImages(token: token, images: [data], kind: kind, filenamePrefix: kind).first ?? ""
+    }
+
+    func uploadMessageImage(token: String, data: Data) async throws -> String {
+        try await uploadImages(token: token, images: [data], kind: "message", filenamePrefix: "message").first ?? ""
     }
 
     private func uploadImages(token: String, images: [Data], kind: String, filenamePrefix: String) async throws -> [String] {

@@ -38,7 +38,7 @@ export function publicAssetUrl(objectKey) {
 
 export function createUploadTarget({ userId, kind, filename, contentType }) {
   const ext = extensionFor(filename, contentType);
-  const safeKind = ["post", "avatar", "background"].includes(kind) ? kind : "post";
+  const safeKind = ["post", "avatar", "background", "message"].includes(kind) ? kind : "post";
   const objectKey = `${safeKind}/${userId}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
   const uploadUrl = readClient.signatureUrl(objectKey, {
     expires: 900,

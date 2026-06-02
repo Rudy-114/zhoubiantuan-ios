@@ -321,18 +321,20 @@ struct InfoRow: View {
 struct ContactButton: View {
     let title: String
     let icon: String
+    var isEnabled: Bool = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(isEnabled ? .white : Theme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
     }
 }
 

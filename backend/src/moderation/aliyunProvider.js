@@ -13,7 +13,24 @@ export class AliyunModerationProvider {
     });
   }
 
-  async reviewText({ text, ownerId }) {
+  async reviewText({ text, ownerId, targetId }) {
+    const content = String(text || "").slice(0, 2000);
+    if (config.moderation.textAgentAppId) {
+      const serviceParameters = {
+        content,
+        accountId: ownerId || ""
+      };
+      const dataId = moderationDataId(targetId);
+      if (dataId) {
+        serviceParameters.dataId = dataId;
+      }
+      const response = await this.request("MultiModalAgent", {
+        AppID: config.moderation.textAgentAppId,
+        ServiceParameters: JSON.stringify(serviceParameters)
+      });
+      return mapAliyunResponse(response, "textAgent", "文本审核智能体通过");
+    }
+
     const response = await this.request("TextModeration", {
       Service: config.moderation.textService,
       ServiceParameters: JSON.stringify({
@@ -152,6 +169,13 @@ function highestRiskLevel(levels) {
   return "";
 }
 
+function moderationDataId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_")
+    .slice(0, 128);
+}
+
 function collectLabels(data) {
   const rawLabels = [
     data.labels,
@@ -163,7 +187,9 @@ function collectLabels(data) {
 }
 
 function isSafeLabel(value) {
-  return ["200", "success", "pass", "normal", "none", "nonlabel", "low", "未检测出风险", "ok"].includes(String(value || "").trim().toLowerCase());
+  const label = String(value || "").trim().toLowerCase();
+  const exactSafeLabels = ["200", "success", "pass", "normal", "none", "nonlabel", "low", "未检测出风险", "ok"];
+  return exactSafeLabels.includes(label);
 }
 
 function flattenResponse(value, output = []) {

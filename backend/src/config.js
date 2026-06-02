@@ -42,6 +42,7 @@ export const config = {
     provider: process.env.MODERATION_PROVIDER || (process.env.NODE_ENV === "production" ? "aliyun" : "mock"),
     failMode: process.env.MODERATION_FAIL_MODE || "review",
     endpoint: process.env.ALIYUN_MODERATION_ENDPOINT || "https://green-cip.cn-shanghai.aliyuncs.com",
+    textAgentAppId: process.env.ALIYUN_TEXT_AGENT_APP_ID || "",
     textService: process.env.ALIYUN_TEXT_MODERATION_SERVICE || "comment_detection",
     imageService: process.env.ALIYUN_IMAGE_MODERATION_SERVICE || "baselineCheck",
     adminEmails: String(process.env.ADMIN_EMAILS || "")

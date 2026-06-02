@@ -39,7 +39,7 @@ export function createRouter() {
   router.get("/assets/*", async (req, res, next) => {
     try {
       const objectKey = String(req.params[0] || "");
-      if (!/^(post|avatar|background)\//.test(objectKey) || objectKey.includes("..")) {
+      if (!/^(post|avatar|background|message)\//.test(objectKey) || objectKey.includes("..")) {
         return res.status(404).json({ error: "图片不存在" });
       }
 
@@ -377,11 +377,11 @@ export function createRouter() {
           `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, image_object_keys, group_type,
           category_tags, fandom_tags, price, deposit, deadline, condition, is_formed, description,
-          wechat, qq, group_info, external_link, status, image_aspect, pinggu_average_price, pinggu_note, unsold_roles
+          wechat, qq, group_number, group_info, external_link, status, image_aspect, pinggu_average_price, pinggu_note, unsold_roles
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
         ) RETURNING *`,
           [
             postId,
@@ -401,6 +401,7 @@ export function createRouter() {
             trimmedString(req.body.description),
             trimmedString(req.body.wechat, collection?.contact_wechat || ""),
             trimmedString(req.body.qq, collection?.contact_qq || ""),
+            trimmedString(req.body.groupNumber, collection?.contact_group_number || ""),
             trimmedString(req.body.groupInfo, collection?.group_info || ""),
             trimmedString(req.body.externalLink),
             moderation.status,
@@ -632,14 +633,15 @@ export function createRouter() {
       const threadId = trimmedString(req.params.id);
       const recipientUserID = trimmedString(req.body.recipientUserID);
       const relatedPostID = trimmedString(req.body.relatedPostID) || null;
-      const body = trimmedString(req.body.body);
+      const imageObjectKey = assertOwnedObjectKeys(req.user.id, [trimmedString(req.body.imageObjectKey)], ["message"])[0] || "";
+      const body = trimmedString(req.body.body, imageObjectKey ? "[图片]" : "");
       const sharedPostID = trimmedString(req.body.sharedPostID) || null;
       const sharedProfileUserID = trimmedString(req.body.sharedProfileUserID) || null;
       const requestedMessageID = trimmedString(req.body.messageID);
       const messageId = requestedMessageID.startsWith("m-") ? requestedMessageID : `m-${randomUUID()}`;
 
       if (!threadId.startsWith("t-")) throw badRequest("会话无效");
-      if (!body) throw badRequest("消息不能为空");
+      if (!body && !imageObjectKey && !sharedPostID && !sharedProfileUserID) throw badRequest("消息不能为空");
       if (!recipientUserID || recipientUserID === req.user.id) throw badRequest("收信人无效");
 
       const recipient = await query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [recipientUserID]);
@@ -651,52 +653,81 @@ export function createRouter() {
       }
 
       const { thread, syncEvents } = await withTransaction(async (client) => {
-        const existing = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
-        if (existing.rows[0]) {
-          const row = existing.rows[0];
+        const existingById = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
+        let actualThreadId = threadId;
+        if (existingById.rows[0]) {
+          const row = existingById.rows[0];
           const currentIsParticipant = row.buyer_user_id === req.user.id || row.publisher_user_id === req.user.id;
           const recipientIsParticipant = row.buyer_user_id === recipientUserID || row.publisher_user_id === recipientUserID;
           if (!currentIsParticipant || !recipientIsParticipant) throw badRequest("不能向该会话发送消息");
+          actualThreadId = row.id;
         } else {
+          const existingByParticipants = await client.query(
+            `SELECT *
+             FROM message_threads
+             WHERE (
+               (buyer_user_id = $1 AND publisher_user_id = $2)
+               OR (buyer_user_id = $2 AND publisher_user_id = $1)
+             )
+             ORDER BY updated_at DESC
+             LIMIT 1
+             FOR UPDATE`,
+            [req.user.id, recipientUserID]
+          );
+          if (existingByParticipants.rows[0]) {
+            actualThreadId = existingByParticipants.rows[0].id;
+          } else {
+            actualThreadId = canonicalThreadId(req.user.id, recipientUserID);
+            if (actualThreadId !== threadId) {
+              const requestedIdTaken = await client.query("SELECT 1 FROM message_threads WHERE id = $1", [actualThreadId]);
+              if (requestedIdTaken.rows[0]) actualThreadId = threadId;
+            }
+          }
+        }
+
+        const existingActual = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [actualThreadId]);
+        if (!existingActual.rows[0]) {
           await client.query(
             `INSERT INTO message_threads (id, buyer_user_id, publisher_user_id, related_post_id)
              VALUES ($1, $2, $3, $4)`,
-            [threadId, req.user.id, recipientUserID, relatedPostID]
+            [actualThreadId, req.user.id, recipientUserID, relatedPostID]
           );
+        } else if (!existingActual.rows[0].related_post_id && relatedPostID) {
+          await client.query("UPDATE message_threads SET related_post_id = $2 WHERE id = $1", [actualThreadId, relatedPostID]);
         }
 
         const insertedMessage = await client.query(
-          `INSERT INTO direct_messages (id, thread_id, sender_id, body, shared_post_id, shared_profile_user_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO direct_messages (id, thread_id, sender_id, body, image_object_key, shared_post_id, shared_profile_user_id)
+           VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7)
            ON CONFLICT (id) DO NOTHING
            RETURNING id`,
-          [messageId, threadId, req.user.id, body, sharedPostID, sharedProfileUserID]
+          [messageId, actualThreadId, req.user.id, body, imageObjectKey, sharedPostID, sharedProfileUserID]
         );
         let syncEvents = [];
         if (insertedMessage.rows[0]) {
-          await client.query("UPDATE message_threads SET updated_at = now() WHERE id = $1", [threadId]);
+          await client.query("UPDATE message_threads SET updated_at = now() WHERE id = $1", [actualThreadId]);
           await client.query(
             `INSERT INTO message_thread_reads (thread_id, user_id, read_at)
              VALUES ($1, $2, now())
              ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
-            [threadId, req.user.id]
+            [actualThreadId, req.user.id]
           );
           syncEvents = await createThreadSyncEvents(client, {
             userIds: [req.user.id, recipientUserID],
             eventType: "message.created",
             entityType: "direct_message",
             entityId: messageId,
-            threadId
+            threadId: actualThreadId
           });
         }
         return {
-          thread: await loadMessageThreadForUser(client, threadId, req.user.id),
+          thread: await loadMessageThreadForUser(client, actualThreadId, req.user.id),
           syncEvents
         };
       });
 
       if (syncEvents.length) {
-        console.log(`message created thread=${threadId} message=${messageId} events=${syncEvents.length}`);
+        console.log(`message created thread=${thread.id} message=${messageId} events=${syncEvents.length}`);
         notifySyncEvents(syncEvents);
       }
       res.status(201).json({ thread });
@@ -737,6 +768,76 @@ export function createRouter() {
       console.log(`read ack thread=${threadId} user=${req.user.id} events=${syncEvents.length}`);
       notifySyncEvents(syncEvents);
       res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/messages/threads/:threadId/messages/:messageId", requireAuth, async (req, res, next) => {
+    try {
+      const threadId = trimmedString(req.params.threadId);
+      const messageId = trimmedString(req.params.messageId);
+      const { thread, syncEvents } = await withTransaction(async (client) => {
+        const thread = await selectMessageThreadParticipant(client, threadId, req.user.id);
+        const message = await selectThreadMessage(client, threadId, messageId);
+        await client.query(
+          `UPDATE direct_messages
+           SET deleted_for_user_ids = CASE
+             WHEN $2 = ANY(deleted_for_user_ids) THEN deleted_for_user_ids
+             ELSE array_append(deleted_for_user_ids, $2)
+           END
+           WHERE id = $1`,
+          [message.id, req.user.id]
+        );
+        const syncEvents = await createThreadSyncEvents(client, {
+          userIds: [req.user.id],
+          eventType: "message.deleted",
+          entityType: "direct_message",
+          entityId: message.id,
+          threadId: thread.id
+        });
+        return {
+          thread: await loadMessageThreadForUser(client, thread.id, req.user.id),
+          syncEvents
+        };
+      });
+      console.log(`message deleted thread=${thread.id} message=${messageId} user=${req.user.id}`);
+      notifySyncEvents(syncEvents);
+      res.json({ thread });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/messages/threads/:threadId/messages/:messageId/revoke", requireAuth, async (req, res, next) => {
+    try {
+      const threadId = trimmedString(req.params.threadId);
+      const messageId = trimmedString(req.params.messageId);
+      const { thread, syncEvents } = await withTransaction(async (client) => {
+        const thread = await selectMessageThreadParticipant(client, threadId, req.user.id);
+        const message = await selectThreadMessage(client, threadId, messageId);
+        if (message.sender_id !== req.user.id) throw badRequest("只能撤回自己发送的消息");
+        if (Date.now() - new Date(message.created_at).getTime() > 2 * 60 * 1000) {
+          throw badRequest("只能撤回 2 分钟内发送的消息");
+        }
+        await client.query("UPDATE direct_messages SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1", [message.id]);
+        await client.query("UPDATE message_threads SET updated_at = now() WHERE id = $1", [thread.id]);
+        const peerUserID = thread.buyer_user_id === req.user.id ? thread.publisher_user_id : thread.buyer_user_id;
+        const syncEvents = await createThreadSyncEvents(client, {
+          userIds: [req.user.id, peerUserID],
+          eventType: "message.revoked",
+          entityType: "direct_message",
+          entityId: message.id,
+          threadId: thread.id
+        });
+        return {
+          thread: await loadMessageThreadForUser(client, thread.id, req.user.id),
+          syncEvents
+        };
+      });
+      console.log(`message revoked thread=${thread.id} message=${messageId} user=${req.user.id} events=${syncEvents.length}`);
+      notifySyncEvents(syncEvents);
+      res.json({ thread });
     } catch (error) {
       next(error);
     }
@@ -1000,6 +1101,33 @@ async function setFollowState({ followerId, followingId, enabled }) {
   });
 }
 
+function canonicalThreadId(userA, userB) {
+  return `t-dm-${[userA, userB].sort().join("-")}`;
+}
+
+async function selectMessageThreadParticipant(client, threadId, userId) {
+  const { rows } = await client.query(
+    "SELECT * FROM message_threads WHERE id = $1 AND (buyer_user_id = $2 OR publisher_user_id = $2) FOR UPDATE",
+    [threadId, userId]
+  );
+  if (!rows[0]) {
+    const error = new Error("会话不存在");
+    error.status = 404;
+    throw error;
+  }
+  return rows[0];
+}
+
+async function selectThreadMessage(client, threadId, messageId) {
+  const { rows } = await client.query("SELECT * FROM direct_messages WHERE id = $1 AND thread_id = $2 FOR UPDATE", [messageId, threadId]);
+  if (!rows[0]) {
+    const error = new Error("消息不存在");
+    error.status = 404;
+    throw error;
+  }
+  return rows[0];
+}
+
 function uniqueIds(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -1014,9 +1142,13 @@ async function createCollection(userId, body) {
     name,
     wechat: trimmedString(body.wechat),
     qq: trimmedString(body.qq),
+    groupNumber: trimmedString(body.groupNumber),
     groupInfo: trimmedString(body.groupInfo),
     defaultNote: trimmedString(body.defaultNote, "该合集内帖子共享联系方式、截团时间和默认说明。")
   };
+  if (!snapshot.wechat && !snapshot.qq && !snapshot.groupNumber) {
+    throw badRequest("微信、QQ、QQ群号至少填写一个");
+  }
   const moderation = await reviewSubmission({
     targetType: "collection",
     targetId: collectionId,
@@ -1024,8 +1156,8 @@ async function createCollection(userId, body) {
     text: publicContentModerationText(snapshot)
   });
   const { rows } = await query(
-    `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, group_info, deadline, default_note, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       collectionId,
@@ -1033,6 +1165,7 @@ async function createCollection(userId, body) {
       name,
       snapshot.wechat,
       snapshot.qq,
+      snapshot.groupNumber,
       snapshot.groupInfo,
       deadline,
       snapshot.defaultNote,

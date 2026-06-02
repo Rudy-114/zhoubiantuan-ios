@@ -34,6 +34,12 @@ struct PostDetailView: View {
                         }
                         .frame(height: detailImageHeight)
                         .tabViewStyle(.page(indexDisplayMode: .automatic))
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 30)
+                                .onEnded { value in
+                                    handleImageSwipe(value)
+                                }
+                        )
 
                         VStack(alignment: .leading, spacing: 18) {
                             VStack(alignment: .leading, spacing: 10) {
@@ -58,6 +64,12 @@ struct PostDetailView: View {
                             CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 30)
+                                .onEnded { value in
+                                    handleDetailSwipe(value, authorID: author.id)
+                                }
+                        )
                     }
                     .padding(.bottom, 20)
                 }
@@ -123,12 +135,6 @@ struct PostDetailView: View {
             .navigationDestination(isPresented: $isAuthorProfilePresented) {
                 UserProfileView(userID: author.id)
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded { value in
-                        handleDetailSwipe(value, authorID: author.id)
-                    }
-            )
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
@@ -163,6 +169,13 @@ struct PostDetailView: View {
             withAnimation(AppMotion.page) {
                 isAuthorProfilePresented = true
             }
+        }
+    }
+
+    private func handleImageSwipe(_ value: DragGesture.Value) {
+        guard abs(value.translation.height) < 72 else { return }
+        if selectedImageIndex == 0 && value.translation.width > 92 {
+            dismiss()
         }
     }
 }
@@ -1007,6 +1020,7 @@ struct ContactCard: View {
         let collection = store.collection(id: post.collectionID)
         let wechat = collection?.contactWechat ?? post.wechat
         let qq = collection?.contactQQ ?? post.qq
+        let groupNumber = collection?.contactGroupNumber ?? post.groupNumber
         let groupInfo = collection?.groupInfo ?? post.groupInfo
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -1025,21 +1039,28 @@ struct ContactCard: View {
 
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
-                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill") {
+                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !wechat.trimmed.isEmpty) {
                         store.copyToPasteboard(wechat, label: "微信")
                     }
-                    ContactButton(title: "复制 QQ", icon: "number") {
+                    ContactButton(title: "复制 QQ", icon: "number", isEnabled: !qq.trimmed.isEmpty) {
                         store.copyToPasteboard(qq, label: "QQ")
                     }
                 }
                 HStack(spacing: 10) {
-                    ContactButton(title: "加入群聊", icon: "person.3.fill") {
-                        store.copyToPasteboard(groupInfo, label: "群聊信息")
+                    ContactButton(title: "加入群聊", icon: "person.3.fill", isEnabled: !groupNumber.trimmed.isEmpty) {
+                        store.copyToPasteboard(groupNumber, label: "QQ群号")
                     }
                     ContactButton(title: "私信咨询", icon: "bubble.left.and.text.bubble.right.fill") {
                         chatThreadID = store.consultationThreadID(for: post.id)
                     }
                 }
+            }
+            if !groupInfo.trimmed.isEmpty {
+                Text(groupInfo)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineSpacing(3)
+                    .foregroundStyle(Theme.subtext)
+                    .padding(.top, 2)
             }
         }
         .padding(16)

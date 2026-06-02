@@ -869,12 +869,13 @@ struct CreateCollectionSheet: View {
     @State private var name = ""
     @State private var wechat = ""
     @State private var qq = ""
+    @State private var groupNumber = ""
     @State private var groupInfo = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var note = ""
 
     var canCreate: Bool {
-        !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty) && !note.trimmed.isEmpty
+        !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty) && !note.trimmed.isEmpty
     }
 
     var body: some View {
@@ -884,10 +885,11 @@ struct CreateCollectionSheet: View {
                     HeaderTitle(title: "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
                     PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
                     HStack(spacing: 10) {
-                        PrototypeTextField(title: "微信", placeholder: "至少填微信或 QQ", text: $wechat, required: qq.trimmed.isEmpty)
-                        PrototypeTextField(title: "QQ", placeholder: "至少填微信或 QQ", text: $qq, required: wechat.trimmed.isEmpty)
+                        PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
+                        PrototypeTextField(title: "QQ", placeholder: "QQ 号", text: $qq, required: wechat.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
                     }
-                    PrototypeTextField(title: "群聊信息", placeholder: "群号 / 拉群说明", text: $groupInfo, required: false)
+                    PrototypeTextField(title: "QQ群号", placeholder: "至少填微信、QQ、QQ群号之一", text: $groupNumber, required: wechat.trimmed.isEmpty && qq.trimmed.isEmpty)
+                    PrototypeTextField(title: "拉群说明", placeholder: "例如：复制群号后备注昵称 / 拍下后私信拉群", text: $groupInfo, required: false)
                     DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.compact)
                         .foregroundStyle(Theme.text)
@@ -895,7 +897,7 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
-                        if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
+                        if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
                             onCreated?(collectionID)
                         }
                         dismiss()
@@ -1039,7 +1041,8 @@ struct CollectionSharedInfoCard: View {
             InfoRow(title: "拼团名称", value: collection.name)
             InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
             InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
-            InfoRow(title: "群聊信息", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
+            InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
             InfoRow(title: "默认说明", value: collection.defaultNote)
         }
         .padding(14)

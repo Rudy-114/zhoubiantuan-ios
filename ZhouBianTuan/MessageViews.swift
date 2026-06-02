@@ -94,6 +94,7 @@ struct ThreadRow: View {
     var body: some View {
         let user = store.user(id: store.peerUserID(for: thread))
         let post = thread.relatedPostID.flatMap(store.post)
+        let lastVisibleMessage = thread.messages.last { !$0.isRevoked && !$0.isDeletedForMe }
         HStack(spacing: 12) {
             AvatarView(user: user, size: 46)
             VStack(alignment: .leading, spacing: 5) {
@@ -105,7 +106,7 @@ struct ThreadRow: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.softPink)
                     .lineLimit(1)
-                Text(thread.messages.last?.body ?? "互相关注，开始聊天")
+                Text(lastVisibleMessage.map(previewText) ?? "互相关注，开始聊天")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(1)
@@ -125,6 +126,13 @@ struct ThreadRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
+
+    private func previewText(_ message: DirectMessage) -> String {
+        if message.imageData != nil || !message.remoteImageURL.isEmpty || message.body == "[图片]" {
+            return "[图片]"
+        }
+        return message.body
+    }
 }
 
 struct ChatView: View {
@@ -141,6 +149,7 @@ struct ChatView: View {
     var body: some View {
         if let thread = store.messageThread(id: threadID) {
             let peer = store.user(id: store.peerUserID(for: thread))
+            let visibleMessages = thread.messages.filter { !$0.isRevoked && !$0.isDeletedForMe }
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
                     Button {
@@ -152,15 +161,20 @@ struct ChatView: View {
                             .frame(width: 42, height: 48)
                     }
                     .buttonStyle(.plain)
-                    AvatarView(user: peer, size: 44)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(peer.nickname)
-                            .font(.system(size: 23, weight: .bold))
-                            .foregroundStyle(Theme.text)
-                        Text("20分钟内在线")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.subtext)
+                    NavigationLink(value: Route.userProfile(peer.id)) {
+                        HStack(spacing: 10) {
+                            AvatarView(user: peer, size: 44)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(peer.nickname)
+                                    .font(.system(size: 23, weight: .bold))
+                                    .foregroundStyle(Theme.text)
+                                Text("20分钟内在线")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Theme.subtext)
+                            }
+                        }
                     }
+                    .buttonStyle(.plain)
                     Spacer()
                 }
                 .padding(.horizontal, 12)
@@ -176,14 +190,14 @@ struct ChatView: View {
                                 .foregroundStyle(Theme.muted)
                                 .padding(.top, 18)
 
-                            ForEach(Array(thread.messages.enumerated()), id: \.element.id) { index, message in
+                            ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
                                 if index == 2 {
                                     Text("05-04 15:36")
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundStyle(Theme.muted)
                                         .padding(.top, 10)
                                 }
-                                ChatBubble(message: message)
+                                ChatBubble(threadID: thread.id, message: message)
                                     .id(message.id)
                             }
                         }
@@ -191,8 +205,8 @@ struct ChatView: View {
                         .padding(.bottom, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: thread.messages.count) {
-                        if let last = thread.messages.last {
+                    .onChange(of: visibleMessages.count) {
+                        if let last = visibleMessages.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
                     }
@@ -488,24 +502,40 @@ struct ChatAttachmentOption: View {
 
 struct ChatBubble: View {
     @EnvironmentObject private var store: MockAppStore
+    let threadID: String
     let message: DirectMessage
 
     var isMine: Bool { message.senderID == store.currentUserID }
 
     var body: some View {
+        content
+            .contextMenu {
+                Button("删除") {
+                    store.deleteMessage(threadID: threadID, messageID: message.id)
+                }
+                if store.canRevokeMessage(message) {
+                    Button("撤回", role: .destructive) {
+                        store.revokeMessage(threadID: threadID, messageID: message.id)
+                    }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if let sharedPostID = message.sharedPostID,
            let post = store.post(id: sharedPostID) {
             HStack(alignment: .top, spacing: 10) {
                 if isMine { Spacer(minLength: 34) }
                 if !isMine {
-                    AvatarView(user: store.user(id: message.senderID), size: 36)
+                    avatar(for: store.user(id: message.senderID), size: 36)
                 }
                 NavigationLink(value: Route.postDetail(post.id)) {
                     SharedPostMessageCard(post: post)
                 }
                 .buttonStyle(.plain)
                 if isMine {
-                    AvatarView(user: store.currentUser, size: 36)
+                    avatar(for: store.currentUser, size: 36)
                 } else {
                     Spacer(minLength: 34)
                 }
@@ -515,34 +545,27 @@ struct ChatBubble: View {
             HStack(alignment: .top, spacing: 10) {
                 if isMine { Spacer(minLength: 34) }
                 if !isMine {
-                    AvatarView(user: store.user(id: message.senderID), size: 36)
+                    avatar(for: store.user(id: message.senderID), size: 36)
                 }
                 NavigationLink(value: Route.userProfile(user.id)) {
                     SharedProfileMessageCard(user: user)
                 }
                 .buttonStyle(.plain)
                 if isMine {
-                    AvatarView(user: store.currentUser, size: 36)
+                    avatar(for: store.currentUser, size: 36)
                 } else {
                     Spacer(minLength: 34)
                 }
             }
-        } else if let imageData = message.imageData {
+        } else if message.imageData != nil || !message.remoteImageURL.isEmpty {
             HStack(alignment: .bottom, spacing: 8) {
                 if isMine { Spacer(minLength: 48) }
                 if !isMine {
-                    AvatarView(user: store.user(id: message.senderID), size: 34)
+                    avatar(for: store.user(id: message.senderID), size: 34)
                 }
-                UploadedImageView(data: imageData)
-                    .scaledToFill()
-                    .frame(width: 184, height: 184)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Theme.hairline, lineWidth: 0.5)
-                    }
+                messageImage
                 if isMine {
-                    AvatarView(user: store.currentUser, size: 34)
+                    avatar(for: store.currentUser, size: 34)
                 } else {
                     Spacer(minLength: 48)
                 }
@@ -551,7 +574,7 @@ struct ChatBubble: View {
             HStack(alignment: .bottom, spacing: 8) {
                 if isMine { Spacer(minLength: 48) }
                 if !isMine {
-                    AvatarView(user: store.user(id: message.senderID), size: 34)
+                    avatar(for: store.user(id: message.senderID), size: 34)
                 }
                 Text(message.body)
                     .font(.system(size: 16, weight: .medium))
@@ -560,12 +583,61 @@ struct ChatBubble: View {
                     .padding(.vertical, 11)
                     .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 if isMine {
-                    AvatarView(user: store.currentUser, size: 34)
+                    avatar(for: store.currentUser, size: 34)
                 } else {
                     Spacer(minLength: 48)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var messageImage: some View {
+        if let imageData = message.imageData {
+            UploadedImageView(data: imageData)
+                .scaledToFill()
+                .frame(width: 184, height: 184)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Theme.hairline, lineWidth: 0.5)
+                }
+        } else if let url = URL(string: message.remoteImageURL) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    Image(systemName: "photo")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.panelRaised)
+                case .empty:
+                    ProgressView()
+                        .tint(Theme.hotPink)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.panelRaised)
+                @unknown default:
+                    EmptyView()
+                }
+            }
+            .frame(width: 184, height: 184)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Theme.hairline, lineWidth: 0.5)
+            }
+        }
+    }
+
+    private func avatar(for user: User, size: CGFloat) -> some View {
+        NavigationLink(value: Route.userProfile(user.id)) {
+            AvatarView(user: user, size: size)
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -6,6 +6,8 @@ export async function loadMessageThreadForUser(client, threadId, userId) {
       (SELECT count(*)
        FROM direct_messages dm
        WHERE dm.thread_id = mt.id
+         AND dm.revoked_at IS NULL
+         AND NOT ($2 = ANY(dm.deleted_for_user_ids))
          AND dm.sender_id <> $2
          AND dm.created_at > COALESCE(
            (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id = mt.id AND r.user_id = $2),
@@ -23,7 +25,7 @@ export async function loadMessageThreadForUser(client, threadId, userId) {
     throw error;
   }
   const messages = await client.query("SELECT * FROM direct_messages WHERE thread_id = $1 ORDER BY created_at ASC", [threadId]);
-  return messageThreadToClient(row, messages.rows.map(directMessageToClient));
+  return messageThreadToClient(row, messages.rows.map((messageRow) => directMessageToClient(messageRow, userId)));
 }
 
 export async function loadMessageThreadsForUser(client, threadIds, userId) {

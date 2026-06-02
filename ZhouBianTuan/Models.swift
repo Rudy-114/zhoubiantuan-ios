@@ -50,6 +50,7 @@ struct GroupBuyPost: Identifiable, Hashable {
     var description: String
     var wechat: String
     var qq: String
+    var groupNumber: String
     var groupInfo: String
     var externalLink: String
     var createdAt: Date
@@ -157,6 +158,7 @@ struct GroupCollection: Identifiable, Hashable {
     var name: String
     var contactWechat: String
     var contactQQ: String
+    var contactGroupNumber: String
     var groupInfo: String
     var deadline: Date
     var defaultNote: String
@@ -209,8 +211,67 @@ struct DirectMessage: Identifiable, Hashable, Codable {
     var body: String
     var createdAt: Date
     var imageData: Data? = nil
+    var imageObjectKey: String = ""
+    var remoteImageURL: String = ""
+    var isRevoked: Bool = false
+    var isDeletedForMe: Bool = false
     var sharedPostID: String? = nil
     var sharedProfileUserID: String? = nil
+
+    init(
+        id: String,
+        senderID: String,
+        body: String,
+        createdAt: Date,
+        imageData: Data? = nil,
+        imageObjectKey: String = "",
+        remoteImageURL: String = "",
+        isRevoked: Bool = false,
+        isDeletedForMe: Bool = false,
+        sharedPostID: String? = nil,
+        sharedProfileUserID: String? = nil
+    ) {
+        self.id = id
+        self.senderID = senderID
+        self.body = body
+        self.createdAt = createdAt
+        self.imageData = imageData
+        self.imageObjectKey = imageObjectKey
+        self.remoteImageURL = remoteImageURL
+        self.isRevoked = isRevoked
+        self.isDeletedForMe = isDeletedForMe
+        self.sharedPostID = sharedPostID
+        self.sharedProfileUserID = sharedProfileUserID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderID
+        case body
+        case createdAt
+        case imageData
+        case imageObjectKey
+        case remoteImageURL
+        case isRevoked
+        case isDeletedForMe
+        case sharedPostID
+        case sharedProfileUserID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        senderID = try container.decode(String.self, forKey: .senderID)
+        body = try container.decode(String.self, forKey: .body)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        imageData = try container.decodeIfPresent(Data.self, forKey: .imageData)
+        imageObjectKey = try container.decodeIfPresent(String.self, forKey: .imageObjectKey) ?? ""
+        remoteImageURL = try container.decodeIfPresent(String.self, forKey: .remoteImageURL) ?? ""
+        isRevoked = try container.decodeIfPresent(Bool.self, forKey: .isRevoked) ?? false
+        isDeletedForMe = try container.decodeIfPresent(Bool.self, forKey: .isDeletedForMe) ?? false
+        sharedPostID = try container.decodeIfPresent(String.self, forKey: .sharedPostID)
+        sharedProfileUserID = try container.decodeIfPresent(String.self, forKey: .sharedProfileUserID)
+    }
 }
 
 struct Report: Identifiable, Hashable {

@@ -18,12 +18,12 @@ const users = [
 ];
 
 const collections = [
-  ["col-my-winter", "u-me", "2026冬兵生日团", "PanPanGroup", "638441116", "QQ群 638 441 116，备注：冬兵生日团", date(4, 22), "同一拼谷团内的宣传、进度、角色余量更新共用联系方式和截团时间。"],
-  ["col-winter-bucky", "u-moon", "2026冬兵生日团", "MoonPin0909", "190443821", "微信群复制微信后拉群，备注：冬兵生日团", date(3, 23), "同一生日团内宣传、进度和余量更新共用联系方式与截团时间。"],
-  ["col-tour-cards", "u-echo", "巡演补款小卡团", "EchoGB2026", "82190477", "QQ群 743 219 008，答案：小卡", date(1, 22), "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。"],
-  ["col-berry-doll", "u-berry", "棉花娃衣配件团", "BerryDollClub", "448102930", "QQ群 518 221 974", date(6, 20), "棉花娃娃衣、痛包配件和收纳周边统一更新余量与截团时间。"],
-  ["col-black-jewelry", "u-black", "星心饰品拼谷团", "BlackBagel2026", "60092118", "微信群，复制微信备注：星心", date(4, 22), "小众饰品和孤品拼谷信息统一放在这里，余量按帖子更新。"],
-  ["col-moon-magazine", "u-moon", "杂志切页自印团", "MoonPin0909", "190443821", "QQ群 204 118 776", date(2, 18), "杂志切页、卡册和相关自印内容统一登记，进度与补款后续在合集内更新。"]
+  ["col-my-winter", "u-me", "2026冬兵生日团", "PanPanGroup", "638441116", "638441116", "备注：冬兵生日团", date(4, 22), "同一拼谷团内的宣传、进度、角色余量更新共用联系方式和截团时间。"],
+  ["col-winter-bucky", "u-moon", "2026冬兵生日团", "MoonPin0909", "190443821", "", "微信群复制微信后拉群，备注：冬兵生日团", date(3, 23), "同一生日团内宣传、进度和余量更新共用联系方式与截团时间。"],
+  ["col-tour-cards", "u-echo", "巡演补款小卡团", "EchoGB2026", "82190477", "743219008", "答案：小卡", date(1, 22), "巡演相关制品统一在原群登记，补款、余量和到货更新都会归入这个合集。"],
+  ["col-berry-doll", "u-berry", "棉花娃衣配件团", "BerryDollClub", "448102930", "518221974", "备注娃娃尺寸", date(6, 20), "棉花娃娃衣、痛包配件和收纳周边统一更新余量与截团时间。"],
+  ["col-black-jewelry", "u-black", "星心饰品拼谷团", "BlackBagel2026", "60092118", "", "微信群，复制微信备注：星心", date(4, 22), "小众饰品和孤品拼谷信息统一放在这里，余量按帖子更新。"],
+  ["col-moon-magazine", "u-moon", "杂志切页自印团", "MoonPin0909", "190443821", "204118776", "备注：切页自印", date(2, 18), "杂志切页、卡册和相关自印内容统一登记，进度与补款后续在合集内更新。"]
 ];
 
 const posts = [
@@ -43,7 +43,8 @@ const posts = [
     description: "这次是巡演风格小卡套组二开，含 6 张卡 + 硬质保护套。图片为打样效果，实物会有轻微色差。适合自留和交换，不拆卖。",
     wechat: "EchoGB2026",
     qq: "82190477",
-    groupInfo: "QQ群 743 219 008，答案：小卡",
+    groupNumber: "743219008",
+    groupInfo: "答案：小卡",
     externalLink: "https://forms.example/cards",
     createdAt: new Date(now.getTime() - 7200 * 1000),
     imageAspect: 1.12
@@ -65,6 +66,7 @@ const posts = [
     description: "星芒主题金属吧唧，黑粉双色电镀，适合痛包和陈列。库存不多，截团后不追加。",
     wechat: "MoonPin0909",
     qq: "190443821",
+    groupNumber: "",
     groupInfo: "微信群复制微信后拉群",
     createdAt: new Date(now.getTime() - 18000 * 1000),
     imageAspect: 0.86,
@@ -89,6 +91,7 @@ const posts = [
     description: "亚克力立牌含底座，舞台灯光主题。已完成第一次打样，边缘透粉光，适合桌面陈列。",
     wechat: "MoonPin0909",
     qq: "190443821",
+    groupNumber: "",
     groupInfo: "微信群复制微信后拉群",
     externalLink: "https://forms.example/standee",
     createdAt: new Date(now.getTime() - 72000 * 1000),
@@ -112,7 +115,8 @@ const posts = [
     description: "包含猫耳睡衣、迷你挂件、拍照小垫子。10cm/15cm 娃可选，备注尺寸。",
     wechat: "BerryDollClub",
     qq: "448102930",
-    groupInfo: "QQ群 518 221 974",
+    groupNumber: "518221974",
+    groupInfo: "备注娃娃尺寸",
     createdAt: new Date(now.getTime() - 28800 * 1000),
     imageAspect: 1.06
   },
@@ -132,6 +136,7 @@ const posts = [
     description: "黑胶专辑加 8 张明信片，当前进入补款阶段。请收藏过本团的宝子留意截团提醒。",
     wechat: "EchoGB2026",
     qq: "82190477",
+    groupNumber: "743219008",
     groupInfo: "原补款群内公告",
     externalLink: "https://forms.example/album",
     createdAt: new Date(now.getTime() - 108000 * 1000),
@@ -154,7 +159,8 @@ const posts = [
     description: "这里是团长本人可维护的拼谷演示帖，可以在详情页实时编辑未售角色和数量。",
     wechat: "PanPanGroup",
     qq: "638441116",
-    groupInfo: "QQ群 638 441 116，备注：冬兵生日团",
+    groupNumber: "638441116",
+    groupInfo: "备注：冬兵生日团",
     createdAt: new Date(now.getTime() - 1800 * 1000),
     imageAspect: 1.04,
     pingguAveragePrice: "均价35元/吧唧",
@@ -187,12 +193,13 @@ try {
 
     for (const collection of collections) {
       await client.query(
-        `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, group_info, deadline, default_note)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
            contact_wechat = EXCLUDED.contact_wechat,
            contact_qq = EXCLUDED.contact_qq,
+           contact_group_number = EXCLUDED.contact_group_number,
            group_info = EXCLUDED.group_info,
            deadline = EXCLUDED.deadline,
            default_note = EXCLUDED.default_note`,
@@ -204,12 +211,12 @@ try {
       await client.query(
         `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, group_type, category_tags, fandom_tags,
-          price, deposit, deadline, condition, is_formed, description, wechat, qq, group_info,
+          price, deposit, deadline, condition, is_formed, description, wechat, qq, group_number, group_info,
           external_link, created_at, image_aspect, pinggu_average_price, pinggu_note, unsold_roles
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12, $13, $14, $15, $16, $17,
-          $18, $19, $20, $21, $22, $23
+          $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+          $19, $20, $21, $22, $23, $24
         )
         ON CONFLICT (id) DO UPDATE SET
           title = EXCLUDED.title,
@@ -225,6 +232,7 @@ try {
           description = EXCLUDED.description,
           wechat = EXCLUDED.wechat,
           qq = EXCLUDED.qq,
+          group_number = EXCLUDED.group_number,
           group_info = EXCLUDED.group_info,
           external_link = EXCLUDED.external_link,
           image_aspect = EXCLUDED.image_aspect,
@@ -248,6 +256,7 @@ try {
           post.description,
           post.wechat,
           post.qq,
+          post.groupNumber || "",
           post.groupInfo,
           post.externalLink || "",
           post.createdAt,

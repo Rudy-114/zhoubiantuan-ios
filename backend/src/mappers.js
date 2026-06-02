@@ -49,6 +49,7 @@ export function postToClient(row, counts = {}) {
     description: row.description || "",
     wechat: row.wechat || "",
     qq: row.qq || "",
+    groupNumber: row.group_number || "",
     groupInfo: row.group_info || "",
     externalLink: row.external_link || "",
     createdAt: row.created_at.toISOString(),
@@ -73,6 +74,7 @@ export function collectionToClient(row, postIDs = []) {
     name: row.name,
     contactWechat: row.contact_wechat || "",
     contactQQ: row.contact_qq || "",
+    contactGroupNumber: row.contact_group_number || "",
     groupInfo: row.group_info || "",
     deadline: row.deadline.toISOString(),
     defaultNote: row.default_note || "",
@@ -96,12 +98,18 @@ export function commentToClient(row) {
   };
 }
 
-export function directMessageToClient(row) {
+export function directMessageToClient(row, viewerUserID = "") {
+  const deletedForUserIds = Array.isArray(row.deleted_for_user_ids) ? row.deleted_for_user_ids : [];
+  const isDeletedForMe = Boolean(viewerUserID && deletedForUserIds.includes(viewerUserID));
+  const isRevoked = Boolean(row.revoked_at);
   return {
     id: row.id,
     senderID: row.sender_id,
-    body: row.body || "",
+    body: isRevoked ? "" : row.body || "",
     createdAt: row.created_at.toISOString(),
+    imageURL: isRevoked ? "" : publicAssetUrl(row.image_object_key),
+    isRevoked,
+    isDeletedForMe,
     sharedPostID: row.shared_post_id || null,
     sharedProfileUserID: row.shared_profile_user_id || null
   };

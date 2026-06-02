@@ -57,6 +57,8 @@ export async function loadBootstrap(userId) {
         (SELECT count(*)
          FROM direct_messages dm
          WHERE dm.thread_id = mt.id
+           AND dm.revoked_at IS NULL
+           AND NOT ($1 = ANY(dm.deleted_for_user_ids))
            AND dm.sender_id <> $1
            AND dm.created_at > COALESCE(
              (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id = mt.id AND r.user_id = $1),
@@ -87,7 +89,7 @@ export async function loadBootstrap(userId) {
   const messagesByThreadID = {};
   for (const row of messagesResult.rows) {
     if (!messagesByThreadID[row.thread_id]) messagesByThreadID[row.thread_id] = [];
-    messagesByThreadID[row.thread_id].push(directMessageToClient(row));
+    messagesByThreadID[row.thread_id].push(directMessageToClient(row, userId));
   }
 
   return {
