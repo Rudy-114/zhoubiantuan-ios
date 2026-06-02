@@ -59,6 +59,16 @@ test("public content moderation includes structured contact fields", () => {
   assert.match(text, /example\.com/);
 });
 
+test("public content moderation includes group-buy context for short slang", () => {
+  const text = publicContentModerationText({ title: "抢钱", description: "惩罚款小卡开团" });
+
+  assert.match(text, /审核场景/);
+  assert.match(text, /周边团购平台/);
+  assert.match(text, /抢钱/);
+  assert.match(text, /惩罚/);
+  assert.match(text, /不要仅凭单词判违规/);
+});
+
 test("aliyun text moderation uses configured detection agent", async () => {
   process.env.OSS_BUCKET ||= "test-bucket";
   process.env.OSS_REGION ||= "cn-shanghai";
