@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "if echo \"$CLAUDE_CODE_TOOL_INPUT\" | grep -qE '(git add|git commit|git push|git reset|git clean|git checkout --|npm install|npm update|pod install|swift package update|npm --prefix backend run migrate|rm -rf|aws ecs|aliyun)' && ! echo \"$CLAUDE_CODE_TOOL_INPUT\" | grep -qE '(git status|git diff|git log|git blame|node --check|xcodebuild|npm --prefix backend test)'; then echo 'BLOCKED: 此命令可能修改仓库或变更云资源。请确认用户是否明确要求。'; exit 1; fi"
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "TaskCreate",
+      "TaskUpdate",
+      "TaskGet",
+      "TaskList",
+      "AskUserQuestion"
+    ],
+    "deny": []
+  }
+}

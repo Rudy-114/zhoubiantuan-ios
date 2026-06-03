@@ -1,9 +1,12 @@
 import { query } from "./db.js";
 import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser } from "./messages.js";
+import { attachPostCounts } from "./postCounts.js";
 
 const DEFAULT_SYNC_LIMIT = 100;
 const MAX_SYNC_LIMIT = 200;
+const SYNC_EVENT_RETENTION_DAYS = 7;
+const SYNC_EVENT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 export async function getCurrentSyncCursor(client = { query }) {
   const { rows } = await client.query("SELECT COALESCE(MAX(id), 0)::text AS cursor FROM sync_events");
@@ -69,7 +72,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
     ...comments.map((comment) => comment.authorID),
     ...collections.map((collection) => collection.ownerID)
   ]);
-  const users = await loadUsersForSync(userIds);
+  const users = await loadUsersForSync(userId, userIds);
 
   return {
     nextCursor,
@@ -119,7 +122,7 @@ async function loadUnreadMessageCount(userId) {
   return Number(rows[0]?.unread_count || 0);
 }
 
-async function loadUsersForSync(userIds) {
+async function loadUsersForSync(viewerUserId, userIds) {
   const ids = unique(userIds);
   if (!ids.length) return [];
   const { rows } = await query(
@@ -134,7 +137,7 @@ async function loadUsersForSync(userIds) {
       ORDER BY u.created_at ASC`,
     [ids]
   );
-  return rows.map((row) => userToClient(row, row));
+  return rows.map((row) => userToClient(row, row, viewerUserId));
 }
 
 async function loadPostsForSync(userId, postIds) {
@@ -142,10 +145,6 @@ async function loadPostsForSync(userId, postIds) {
   if (!ids.length) return [];
   const { rows } = await query(
     `SELECT p.*,
-        (SELECT count(*) FROM post_likes l WHERE l.post_id = p.id) AS liked_count,
-        (SELECT count(*) FROM post_favorites f WHERE f.post_id = p.id) AS favorite_count,
-        (SELECT count(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'active') AS comment_count,
-        (SELECT count(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id) AS report_count,
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM posts p
@@ -157,7 +156,8 @@ async function loadPostsForSync(userId, postIds) {
       ORDER BY p.created_at DESC`,
     [userId, ids]
   );
-  return rows.map((row) => postToClient(row, row));
+  const posts = await attachPostCounts(rows);
+  return posts.map((row) => postToClient(row, row));
 }
 
 async function loadCollectionsForSync(userId, collectionIds) {
@@ -206,7 +206,7 @@ async function loadRelationshipState(userId) {
     query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
     query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
-    query("SELECT follower_id, following_id FROM follows")
+    query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId])
   ]);
 
   const followingByUserID = {};
@@ -237,4 +237,20 @@ function syncEventToClient(row) {
     threadID: row.thread_id || null,
     createdAt: row.created_at.toISOString()
   };
+}
+
+export async function pruneOldSyncEvents(retentionDays = SYNC_EVENT_RETENTION_DAYS) {
+  const days = Math.max(1, Number(retentionDays) || SYNC_EVENT_RETENTION_DAYS);
+  const { rowCount } = await query("DELETE FROM sync_events WHERE created_at < now() - ($1::text)::interval", [`${days} days`]);
+  return rowCount;
+}
+
+export function startSyncEventPruner({ intervalMs = SYNC_EVENT_PRUNE_INTERVAL_MS } = {}) {
+  const run = () => {
+    pruneOldSyncEvents().catch((error) => {
+      console.error("sync_events prune failed", error);
+    });
+  };
+  run();
+  return setInterval(run, intervalMs);
 }

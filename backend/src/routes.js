@@ -161,7 +161,7 @@ export function createRouter() {
 
   router.get("/bootstrap", requireAuth, async (req, res) => {
     const syncCursor = await getCurrentSyncCursor();
-    res.json({ currentUser: userToClient(req.user), syncCursor, ...(await loadBootstrap(req.user.id)) });
+    res.json({ currentUser: userToClient(req.user, {}, req.user.id), syncCursor, ...(await loadBootstrap(req.user.id)) });
   });
 
   router.get("/sync", requireAuth, async (req, res, next) => {
@@ -175,7 +175,7 @@ export function createRouter() {
   });
 
   router.get("/me", requireAuth, async (req, res) => {
-    res.json({ user: userToClient(req.user) });
+    res.json({ user: userToClient(req.user, {}, req.user.id) });
   });
 
   router.get("/me/identities", requireAuth, async (req, res, next) => {
@@ -293,7 +293,7 @@ export function createRouter() {
         }
         return rows[0];
       });
-      res.json({ user: userToClient(user), moderation: moderationResponse([textResult, avatarResult, backgroundResult].filter(Boolean)) });
+      res.json({ user: userToClient(user, {}, req.user.id), moderation: moderationResponse([textResult, avatarResult, backgroundResult].filter(Boolean)) });
     } catch (error) {
       next(error);
     }
@@ -351,21 +351,6 @@ export function createRouter() {
     } catch (error) {
       next(error);
     }
-  });
-
-  router.get("/posts", async (_req, res) => {
-    const { rows } = await query(`
-      SELECT p.*,
-        (SELECT count(*) FROM post_likes l WHERE l.post_id = p.id) AS liked_count,
-        (SELECT count(*) FROM post_favorites f WHERE f.post_id = p.id) AS favorite_count,
-        (SELECT count(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'active') AS comment_count,
-        (SELECT count(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id) AS report_count
-      FROM posts p
-      WHERE p.status = 'active'
-      ORDER BY p.created_at DESC
-      LIMIT 100
-    `);
-    res.json({ posts: rows.map((row) => postToClient(row, row)) });
   });
 
   router.get("/posts/:id", async (req, res, next) => {
@@ -1105,7 +1090,7 @@ async function authPayload(user) {
   const syncCursor = await getCurrentSyncCursor();
   return {
     token: signToken(user),
-    currentUser: userToClient(user),
+    currentUser: userToClient(user, {}, user.id),
     syncCursor,
     ...(await loadBootstrap(user.id))
   };

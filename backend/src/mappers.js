@@ -1,9 +1,10 @@
 import { publicAssetUrl } from "./oss.js";
 
-export function userToClient(row, counts = {}) {
+export function userToClient(row, counts = {}, viewerUserId = "") {
+  const isSelf = Boolean(viewerUserId && viewerUserId === row.id);
   return {
     id: row.id,
-    email: row.email || "",
+    email: isSelf ? row.email || "" : "",
     nickname: row.nickname,
     bio: row.bio || "",
     followingCount: Number(counts.following_count ?? row.following_count ?? 0),
@@ -20,7 +21,7 @@ export function userToClient(row, counts = {}) {
     backgroundImageName: row.background_image_name || "merch_magazine",
     avatarURL: publicAssetUrl(row.avatar_object_key),
     backgroundURL: publicAssetUrl(row.background_object_key),
-    phoneNumber: row.phone_number || "",
+    phoneNumber: isSelf ? row.phone_number || "" : "",
     lastNicknameChangedAt: row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null,
     moderationStatus: row.moderation_status || "",
     moderationReason: row.moderation_reason || "",

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultEnvPath = path.resolve(__dirname, "../../.project-secrets/backend.env");
+const nodeEnv = process.env.NODE_ENV || "development";
 
 dotenv.config({ path: process.env.ENV_FILE || defaultEnvPath });
 dotenv.config();
@@ -16,12 +17,21 @@ function required(name) {
   return value;
 }
 
+function requiredInProduction(name, fallback) {
+  const value = process.env[name];
+  if (value) return value;
+  if (nodeEnv === "production") {
+    throw new Error(`Missing required environment variable ${name}`);
+  }
+  return fallback;
+}
+
 export const config = {
-  nodeEnv: process.env.NODE_ENV || "development",
+  nodeEnv,
   port: Number(process.env.PORT || 8080),
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL || `http://localhost:${process.env.PORT || 8080}/api`,
   publicAssetBaseUrl: process.env.PUBLIC_ASSET_BASE_URL || process.env.CDN_ASSET_BASE_URL || "",
-  jwtSecret: process.env.JWT_SECRET || "dev-only-change-before-beta",
+  jwtSecret: requiredInProduction("JWT_SECRET", "dev-only-change-before-beta"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "30d",
   databaseUrl: process.env.DATABASE_URL,
   db: {
@@ -54,7 +64,7 @@ export const config = {
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
     from: process.env.EMAIL_FROM || "",
-    codeSecret: process.env.EMAIL_CODE_SECRET || process.env.JWT_SECRET || "dev-only-email-code-secret",
+    codeSecret: requiredInProduction("EMAIL_CODE_SECRET", "dev-only-email-code-secret"),
     codeTtlMinutes: Number(process.env.EMAIL_CODE_TTL_MINUTES || 10),
     codeResendSeconds: Number(process.env.EMAIL_CODE_RESEND_SECONDS || 60),
     smtp: {
