@@ -189,7 +189,7 @@ struct AccountAuthView: View {
         case .register:
             !nickname.trimmed.isEmpty &&
             email.trimmed.contains("@") &&
-            password.trimmed.count >= 6 &&
+            password.trimmed.count >= 8 &&
             password == confirmPassword &&
             code.trimmed.count == 6 &&
             hasAcceptedTerms
@@ -294,7 +294,7 @@ struct AccountAuthView: View {
                             }
                         }
                         if mode != .codeLogin {
-                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 6 位" : "输入密码", text: $password)
+                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password)
                         }
                         if mode == .register {
                             AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword)

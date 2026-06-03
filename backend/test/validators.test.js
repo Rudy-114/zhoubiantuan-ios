@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, normalizeEmail, trimmedString } from "../src/validators.js";
+import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, normalizeEmail, trimmedString } from "../src/validators.js";
 
 test("normalizes and validates emails", () => {
   assert.equal(normalizeEmail("  Test@Example.COM "), "test@example.com");
@@ -19,6 +19,11 @@ test("validates email verification codes", () => {
   assert.equal(assertEmailCodePurpose("register"), "register");
   assert.equal(assertEmailCodePurpose("login"), "login");
   assert.throws(() => assertEmailCodePurpose("reset"), /验证码用途不正确/);
+});
+
+test("requires stronger passwords", () => {
+  assert.equal(assertPassword("12345678"), "12345678");
+  assert.throws(() => assertPassword("1234567"), /密码至少 8 位/);
 });
 
 test("filters string arrays", () => {

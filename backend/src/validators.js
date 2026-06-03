@@ -12,8 +12,8 @@ export function assertEmail(email) {
 
 export function assertPassword(password) {
   const value = String(password || "");
-  if (value.length < 6) {
-    throw badRequest("密码至少 6 位");
+  if (value.length < 8) {
+    throw badRequest("密码至少 8 位");
   }
   return value;
 }

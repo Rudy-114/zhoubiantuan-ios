@@ -26,6 +26,11 @@ function requiredInProduction(name, fallback) {
   return fallback;
 }
 
+function enumValue(name, fallback, allowedValues) {
+  const value = process.env[name] || fallback;
+  return allowedValues.includes(value) ? value : fallback;
+}
+
 export const config = {
   nodeEnv,
   port: Number(process.env.PORT || 8080),
@@ -51,7 +56,7 @@ export const config = {
   },
   moderation: {
     provider: process.env.MODERATION_PROVIDER || (process.env.NODE_ENV === "production" ? "aliyun" : "mock"),
-    failMode: process.env.MODERATION_FAIL_MODE || "review",
+    failMode: enumValue("MODERATION_FAIL_MODE", "review", ["review", "block"]),
     endpoint: process.env.ALIYUN_MODERATION_ENDPOINT || "https://green-cip.cn-shanghai.aliyuncs.com",
     textAgentAppId: process.env.ALIYUN_TEXT_AGENT_APP_ID || "",
     textService: process.env.ALIYUN_TEXT_MODERATION_SERVICE || "comment_detection",

@@ -84,15 +84,17 @@ final class MockAppStore: ObservableObject {
     private var lastRealtimeActivityAt = Date.distantPast
     var backendToken: String? {
         get {
-            cachedBackendToken ??
-            KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ??
-            UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
+            cachedBackendToken ?? KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
         }
         set {
             if let newValue, !newValue.isEmpty {
-                cachedBackendToken = newValue
-                KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey)
-                UserDefaults.standard.set(newValue, forKey: Self.backendTokenFallbackDefaultsKey)
+                if KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey) {
+                    cachedBackendToken = newValue
+                } else {
+                    cachedBackendToken = nil
+                    toastMessage = "安全存储异常，请重新登录"
+                }
+                UserDefaults.standard.removeObject(forKey: Self.backendTokenFallbackDefaultsKey)
             } else {
                 cachedBackendToken = nil
                 KeychainStore.delete(forKey: Self.backendTokenDefaultsKey)
@@ -105,13 +107,16 @@ final class MockAppStore: ObservableObject {
 
     private static func migrateBackendTokenToKeychain() {
         let defaults = UserDefaults.standard
-        guard let legacyToken = defaults.string(forKey: backendTokenDefaultsKey), !legacyToken.isEmpty else { return }
+        let legacyToken = defaults.string(forKey: backendTokenDefaultsKey) ?? defaults.string(forKey: backendTokenFallbackDefaultsKey)
+        guard let legacyToken, !legacyToken.isEmpty else {
+            defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
+            return
+        }
         if KeychainStore.string(forKey: backendTokenDefaultsKey) == nil {
-            if !KeychainStore.set(legacyToken, forKey: backendTokenDefaultsKey) {
-                defaults.set(legacyToken, forKey: backendTokenFallbackDefaultsKey)
-            }
+            KeychainStore.set(legacyToken, forKey: backendTokenDefaultsKey)
         }
         defaults.removeObject(forKey: backendTokenDefaultsKey)
+        defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
     }
 
     private static func browsingHistoryDefaultsKey(for userID: String) -> String {
@@ -196,7 +201,7 @@ final class MockAppStore: ObservableObject {
     init() {
         Self.resetLocalDataForEmptyBetaIfNeeded()
         Self.migrateBackendTokenToKeychain()
-        cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey) ?? UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
+        cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
         let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true

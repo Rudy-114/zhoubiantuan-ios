@@ -94,6 +94,7 @@ async function safeReview(callback, source) {
         rawSummary: { error: error?.message || String(error || "unknown") }
       });
     }
+    // Default fail-closed behavior: failed provider checks enter manual review, never auto-publish.
     return moderationErrorResult(error, source);
   }
 }

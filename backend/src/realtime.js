@@ -30,7 +30,7 @@ class RealtimeHub {
       }
 
       try {
-        const token = tokenFromRequest(request, url);
+        const token = tokenFromRequest(request);
         const user = await userForToken(token);
         if (!user) {
           rejectUpgrade(socket);
@@ -117,10 +117,10 @@ class RealtimeHub {
   }
 }
 
-function tokenFromRequest(request, url) {
+function tokenFromRequest(request) {
   const header = request.headers.authorization || "";
   const [, headerToken] = header.match(/^Bearer\s+(.+)$/i) || [];
-  return headerToken || url.searchParams.get("token") || "";
+  return headerToken || "";
 }
 
 function rejectUpgrade(socket) {

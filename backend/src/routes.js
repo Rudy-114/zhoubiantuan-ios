@@ -11,10 +11,15 @@ import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { createUploadTarget, signedReadUrl } from "./oss.js";
+import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
+
+const SIGNED_ASSET_URL_TTL_MS = 55 * 1000;
+const MAX_SIGNED_ASSET_URL_CACHE_SIZE = 1000;
+const signedAssetUrlCache = new Map();
 
 export function createRouter() {
   const router = express.Router();
@@ -30,20 +35,26 @@ export function createRouter() {
     message: "验证码发送太频繁，请稍后再试",
     keyGenerator: (req) => `${req.ip}:${normalizeEmail(req.body?.email)}:${req.body?.purpose || ""}`
   });
+  const assetLimiter = createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 120,
+    message: "图片请求太频繁，请稍后再试",
+    keyGenerator: (req) => req.ip
+  });
 
   router.get("/health", async (_req, res) => {
     await query("SELECT 1");
     res.json({ ok: true });
   });
 
-  router.get("/assets/*", async (req, res, next) => {
+  router.get("/assets/*", assetLimiter, async (req, res, next) => {
     try {
       const objectKey = String(req.params[0] || "");
       if (!/^(post|avatar|background|message)\//.test(objectKey) || objectKey.includes("..")) {
         return res.status(404).json({ error: "图片不存在" });
       }
 
-      const upstream = await fetch(signedReadUrl(objectKey, 60));
+      const upstream = await fetch(cachedSignedReadUrl(objectKey));
       if (!upstream.ok || !upstream.body) {
         return res.status(upstream.status || 404).json({ error: "图片不存在" });
       }
@@ -303,19 +314,16 @@ export function createRouter() {
     try {
       const limit = boundedFeedLimit(req.query.limit);
       const { rows: postRows } = await query(
-        `SELECT p.*,
-          (SELECT count(*) FROM post_likes l WHERE l.post_id = p.id) AS liked_count,
-          (SELECT count(*) FROM post_favorites f WHERE f.post_id = p.id) AS favorite_count,
-          (SELECT count(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'active') AS comment_count,
-          (SELECT count(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id) AS report_count
+        `SELECT p.*
         FROM posts p
         WHERE p.status = 'active'
         ORDER BY p.created_at DESC
         LIMIT $1`,
         [limit]
       );
-      const authorIds = uniqueIds(postRows.map((row) => row.author_id));
-      const collectionIds = uniqueIds(postRows.map((row) => row.collection_id));
+      const postsWithCounts = await attachPostCounts(postRows);
+      const authorIds = uniqueIds(postsWithCounts.map((row) => row.author_id));
+      const collectionIds = uniqueIds(postsWithCounts.map((row) => row.collection_id));
       const [usersResult, collectionsResult] = await Promise.all([
         authorIds.length
           ? query(
@@ -345,7 +353,7 @@ export function createRouter() {
       ]);
       res.json({
         users: usersResult.rows.map((row) => userToClient(row, row)),
-        posts: postRows.map((row) => postToClient(row, row)),
+        posts: postsWithCounts.map((row) => postToClient(row, row)),
         collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids))
       });
     } catch (error) {
@@ -356,17 +364,14 @@ export function createRouter() {
   router.get("/posts/:id", async (req, res, next) => {
     try {
       const { rows } = await query(
-        `SELECT p.*,
-          (SELECT count(*) FROM post_likes l WHERE l.post_id = p.id) AS liked_count,
-          (SELECT count(*) FROM post_favorites f WHERE f.post_id = p.id) AS favorite_count,
-          (SELECT count(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'active') AS comment_count,
-          (SELECT count(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id) AS report_count
+        `SELECT p.*
         FROM posts p WHERE p.id = $1 AND p.status = 'active'`,
         [req.params.id]
       );
       if (!rows[0]) return res.status(404).json({ error: "帖子不存在" });
+      const [post] = await attachPostCounts([rows[0]]);
       const comments = await query("SELECT * FROM comments WHERE post_id = $1 AND status = 'active' ORDER BY created_at ASC", [req.params.id]);
-      res.json({ post: postToClient(rows[0], rows[0]), comments: comments.rows.map(commentToClient) });
+      res.json({ post: postToClient(post, post), comments: comments.rows.map(commentToClient) });
     } catch (error) {
       next(error);
     }
@@ -499,11 +504,11 @@ export function createRouter() {
     try {
       const syncEvents = await withTransaction(async (client) => {
         const { rows } = await client.query(
-          "UPDATE posts SET status = 'deleted', updated_at = now() WHERE id = $1 AND author_id = $2 RETURNING id",
+          "UPDATE posts SET status = 'deleted', updated_at = now() WHERE id = $1 AND author_id = $2 RETURNING id, author_id",
           [req.params.id, req.user.id]
         );
         if (!rows[0]) return null;
-        const audience = await activeUserIds(client);
+        const audience = uniqueIds([req.user.id, rows[0].author_id]);
         return createSyncEventsForUsers(client, {
           userIds: audience,
           eventType: "post.deleted",
@@ -527,9 +532,11 @@ export function createRouter() {
       if (!body) throw badRequest("评论不能为空");
       const post = await query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [req.params.id]);
       if (!post.rows[0]) throw badRequest("帖子不存在或不可评论");
+      let replyAuthorId = "";
       if (replyToID) {
-        const reply = await query("SELECT id FROM comments WHERE id = $1 AND post_id = $2 AND status = 'active'", [replyToID, req.params.id]);
+        const reply = await query("SELECT id, author_id FROM comments WHERE id = $1 AND post_id = $2 AND status = 'active'", [replyToID, req.params.id]);
         if (!reply.rows[0]) throw badRequest("回复的评论不存在");
+        replyAuthorId = reply.rows[0].author_id;
       }
       const commentId = `c-${randomUUID()}`;
       const moderation = await reviewSubmission({
@@ -553,7 +560,7 @@ export function createRouter() {
             snapshot: { body, postID: req.params.id, replyToID }
           });
         }
-        const audience = await syncAudienceForPublicContent(client, [req.user.id, post.rows[0].author_id], moderation.status === "active");
+        const audience = await syncAudienceForPublicContent(client, [req.user.id, post.rows[0].author_id, replyAuthorId], moderation.status === "active");
         const syncEvents = await createSyncEventsForUsers(client, {
           userIds: audience,
           eventType: "comment.created",
@@ -583,11 +590,11 @@ export function createRouter() {
              AND c.post_id = p.id
              AND c.status = 'active'
              AND (c.author_id = $2 OR p.author_id = $2)
-           RETURNING c.id, c.post_id`,
+           RETURNING c.id, c.post_id, c.author_id, p.author_id AS post_author_id`,
           [req.params.id, req.user.id]
         );
         if (!rows[0]) return null;
-        const audience = await activeUserIds(client);
+        const audience = uniqueIds([req.user.id, rows[0].author_id, rows[0].post_author_id]);
         return createSyncEventsForUsers(client, {
           userIds: audience,
           eventType: "comment.deleted",
@@ -902,6 +909,7 @@ export function createRouter() {
       const targetType = req.body.targetType === "comment" ? "comment" : "post";
       const targetId = trimmedString(req.body.targetID);
       if (!targetId) throw badRequest("举报目标不能为空");
+      await assertReportTargetExists(targetType, targetId);
       const { rows } = await query(
         `INSERT INTO reports (id, target_type, target_id, reason, detail, reporter_id)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -1096,13 +1104,7 @@ async function authPayload(user) {
   };
 }
 
-async function activeUserIds(client) {
-  const { rows } = await client.query("SELECT id FROM users WHERE deleted_at IS NULL AND status = 'active'");
-  return rows.map((row) => row.id);
-}
-
-async function syncAudienceForPublicContent(client, seedUserIds, shouldBroadcast) {
-  if (shouldBroadcast) return activeUserIds(client);
+async function syncAudienceForPublicContent(_client, seedUserIds, _shouldBroadcast) {
   return uniqueIds(seedUserIds);
 }
 
@@ -1111,7 +1113,7 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
     throw badRequest("互动类型无效");
   }
   return withTransaction(async (client) => {
-    const post = await client.query("SELECT id FROM posts WHERE id = $1 AND status = 'active'", [postId]);
+    const post = await client.query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [postId]);
     if (!post.rows[0]) return [];
 
     const result = enabled
@@ -1119,7 +1121,7 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
       : await client.query(`DELETE FROM ${table} WHERE user_id = $1 AND post_id = $2`, [userId, postId]);
     if (!result.rowCount) return [];
 
-    const audience = await activeUserIds(client);
+    const audience = uniqueIds([userId, post.rows[0].author_id]);
     return createSyncEventsForUsers(client, {
       userIds: audience,
       eventType,
@@ -1192,9 +1194,41 @@ function boundedFeedLimit(value) {
   return Math.min(Math.max(parsed, 1), 60);
 }
 
+function cachedSignedReadUrl(objectKey) {
+  const now = Date.now();
+  const cached = signedAssetUrlCache.get(objectKey);
+  if (cached && cached.expiresAt > now) return cached.url;
+
+  const url = signedReadUrl(objectKey, 60);
+  signedAssetUrlCache.set(objectKey, { url, expiresAt: now + SIGNED_ASSET_URL_TTL_MS });
+  pruneSignedAssetUrlCache(now);
+  return url;
+}
+
+function pruneSignedAssetUrlCache(now = Date.now()) {
+  if (signedAssetUrlCache.size <= MAX_SIGNED_ASSET_URL_CACHE_SIZE) return;
+  for (const [objectKey, entry] of signedAssetUrlCache) {
+    if (entry.expiresAt <= now || signedAssetUrlCache.size > MAX_SIGNED_ASSET_URL_CACHE_SIZE) {
+      signedAssetUrlCache.delete(objectKey);
+    }
+    if (signedAssetUrlCache.size <= MAX_SIGNED_ASSET_URL_CACHE_SIZE) break;
+  }
+}
+
+async function assertReportTargetExists(targetType, targetId) {
+  const target =
+    targetType === "comment"
+      ? await query("SELECT id FROM comments WHERE id = $1 AND status <> 'deleted'", [targetId])
+      : await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [targetId]);
+  if (!target.rows[0]) {
+    throw badRequest(targetType === "comment" ? "举报的评论不存在" : "举报的帖子不存在");
+  }
+}
+
 async function createCollection(userId, body) {
   const name = trimmedString(body.name);
   if (!name) throw badRequest("请填写合集名称");
+  await assertCollectionNameAvailable({ ownerId: userId, name });
   const deadline = parseDate(body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
   const requestedId = trimmedString(body.id);
   const collectionId = requestedId.startsWith("col-") ? requestedId : `col-${randomUUID()}`;
@@ -1244,6 +1278,7 @@ async function updateCollection(userId, collectionId, body) {
   }
   const name = trimmedString(body.name, current.name);
   if (!name) throw badRequest("请填写合集名称");
+  await assertCollectionNameAvailable({ ownerId: userId, name, excludingId: collectionId });
   const deadline = parseDate(body.deadline) || current.deadline || new Date(Date.now() + 7 * 86400 * 1000);
   const snapshot = collectionSnapshot(body, {
     name,
@@ -1305,6 +1340,26 @@ async function updateCollection(userId, collectionId, body) {
     });
     return { collection: collectionToClient(rows[0], postIds), syncEvents };
   });
+}
+
+async function assertCollectionNameAvailable({ ownerId, name, excludingId = "" }) {
+  const params = [ownerId, name];
+  let idClause = "";
+  if (excludingId) {
+    params.push(excludingId);
+    idClause = "AND id <> $3";
+  }
+  const { rows } = await query(
+    `SELECT id
+     FROM group_collections
+     WHERE owner_id = $1
+       AND lower(name) = lower($2)
+       AND status <> 'deleted'
+       ${idClause}
+     LIMIT 1`,
+    params
+  );
+  if (rows[0]) throw badRequest("已有同名合集");
 }
 
 function collectionSnapshot(body, fallback = {}) {
