@@ -28,12 +28,13 @@ export function signedReadUrl(objectKey, expires = 900) {
 
 export function publicAssetUrl(objectKey) {
   if (!objectKey) return "";
-  const baseURL = config.publicApiBaseUrl.replace(/\/+$/, "");
+  const baseURL = (config.publicAssetBaseUrl || config.publicApiBaseUrl).replace(/\/+$/, "");
   const encodedPath = String(objectKey)
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  return `${baseURL}/assets/${encodedPath}`;
+  const proxyPrefix = config.publicAssetBaseUrl ? "" : "/assets";
+  return `${baseURL}${proxyPrefix}/${encodedPath}`;
 }
 
 export function createUploadTarget({ userId, kind, filename, contentType }) {

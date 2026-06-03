@@ -49,7 +49,7 @@ export function createRouter() {
       }
 
       res.setHeader("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=300");
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
       Readable.fromWeb(upstream.body).on("error", next).pipe(res);
     } catch (error) {
       next(error);
@@ -299,6 +299,60 @@ export function createRouter() {
     }
   });
 
+  router.get("/feed", async (req, res, next) => {
+    try {
+      const limit = boundedFeedLimit(req.query.limit);
+      const { rows: postRows } = await query(
+        `SELECT p.*,
+          (SELECT count(*) FROM post_likes l WHERE l.post_id = p.id) AS liked_count,
+          (SELECT count(*) FROM post_favorites f WHERE f.post_id = p.id) AS favorite_count,
+          (SELECT count(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'active') AS comment_count,
+          (SELECT count(*) FROM reports r WHERE r.target_type = 'post' AND r.target_id = p.id) AS report_count
+        FROM posts p
+        WHERE p.status = 'active'
+        ORDER BY p.created_at DESC
+        LIMIT $1`,
+        [limit]
+      );
+      const authorIds = uniqueIds(postRows.map((row) => row.author_id));
+      const collectionIds = uniqueIds(postRows.map((row) => row.collection_id));
+      const [usersResult, collectionsResult] = await Promise.all([
+        authorIds.length
+          ? query(
+              `SELECT u.*,
+                (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
+                (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
+                (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+              FROM users u
+              WHERE u.id = ANY($1::text[])
+                AND u.deleted_at IS NULL
+                AND u.status = 'active'`,
+              [authorIds]
+            )
+          : { rows: [] },
+        collectionIds.length
+          ? query(
+              `SELECT c.*,
+                COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
+              FROM group_collections c
+              LEFT JOIN posts p ON p.collection_id = c.id AND p.status = 'active'
+              WHERE c.id = ANY($1::text[])
+                AND c.status = 'active'
+              GROUP BY c.id`,
+              [collectionIds]
+            )
+          : { rows: [] }
+      ]);
+      res.json({
+        users: usersResult.rows.map((row) => userToClient(row, row)),
+        posts: postRows.map((row) => postToClient(row, row)),
+        collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids))
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/posts", async (_req, res) => {
     const { rows } = await query(`
       SELECT p.*,
@@ -377,6 +431,7 @@ export function createRouter() {
       const requestedId = trimmedString(req.body.id);
       const postId = requestedId.startsWith("p-") ? requestedId : `p-${randomUUID()}`;
       const imageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.imageObjectKeys), ["post"]);
+      const previewImageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.previewImageObjectKeys), ["post"]);
       const postSnapshot = postModerationSnapshot(req.body, collection, title);
       const moderation = await reviewSubmission({
         targetType: "post",
@@ -388,13 +443,13 @@ export function createRouter() {
       const { post, syncEvents } = await withTransaction(async (client) => {
         const { rows } = await client.query(
           `INSERT INTO posts (
-          id, author_id, collection_id, title, image_names, image_object_keys, group_type,
+          id, author_id, collection_id, title, image_names, image_object_keys, preview_image_object_keys, group_type,
           category_tags, fandom_tags, price, deposit, deadline, condition, is_formed, description,
           wechat, qq, group_number, group_info, external_link, status, image_aspect, pinggu_average_price, pinggu_note, unsold_roles
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
         ) RETURNING *`,
           [
             postId,
@@ -403,6 +458,7 @@ export function createRouter() {
             title,
             arrayOfStrings(req.body.imageNames),
             imageObjectKeys,
+            previewImageObjectKeys,
             req.body.groupType === "splitGoods" || req.body.groupType === "拼谷" ? "splitGoods" : "followGroup",
             arrayOfStrings(req.body.categoryTags),
             arrayOfStrings(req.body.fandomTags),
@@ -1143,6 +1199,12 @@ async function selectThreadMessage(client, threadId, messageId) {
 
 function uniqueIds(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function boundedFeedLimit(value) {
+  const parsed = Number.parseInt(String(value || "40"), 10);
+  if (!Number.isFinite(parsed)) return 40;
+  return Math.min(Math.max(parsed, 1), 60);
 }
 
 async function createCollection(userId, body) {

@@ -154,6 +154,8 @@ struct BackendPost: Decodable {
     let imageNames: [String]
     let remoteImageURLs: [String]?
     let imageObjectKeys: [String]?
+    let previewRemoteImageURLs: [String]?
+    let previewImageObjectKeys: [String]?
     let authorID: String
     let groupType: String
     let collectionID: String?
@@ -190,6 +192,8 @@ struct BackendPost: Decodable {
             imageNames: imageNames,
             remoteImageURLs: BackendAssetURLMapper.normalized(remoteImageURLs ?? []),
             imageObjectKeys: imageObjectKeys ?? [],
+            previewRemoteImageURLs: BackendAssetURLMapper.normalized(previewRemoteImageURLs ?? []),
+            previewImageObjectKeys: previewImageObjectKeys ?? [],
             authorID: authorID,
             groupType: GroupBuyType.backendValue(groupType),
             collectionID: collectionID,
@@ -489,6 +493,10 @@ final class AliyunBackendClient {
         try await request("/bootstrap", token: token)
     }
 
+    func feed(limit: Int = 40) async throws -> BackendPayload {
+        try await request("/feed?limit=\(limit)")
+    }
+
     func sync(token: String, cursor: String, limit: Int = 100) async throws -> BackendSyncPayload {
         let encodedCursor = cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "0"
         return try await request("/sync?cursor=\(encodedCursor)&limit=\(limit)", token: token)
@@ -547,13 +555,14 @@ final class AliyunBackendClient {
     }
 
     @discardableResult
-    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String]) async throws -> BackendPostMutationResponse {
+    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String], previewImageObjectKeys: [String] = []) async throws -> BackendPostMutationResponse {
         let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity, "priceAdjustment": $0.priceAdjustment] as [String: Any] }
         return try await request("/posts", method: "POST", token: token, body: [
             "id": post.id,
             "title": post.title,
             "imageNames": post.imageNames,
             "imageObjectKeys": imageObjectKeys,
+            "previewImageObjectKeys": previewImageObjectKeys,
             "groupType": post.groupType.backendValue,
             "collectionID": post.collectionID ?? "",
             "categoryTags": post.categoryTags,
@@ -652,6 +661,13 @@ final class AliyunBackendClient {
 
     func uploadPostImages(token: String, images: [Data]) async throws -> [String] {
         try await uploadImages(token: token, images: images, kind: "post", filenamePrefix: "post")
+    }
+
+    func uploadPostPreviewImages(token: String, images: [Data]) async throws -> [String] {
+        let previewImages = images.map {
+            ImageDataNormalizer.jpegData(from: $0, maxSide: 520, compressionQuality: 0.42)
+        }
+        return try await uploadImages(token: token, images: previewImages, kind: "post", filenamePrefix: "post-preview")
     }
 
     func uploadProfileImage(token: String, data: Data, kind: String) async throws -> String {

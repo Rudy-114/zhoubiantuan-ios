@@ -40,6 +40,7 @@ final class MockAppStore: ObservableObject {
     }
     @Published var currentUserID = "u-me"
     @Published var authSessionVersion = UUID()
+    @Published private(set) var isLoadingInitialFeed = false
     @Published var isDarkModeEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
@@ -223,8 +224,6 @@ final class MockAppStore: ObservableObject {
         if isBackendEnabled {
             if backendToken == nil {
                 isLoggedIn = false
-            } else {
-                Task { await refreshFromBackend() }
             }
         }
     }
@@ -238,6 +237,18 @@ final class MockAppStore: ObservableObject {
     func loadBackendIfNeeded() async {
         guard isBackendEnabled else { return }
         await refreshFromBackend(silent: true)
+    }
+
+    func loadPublicFeedIfNeeded() async {
+        guard isBackendEnabled, posts.isEmpty, !isLoadingInitialFeed else { return }
+        isLoadingInitialFeed = true
+        defer { isLoadingInitialFeed = false }
+        do {
+            let payload = try await backendClient.feed(limit: 40)
+            applyPublicFeedPayload(payload)
+        } catch {
+            // The full authenticated bootstrap still runs after this best-effort first-screen request.
+        }
     }
 
     func startBackendAutoRefresh() {
@@ -443,6 +454,12 @@ final class MockAppStore: ObservableObject {
                 await syncFromBackend(reason: "bootstrap.cursor")
             }
         }
+    }
+
+    private func applyPublicFeedPayload(_ payload: BackendPayload) {
+        mergeUsers(payload.users?.map { $0.localUser() } ?? [])
+        mergePosts(payload.posts?.map { $0.localPost() } ?? [])
+        mergeCollections(payload.collections?.map { $0.localCollection() } ?? [])
     }
 
     private func mergedMessageThreads(from backendThreads: [MessageThread]) -> [MessageThread] {
@@ -1833,10 +1850,13 @@ final class MockAppStore: ObservableObject {
             Task {
                 guard let backendToken else { return }
                 do {
-                    let objectKeys = try await backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
+                    async let uploadedObjectKeys = backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
+                    async let uploadedPreviewObjectKeys = backendClient.uploadPostPreviewImages(token: backendToken, images: uploadedImageData)
+                    let (objectKeys, previewObjectKeys) = try await (uploadedObjectKeys, uploadedPreviewObjectKeys)
                     var remotePost = post
                     remotePost.imageObjectKeys = objectKeys
-                    let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys)
+                    remotePost.previewImageObjectKeys = previewObjectKeys
+                    let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys, previewImageObjectKeys: previewObjectKeys)
                     let localPost = response.post.localPost()
                     mergePosts([localPost])
                     if let collectionID = localPost.collectionID,

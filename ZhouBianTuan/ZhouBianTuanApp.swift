@@ -113,6 +113,7 @@ struct RootView: View {
     @EnvironmentObject private var store: MockAppStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
+    @State private var showsLaunchSplash = true
 
     private var isAuthenticated: Bool {
         store.isLoggedIn
@@ -188,6 +189,7 @@ struct RootView: View {
                 }
             }
             .task {
+                Task { await store.loadPublicFeedIfNeeded() }
                 await store.loadBackendIfNeeded()
                 store.startBackendAutoRefresh()
             }
@@ -198,6 +200,41 @@ struct RootView: View {
                 } else {
                     store.stopBackendAutoRefresh()
                 }
+            }
+
+            if showsLaunchSplash {
+                LaunchSplashView(isDarkMode: store.isDarkModeEnabled)
+                    .transition(.opacity)
+                    .zIndex(10)
+                    .task {
+                        try? await Task.sleep(nanoseconds: 1_250_000_000)
+                        withAnimation(.easeOut(duration: 0.35)) {
+                            showsLaunchSplash = false
+                        }
+                    }
+            }
+        }
+    }
+}
+
+struct LaunchSplashView: View {
+    let isDarkMode: Bool
+    @State private var isPresented = false
+
+    var body: some View {
+        ZStack {
+            (isDarkMode ? Color.black : Color.white)
+                .ignoresSafeArea()
+
+            Text(isDarkMode ? "周边团" : "欧美团")
+                .font(.system(size: 48, weight: .black, design: .rounded))
+                .foregroundStyle(Theme.hotPink)
+                .scaleEffect(isPresented ? 1 : 0.92)
+                .opacity(isPresented ? 1 : 0.2)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.58, dampingFraction: 0.78)) {
+                isPresented = true
             }
         }
     }

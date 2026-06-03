@@ -17,14 +17,21 @@ struct HomeView: View {
         VStack(spacing: 0) {
             HomeHeader(feed: $feed, onSelect: selectFeed)
             ScrollView(showsIndicators: false) {
-                WaterfallGrid(posts: posts)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 28)
-                    .id(feed)
-                    .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
-                    .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
+                if posts.isEmpty && store.isLoadingInitialFeed {
+                    HomeFeedSkeletonGrid()
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 28)
+                } else {
+                    WaterfallGrid(posts: posts)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .padding(.bottom, 28)
+                }
             }
+            .id(feed)
+            .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
         }
         .contentShape(Rectangle())
         .simultaneousGesture(
@@ -175,6 +182,69 @@ struct WaterfallGrid: View {
     }
 }
 
+struct HomeFeedSkeletonGrid: View {
+    private let spacing: CGFloat = FeedCardMetrics.columnSpacing
+
+    private var columnWidth: CGFloat {
+        FeedCardMetrics.columnWidth(screenWidth: UIScreen.main.bounds.width)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: spacing) {
+            LazyVStack(spacing: 14) {
+                ForEach(0..<3, id: \.self) { index in
+                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 1 ? 1.24 : 1)
+                }
+            }
+            LazyVStack(spacing: 14) {
+                ForEach(0..<3, id: \.self) { index in
+                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 0 ? 1.18 : 1)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct HomeFeedSkeletonCard: View {
+    let cardWidth: CGFloat
+    var imageRatio: CGFloat = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Theme.hairline.opacity(0.55))
+                .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth) * imageRatio)
+
+            VStack(alignment: .leading, spacing: 10) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Theme.hairline.opacity(0.65))
+                    .frame(width: cardWidth * 0.72, height: 14)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Theme.hairline.opacity(0.45))
+                    .frame(width: cardWidth * 0.48, height: 12)
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(Theme.hairline.opacity(0.65))
+                        .frame(width: 24, height: 24)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Theme.hairline.opacity(0.45))
+                        .frame(width: cardWidth * 0.42, height: 11)
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(10)
+        }
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 0.5)
+        }
+        .frame(width: cardWidth)
+        .redacted(reason: .placeholder)
+    }
+}
+
 enum FeedCardMetrics {
     static let horizontalPadding: CGFloat = 12
     static let columnSpacing: CGFloat = 12
@@ -202,7 +272,7 @@ struct PostCard: View {
             NavigationLink(value: Route.postDetail(livePost.id)) {
                 VStack(alignment: .leading, spacing: 0) {
                     ZStack {
-                        PostImageView(post: livePost)
+                        PostImageView(post: livePost, preferPreview: true)
                             .scaledToFill()
                             .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
                             .clipped()

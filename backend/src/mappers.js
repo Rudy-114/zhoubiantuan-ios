@@ -30,12 +30,15 @@ export function userToClient(row, counts = {}) {
 
 export function postToClient(row, counts = {}) {
   const imageKeys = row.image_object_keys || [];
+  const previewImageKeys = row.preview_image_object_keys || [];
   return {
     id: row.id,
     title: row.title,
     imageNames: row.image_names || [],
     remoteImageURLs: imageKeys.map((key) => publicAssetUrl(key)),
     imageObjectKeys: imageKeys,
+    previewRemoteImageURLs: previewImageKeys.map((key) => publicAssetUrl(key)),
+    previewImageObjectKeys: previewImageKeys,
     authorID: row.author_id,
     groupType: row.group_type,
     collectionID: row.collection_id,

@@ -1,4 +1,5 @@
 import cors from "cors";
+import compression from "compression";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -9,6 +10,7 @@ export function createApp() {
   app.disable("x-powered-by");
   app.use(helmet());
   app.use(cors());
+  app.use(compression({ threshold: 1024 }));
   app.use(express.json({ limit: "2mb" }));
   app.use(morgan("tiny"));
   app.use("/api", createRouter());

@@ -127,6 +127,7 @@ struct RemoteImageView: View {
 
 struct RemoteImagePreview: View {
     let urlString: String
+    var blurRadius: CGFloat = 0
     @StateObject private var loader = RemoteImageLoader()
 
     var body: some View {
@@ -136,6 +137,7 @@ struct RemoteImagePreview: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+                    .blur(radius: blurRadius)
             case .idle, .loading, .failed:
                 imagePlaceholder
             }
@@ -159,9 +161,12 @@ struct RemoteImagePreview: View {
 struct PostImageView: View {
     let post: GroupBuyPost
     var index = 0
+    var preferPreview = false
 
     var body: some View {
-        if post.remoteImageURLs.indices.contains(index) {
+        if preferPreview, post.previewRemoteImageURLs.indices.contains(index), !post.previewRemoteImageURLs[index].isEmpty {
+            RemoteImagePreview(urlString: post.previewRemoteImageURLs[index], blurRadius: 0.7)
+        } else if post.remoteImageURLs.indices.contains(index) {
             RemoteImageView(urlString: post.remoteImageURLs[index])
         } else if post.uploadedImageData.indices.contains(index) {
             UploadedImageView(data: post.uploadedImageData[index])

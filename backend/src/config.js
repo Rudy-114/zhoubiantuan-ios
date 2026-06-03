@@ -20,6 +20,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL || `http://localhost:${process.env.PORT || 8080}/api`,
+  publicAssetBaseUrl: process.env.PUBLIC_ASSET_BASE_URL || process.env.CDN_ASSET_BASE_URL || "",
   jwtSecret: process.env.JWT_SECRET || "dev-only-change-before-beta",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "30d",
   databaseUrl: process.env.DATABASE_URL,

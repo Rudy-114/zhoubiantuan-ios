@@ -37,6 +37,8 @@ struct GroupBuyPost: Identifiable, Hashable {
     var uploadedImageData: [Data] = []
     var remoteImageURLs: [String] = []
     var imageObjectKeys: [String] = []
+    var previewRemoteImageURLs: [String] = []
+    var previewImageObjectKeys: [String] = []
     var authorID: String
     var groupType: GroupBuyType = .followGroup
     var collectionID: String? = nil
