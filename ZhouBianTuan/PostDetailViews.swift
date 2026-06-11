@@ -315,10 +315,6 @@ struct ShareSheetView: View {
                                     .foregroundStyle(Theme.subtext)
                                     .lineLimit(1)
                                     .frame(width: 82)
-                                Text("20分钟内在线")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Theme.muted)
-                                    .lineLimit(1)
                             }
                         }
                         .buttonStyle(.plain)
@@ -543,16 +539,10 @@ struct ShareRecipientRow: View {
                 .stroke(Theme.subtext.opacity(0.5), lineWidth: 2)
                 .frame(width: 32, height: 32)
             AvatarView(user: user, size: 58)
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(user.nickname)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Text("20 分钟内在线")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.muted)
-                    .lineLimit(1)
-            }
+            Text(user.nickname)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 18)
@@ -617,10 +607,6 @@ struct ProfileShareSheetView: View {
                                     .foregroundStyle(Theme.subtext)
                                     .lineLimit(1)
                                     .frame(width: 82)
-                                Text("20分钟内在线")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Theme.muted)
-                                    .lineLimit(1)
                             }
                         }
                         .buttonStyle(.plain)

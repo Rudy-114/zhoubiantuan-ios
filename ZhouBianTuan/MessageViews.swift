@@ -1,4 +1,5 @@
 import SwiftUI
+import Photos
 import UIKit
 import UniformTypeIdentifiers
 
@@ -164,14 +165,9 @@ struct ChatView: View {
                     NavigationLink(value: Route.userProfile(peer.id)) {
                         HStack(spacing: 10) {
                             AvatarView(user: peer, size: 44)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(peer.nickname)
-                                    .font(.system(size: 23, weight: .bold))
-                                    .foregroundStyle(Theme.text)
-                                Text("20分钟内在线")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(Theme.subtext)
-                            }
+                            Text(peer.nickname)
+                                .font(.system(size: 23, weight: .bold))
+                                .foregroundStyle(Theme.text)
                         }
                     }
                     .buttonStyle(.plain)
@@ -502,6 +498,8 @@ struct ChatAttachmentOption: View {
 
 struct ChatBubble: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var previewImage: ChatImagePreviewItem?
+    @State private var isLoadingPreview = false
     let threadID: String
     let message: DirectMessage
 
@@ -518,6 +516,10 @@ struct ChatBubble: View {
                         store.revokeMessage(threadID: threadID, messageID: message.id)
                     }
                 }
+            }
+            .fullScreenCover(item: $previewImage) { item in
+                ChatImagePreviewView(image: item.image)
+                    .environmentObject(store)
             }
     }
 
@@ -591,8 +593,27 @@ struct ChatBubble: View {
         }
     }
 
-    @ViewBuilder
     private var messageImage: some View {
+        Button {
+            openImagePreview()
+        } label: {
+            messageImageContent
+                .overlay {
+                    if isLoadingPreview {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.34), in: Circle())
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoadingPreview)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var messageImageContent: some View {
         if let imageData = message.imageData {
             UploadedImageView(data: imageData)
                 .scaledToFill()
@@ -602,28 +623,9 @@ struct ChatBubble: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 }
-        } else if let url = URL(string: message.remoteImageURL) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    Image(systemName: "photo")
-                        .font(.system(size: 34, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Theme.panelRaised)
-                case .empty:
-                    ProgressView()
-                        .tint(Theme.hotPink)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Theme.panelRaised)
-                @unknown default:
-                    EmptyView()
-                }
-            }
+        } else if !message.remoteImageURL.isEmpty {
+            RemoteImageView(urlString: message.remoteImageURL)
+                .scaledToFill()
             .frame(width: 184, height: 184)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
@@ -638,6 +640,178 @@ struct ChatBubble: View {
             AvatarView(user: user, size: size)
         }
         .buttonStyle(.plain)
+    }
+
+    private func openImagePreview() {
+        if let image = localPreviewImage() {
+            previewImage = ChatImagePreviewItem(image: image)
+            return
+        }
+        guard !message.remoteImageURL.isEmpty,
+              let url = URL(string: message.remoteImageURL),
+              !isLoadingPreview else {
+            return
+        }
+        isLoadingPreview = true
+        Task {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard
+                    let http = response as? HTTPURLResponse,
+                    (200..<300).contains(http.statusCode),
+                    let image = UIImage(data: data)
+                else {
+                    throw URLError(.badServerResponse)
+                }
+                await MainActor.run {
+                    previewImage = ChatImagePreviewItem(image: image)
+                    isLoadingPreview = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingPreview = false
+                    store.showToast("图片加载失败")
+                }
+            }
+        }
+    }
+
+    private func localPreviewImage() -> UIImage? {
+        guard let imageData = message.imageData else { return nil }
+        return UIImage(data: imageData)
+    }
+}
+
+private struct ChatImagePreviewItem: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct ChatImagePreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var isSavingImage = false
+    @State private var hasSavedImage = false
+    @State private var showsSaveConfirmation = false
+    let image: UIImage
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 10)
+
+            VStack {
+                HStack {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.white.opacity(0.14), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button {
+                        saveImage()
+                    } label: {
+                        Label(saveButtonTitle, systemImage: saveButtonIcon)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .frame(height: 44)
+                            .background(.white.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSavingImage || hasSavedImage)
+                    .opacity(hasSavedImage ? 0.68 : 1)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 14)
+
+                Spacer()
+            }
+
+            if showsSaveConfirmation {
+                Text("已保存至系统相册")
+                    .font(.system(size: 17, weight: .black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .frame(height: 52)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(.white.opacity(0.14), lineWidth: 0.5)
+                    }
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var saveButtonTitle: String {
+        if isSavingImage {
+            return "保存中"
+        }
+        if hasSavedImage {
+            return "已保存"
+        }
+        return "保存"
+    }
+
+    private var saveButtonIcon: String {
+        if hasSavedImage {
+            return "checkmark.circle.fill"
+        }
+        return "square.and.arrow.down"
+    }
+
+    private func saveImage() {
+        guard !isSavingImage, !hasSavedImage else { return }
+        isSavingImage = true
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                Task { @MainActor in
+                    isSavingImage = false
+                    store.showToast("请允许访问相册后保存图片")
+                }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { success, _ in
+                Task { @MainActor in
+                    isSavingImage = false
+                    if success {
+                        hasSavedImage = true
+                        showSaveConfirmation()
+                    } else {
+                        store.showToast("保存失败")
+                    }
+                }
+            }
+        }
+    }
+
+    private func showSaveConfirmation() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            showsSaveConfirmation = true
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_450_000_000)
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.18)) {
+                    showsSaveConfirmation = false
+                }
+            }
+        }
     }
 }
 

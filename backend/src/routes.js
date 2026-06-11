@@ -6,6 +6,7 @@ import { loadBootstrap } from "./bootstrap.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
+import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
@@ -23,13 +24,18 @@ const signedAssetUrlCache = new Map();
 
 export function createRouter() {
   const router = express.Router();
+  const sharedRateLimitStore = config.nodeEnv === "production" ? "postgres" : "memory";
   const authLimiter = createRateLimiter({
+    name: "auth",
+    store: sharedRateLimitStore,
     windowMs: 15 * 60 * 1000,
     max: 30,
     message: "登录尝试太频繁，请稍后再试",
     keyGenerator: (req) => `${req.ip}:${normalizeEmail(req.body?.email)}`
   });
   const emailCodeLimiter = createRateLimiter({
+    name: "email_code",
+    store: sharedRateLimitStore,
     windowMs: 60 * 1000,
     max: 3,
     message: "验证码发送太频繁，请稍后再试",
@@ -178,7 +184,7 @@ export function createRouter() {
   router.get("/sync", requireAuth, async (req, res, next) => {
     try {
       const payload = await loadSyncPayload(req.user.id, { cursor: req.query.cursor, limit: req.query.limit });
-      console.log(`sync cursor request user=${req.user.id} cursor=${String(req.query.cursor || "0")} next=${payload.nextCursor} events=${payload.events.length}`);
+      logger.info("sync.request", { userID: req.user.id, cursor: String(req.query.cursor || "0"), nextCursor: payload.nextCursor, events: payload.events.length });
       res.json(payload);
     } catch (error) {
       next(error);
@@ -390,7 +396,7 @@ export function createRouter() {
     try {
       const { collection, syncEvents } = await updateCollection(req.user.id, req.params.id, req.body);
       if (syncEvents.length) {
-        console.log(`collection updated id=${req.params.id} status=${collection.status} events=${syncEvents.length}`);
+        logger.info("collection.updated", { collectionID: req.params.id, status: collection.status, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.json({ collection });
@@ -491,7 +497,7 @@ export function createRouter() {
         return { post: rows[0], syncEvents };
       });
       if (syncEvents.length) {
-        console.log(`post created id=${postId} status=${moderation.status} events=${syncEvents.length}`);
+        logger.info("post.created", { postID: postId, status: moderation.status, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(201).json({ post: postToClient(post), moderation });
@@ -517,7 +523,7 @@ export function createRouter() {
         });
       });
       if (!syncEvents) return res.status(404).json({ error: "只能删除自己的帖子" });
-      console.log(`post deleted id=${req.params.id} events=${syncEvents.length}`);
+      logger.info("post.deleted", { postID: req.params.id, events: syncEvents.length });
       notifySyncEvents(syncEvents);
       res.status(204).end();
     } catch (error) {
@@ -570,7 +576,7 @@ export function createRouter() {
         return { comment: rows[0], syncEvents };
       });
       if (syncEvents.length) {
-        console.log(`comment created id=${commentId} post=${req.params.id} status=${moderation.status} events=${syncEvents.length}`);
+        logger.info("comment.created", { commentID: commentId, postID: req.params.id, status: moderation.status, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(201).json({ comment: commentToClient(comment), moderation });
@@ -603,7 +609,7 @@ export function createRouter() {
         });
       });
       if (!syncEvents) return res.status(404).json({ error: "只能删除自己的评论或自己帖子下的评论" });
-      console.log(`comment deleted id=${req.params.id} events=${syncEvents.length}`);
+      logger.info("comment.deleted", { commentID: req.params.id, events: syncEvents.length });
       notifySyncEvents(syncEvents);
       res.status(204).end();
     } catch (error) {
@@ -615,7 +621,7 @@ export function createRouter() {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.liked", enabled: true });
       if (syncEvents.length) {
-        console.log(`post liked post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        logger.info("post.liked", { postID: req.params.id, userID: req.user.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -628,7 +634,7 @@ export function createRouter() {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.unliked", enabled: false });
       if (syncEvents.length) {
-        console.log(`post unliked post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        logger.info("post.unliked", { postID: req.params.id, userID: req.user.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -641,7 +647,7 @@ export function createRouter() {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.favorited", enabled: true });
       if (syncEvents.length) {
-        console.log(`post favorited post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        logger.info("post.favorited", { postID: req.params.id, userID: req.user.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -654,7 +660,7 @@ export function createRouter() {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.unfavorited", enabled: false });
       if (syncEvents.length) {
-        console.log(`post unfavorited post=${req.params.id} user=${req.user.id} events=${syncEvents.length}`);
+        logger.info("post.unfavorited", { postID: req.params.id, userID: req.user.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -667,7 +673,7 @@ export function createRouter() {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: true });
       if (syncEvents.length) {
-        console.log(`user followed follower=${req.user.id} following=${req.params.id} events=${syncEvents.length}`);
+        logger.info("user.followed", { followerID: req.user.id, followingID: req.params.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -680,7 +686,7 @@ export function createRouter() {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: false });
       if (syncEvents.length) {
-        console.log(`user unfollowed follower=${req.user.id} following=${req.params.id} events=${syncEvents.length}`);
+        logger.info("user.unfollowed", { followerID: req.user.id, followingID: req.params.id, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(204).end();
@@ -788,7 +794,7 @@ export function createRouter() {
       });
 
       if (syncEvents.length) {
-        console.log(`message created thread=${thread.id} message=${messageId} events=${syncEvents.length}`);
+        logger.info("message.created", { threadID: thread.id, messageID: messageId, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
       res.status(201).json({ thread });
@@ -826,7 +832,7 @@ export function createRouter() {
           threadId
         });
       });
-      console.log(`read ack thread=${threadId} user=${req.user.id} events=${syncEvents.length}`);
+      logger.info("message_thread.read", { threadID: threadId, userID: req.user.id, events: syncEvents.length });
       notifySyncEvents(syncEvents);
       res.status(204).end();
     } catch (error) {
@@ -862,7 +868,7 @@ export function createRouter() {
           syncEvents
         };
       });
-      console.log(`message deleted thread=${thread.id} message=${messageId} user=${req.user.id}`);
+      logger.info("message.deleted", { threadID: thread.id, messageID: messageId, userID: req.user.id });
       notifySyncEvents(syncEvents);
       res.json({ thread });
     } catch (error) {
@@ -896,7 +902,7 @@ export function createRouter() {
           syncEvents
         };
       });
-      console.log(`message revoked thread=${thread.id} message=${messageId} user=${req.user.id} events=${syncEvents.length}`);
+      logger.info("message.revoked", { threadID: thread.id, messageID: messageId, userID: req.user.id, events: syncEvents.length });
       notifySyncEvents(syncEvents);
       res.json({ thread });
     } catch (error) {

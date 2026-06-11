@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { userForToken } from "./auth.js";
+import { logger } from "./logger.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const WS_PATH = "/api/ws";
@@ -67,7 +68,7 @@ class RealtimeHub {
       this.connectionsByUserID.set(userID, sockets);
     }
     sockets.add(socket);
-    console.log(`WebSocket connected user=${userID} active=${sockets.size}`);
+    logger.info("websocket.connected", { userID, active: sockets.size });
 
     socket.on("pong", () => {
       socket.isAlive = true;
@@ -87,7 +88,7 @@ class RealtimeHub {
     if (!sockets.size) {
       this.connectionsByUserID.delete(userID);
     }
-    console.log(`WebSocket disconnected user=${userID} active=${sockets.size}`);
+    logger.info("websocket.disconnected", { userID, active: sockets.size });
   }
 
   sendToUser(userID, payload) {

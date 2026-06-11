@@ -113,21 +113,10 @@ struct ProfileView: View {
                                     AvatarView(user: user, size: 118)
                                         .background(.white, in: Circle())
                                     VStack(alignment: .leading, spacing: 8) {
-                                        HStack(spacing: 8) {
-                                            Text(user.nickname)
-                                                .font(.system(size: 28, weight: .black))
-                                                .foregroundStyle(Theme.text)
-                                            Image(systemName: "chevron.down")
-                                                .font(.system(size: 18, weight: .bold))
-                                                .foregroundStyle(Theme.subtext)
-                                        }
-                                        HStack(spacing: 8) {
-                                            Text("ID：\(store.registrationID(for: user.id))")
-                                            Image(systemName: "qrcode.viewfinder")
-                                        }
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(Theme.subtext)
-                                        Text("IP：\(user.region)")
+                                        Text(user.nickname)
+                                            .font(.system(size: 28, weight: .black))
+                                            .foregroundStyle(Theme.text)
+                                        Text("ID：\(store.registrationID(for: user.id))")
                                             .font(.system(size: 16, weight: .semibold))
                                             .foregroundStyle(Theme.subtext)
                                     }
@@ -1774,12 +1763,12 @@ struct EditProfileView: View {
         .toolbar(.hidden, for: .tabBar)
         .onAppear(perform: loadProfile)
         .onChange(of: avatarPickerItem) { _, item in
-            loadImage(from: item) { data in
+            loadImage(from: item, maxSide: 512, compressionQuality: 0.72) { data in
                 avatarImageData = data
             }
         }
         .onChange(of: backgroundPickerItem) { _, item in
-            loadImage(from: item) { data in
+            loadImage(from: item, maxSide: 1200, compressionQuality: 0.72) { data in
                 backgroundImageData = data
             }
         }
@@ -1830,11 +1819,11 @@ struct EditProfileView: View {
         }
     }
 
-    private func loadImage(from item: PhotosPickerItem?, assign: @escaping (Data?) -> Void) {
+    private func loadImage(from item: PhotosPickerItem?, maxSide: CGFloat, compressionQuality: CGFloat, assign: @escaping (Data?) -> Void) {
         guard let item else { return }
         Task {
             if let data = try? await item.loadTransferable(type: Data.self) {
-                let normalizedData = ImageDataNormalizer.jpegData(from: data, maxSide: 1800, compressionQuality: 0.8)
+                let normalizedData = ImageDataNormalizer.jpegData(from: data, maxSide: maxSide, compressionQuality: compressionQuality)
                 await MainActor.run {
                     assign(normalizedData)
                 }

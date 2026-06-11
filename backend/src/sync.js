@@ -1,4 +1,5 @@
 import { query } from "./db.js";
+import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
@@ -248,7 +249,7 @@ export async function pruneOldSyncEvents(retentionDays = SYNC_EVENT_RETENTION_DA
 export function startSyncEventPruner({ intervalMs = SYNC_EVENT_PRUNE_INTERVAL_MS } = {}) {
   const run = () => {
     pruneOldSyncEvents().catch((error) => {
-      console.error("sync_events prune failed", error);
+      logger.error("sync_events.prune_failed", { error });
     });
   };
   run();

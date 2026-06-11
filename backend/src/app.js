@@ -3,6 +3,7 @@ import compression from "compression";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import { logger } from "./logger.js";
 import { createRouter } from "./routes.js";
 
 export function createApp() {
@@ -16,10 +17,10 @@ export function createApp() {
   app.use("/api", createRouter());
   app.get("/", (_req, res) => res.json({ name: "ZhouBianTuan API", ok: true }));
   app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
     const status = error.status || 500;
     if (status >= 500) {
-      console.error(error);
+      logger.error("request.error", { error, method: req.method, path: req.path, status });
     }
     res.status(status).json({ error: error.message || "服务暂时不可用" });
   });

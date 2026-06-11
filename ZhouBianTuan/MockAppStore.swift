@@ -1243,8 +1243,8 @@ final class MockAppStore: ObservableObject {
                 showToast("请填写有效邮箱")
                 return false
             }
-            guard trimmedPassword.count >= 6 else {
-                showToast("密码至少 6 位")
+            guard trimmedPassword.count >= 8 else {
+                showToast("密码至少 8 位")
                 return false
             }
             guard trimmedCode.count == 6 else {
@@ -1270,8 +1270,8 @@ final class MockAppStore: ObservableObject {
             showToast("请填写有效手机号")
             return false
         }
-        guard trimmedPassword.count >= 6 else {
-            showToast("密码至少 6 位")
+        guard trimmedPassword.count >= 8 else {
+            showToast("密码至少 8 位")
             return false
         }
         guard !users.contains(where: { $0.phoneNumber == trimmedEmail }) else {

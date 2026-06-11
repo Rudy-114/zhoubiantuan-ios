@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import UIKit
 
@@ -26,6 +27,11 @@ final class RemoteImageLoader: ObservableObject {
         if loadedURLString == urlString, case .loaded = state {
             return
         }
+        if let cachedImage = RemoteImageDiskCache.image(for: urlString) {
+            loadedURLString = urlString
+            state = .loaded(cachedImage)
+            return
+        }
         task?.cancel()
         loadedURLString = urlString
         state = .loading
@@ -47,6 +53,7 @@ final class RemoteImageLoader: ObservableObject {
                     }
                     return
                 }
+                RemoteImageDiskCache.store(data, for: urlString)
                 await MainActor.run { self?.state = .loaded(image) }
             } catch {
                 if !Task.isCancelled {
@@ -54,6 +61,37 @@ final class RemoteImageLoader: ObservableObject {
                 }
             }
         }
+    }
+}
+
+private enum RemoteImageDiskCache {
+    private static let maxAge: TimeInterval = 7 * 24 * 60 * 60
+
+    static func image(for urlString: String) -> UIImage? {
+        guard let fileURL = cacheFileURL(for: urlString),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let modifiedAt = attributes[.modificationDate] as? Date,
+              Date().timeIntervalSince(modifiedAt) < maxAge,
+              let data = try? Data(contentsOf: fileURL) else {
+            return nil
+        }
+        return UIImage(data: data)
+    }
+
+    static func store(_ data: Data, for urlString: String) {
+        guard let fileURL = cacheFileURL(for: urlString) else { return }
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: fileURL, options: .atomic)
+    }
+
+    private static func cacheFileURL(for urlString: String) -> URL? {
+        guard let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let digest = SHA256.hash(data: Data(urlString.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return baseURL.appendingPathComponent("RemoteImageCache", isDirectory: true).appendingPathComponent(digest)
     }
 }
 

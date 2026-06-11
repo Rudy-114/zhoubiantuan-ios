@@ -42,20 +42,21 @@ export class AliyunModerationProvider {
   }
 
   async reviewImages({ imageObjectKeys, ownerId }) {
-    const results = [];
-    for (const objectKey of imageObjectKeys) {
-      const response = await this.request("ImageModeration", {
-        Service: config.moderation.imageService,
-        ServiceParameters: JSON.stringify({
-          imageUrl: signedReadUrl(objectKey, 600),
-          ossBucketName: config.oss.bucket,
-          ossObjectName: objectKey,
-          ossRegionId: config.oss.region,
-          accountId: ownerId || ""
-        })
-      });
-      results.push(mapAliyunResponse(response, "imageSignal", "图片审核通过"));
-    }
+    const results = await Promise.all(
+      imageObjectKeys.map(async (objectKey) => {
+        const response = await this.request("ImageModeration", {
+          Service: config.moderation.imageService,
+          ServiceParameters: JSON.stringify({
+            imageUrl: signedReadUrl(objectKey, 600),
+            ossBucketName: config.oss.bucket,
+            ossObjectName: objectKey,
+            ossRegionId: config.oss.region,
+            accountId: ownerId || ""
+          })
+        });
+        return mapAliyunResponse(response, "imageSignal", "图片审核通过");
+      })
+    );
     const blocked = results.find((result) => result.outcome === "block");
     if (blocked) return blocked;
     const review = results.find((result) => result.outcome === "review");
