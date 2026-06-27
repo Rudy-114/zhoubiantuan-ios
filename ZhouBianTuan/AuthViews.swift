@@ -54,7 +54,7 @@ struct GuestAuthView: View {
                         }
                         .buttonStyle(.plain)
 
-                        Text("Beta 版本仅开放邮箱注册、密码登录和验证码登录。")
+                        Text("支持邮箱注册、密码登录和验证码登录。")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
                             .frame(maxWidth: .infinity, alignment: .leading)

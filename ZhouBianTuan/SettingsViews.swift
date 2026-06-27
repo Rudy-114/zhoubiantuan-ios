@@ -1,4 +1,11 @@
 import SwiftUI
+import UIKit
+
+enum SupportContact {
+    // TODO(Rudy): 替换为真实、可正常收信的客服邮箱（见交接文档「客服邮箱」一节）。
+    // 同一地址需填入 App Store Connect 的「支持 URL / 联系人」。
+    static let email = "support@zhoubiantuanmail.top"
+}
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -27,16 +34,14 @@ struct SettingsView: View {
                             SettingsRow(icon: "bell", title: "通知设置")
                         }
                         .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(destination: HelpFeedbackView()) {
+                            SettingsRow(icon: "questionmark.circle", title: "帮助与反馈")
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     SettingsGroup {
-                        Button {
-                            store.showToast("已打开切换账号占位")
-                        } label: {
-                            SettingsPlainActionRow(title: "切换账号")
-                        }
-                        .buttonStyle(.plain)
-                        Divider().overlay(Theme.hairline).padding(.leading, 58)
                         Button {
                             store.logOut()
                             dismiss()
@@ -76,11 +81,15 @@ struct AccountSecuritySettingsView: View {
             }
 
             SettingsDetailGroup {
-                SettingsValueRow(title: "Apple", value: "未绑定")
+                NavigationLink(destination: BlockedUsersView()) {
+                    SettingsValueRow(title: "已拉黑用户", value: "")
+                }
+                .buttonStyle(.plain)
                 SettingsSeparator()
-                SettingsValueRow(title: "微信", value: "待配置")
-                SettingsSeparator()
-                SettingsValueRow(title: "删除账号", value: "待接入")
+                NavigationLink(destination: AccountDeletionView()) {
+                    SettingsValueRow(title: "删除账号", value: "")
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -386,5 +395,151 @@ struct SimpleTopBar: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
+    }
+}
+
+struct HelpFeedbackView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var store: MockAppStore
+
+    var body: some View {
+        SettingsDetailScaffold(title: "帮助与反馈", dismiss: dismiss) {
+            SettingsDetailGroup {
+                Button {
+                    if let url = URL(string: "mailto:\(SupportContact.email)") {
+                        openURL(url)
+                    }
+                } label: {
+                    SettingsValueRow(title: "联系客服", value: SupportContact.email)
+                }
+                .buttonStyle(.plain)
+                SettingsSeparator()
+                Button {
+                    UIPasteboard.general.string = SupportContact.email
+                    store.showToast("已复制客服邮箱")
+                } label: {
+                    SettingsValueRow(title: "复制客服邮箱", value: "复制")
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("如需帮助、举报申诉或反馈问题，请通过以上邮箱联系我们，我们会尽快回复。")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+        }
+    }
+}
+
+struct BlockedUsersView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+
+    private var blockedUsers: [User] {
+        store.users.filter { store.blockedUserIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        SettingsDetailScaffold(title: "已拉黑用户", dismiss: dismiss) {
+            if blockedUsers.isEmpty {
+                Text("你还没有拉黑任何用户。")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.muted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 48)
+            } else {
+                SettingsDetailGroup {
+                    ForEach(Array(blockedUsers.enumerated()), id: \.element.id) { index, user in
+                        if index > 0 { SettingsSeparator() }
+                        HStack(spacing: 12) {
+                            Text(user.nickname)
+                                .font(.system(size: 18))
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                            Spacer(minLength: 12)
+                            Button {
+                                Task { await store.unblockUser(user.id) }
+                            } label: {
+                                Text("解除")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(Theme.hotPink)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 7)
+                                    .overlay { Capsule().stroke(Theme.hotPink, lineWidth: 1) }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 64)
+                    }
+                }
+            }
+        }
+        .task { await store.loadBlockedUsers() }
+    }
+}
+
+struct AccountDeletionView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var showsConfirm = false
+    @State private var isDeleting = false
+
+    var body: some View {
+        SettingsDetailScaffold(title: "删除账号", dismiss: dismiss) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("删除账号后将会：")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                bullet("退出并注销当前账号，登录凭证立即失效")
+                bullet("隐藏你发布的拼团帖子、合集和评论")
+                bullet("清除你的昵称、头像、简介等个人资料")
+                bullet("释放你的注册邮箱，之后可重新注册")
+                Text("此操作不可恢复，请谨慎操作。")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.hotPink)
+                    .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            Button {
+                showsConfirm = true
+            } label: {
+                Text(isDeleting ? "正在删除…" : "删除账号")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(Color.red.opacity(isDeleting ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isDeleting)
+        }
+        .alert("确认删除账号？", isPresented: $showsConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                Task {
+                    isDeleting = true
+                    let ok = await store.deleteAccount()
+                    isDeleting = false
+                    if ok { dismiss() }
+                }
+            }
+        } message: {
+            Text("删除后将无法恢复，确定要继续吗？")
+        }
+    }
+
+    private func bullet(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("•").foregroundStyle(Theme.muted)
+            Text(text)
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.subtext)
+        }
     }
 }

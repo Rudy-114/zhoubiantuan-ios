@@ -320,24 +320,7 @@ struct ShareSheetView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Button {
-                        store.showToast("已打开邀请好友占位")
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 32, weight: .semibold))
-                                .foregroundStyle(Theme.text)
-                                .frame(width: 66, height: 66)
-                                .background(Theme.panelRaised, in: Circle())
-                            Text("邀请好友")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.subtext)
-                                .frame(width: 82)
-                            Text(" ")
-                                .font(.system(size: 12))
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    EmptyView()
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 10)
@@ -351,21 +334,6 @@ struct ShareSheetView: View {
                     ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
                         isRecipientPickerPresented = true
                     }
-                    ShareOptionButton(title: "微信好友", icon: "bubble.left.and.bubble.right.fill", color: Color(red: 0.05, green: 0.76, blue: 0.32)) {
-                        store.showToast("已唤起微信分享占位")
-                    }
-                    ShareOptionButton(title: "朋友圈", icon: "camera.aperture", color: Color(red: 0.35, green: 0.84, blue: 0.05)) {
-                        store.showToast("已唤起朋友圈分享占位")
-                    }
-                    ShareOptionButton(title: "QQ 好友", icon: "person.crop.circle.fill", color: Color(red: 0.09, green: 0.68, blue: 0.9)) {
-                        store.showToast("已唤起 QQ 分享占位")
-                    }
-                    ShareOptionButton(title: "QQ 空间", icon: "star.fill", color: Color(red: 1, green: 0.79, blue: 0.03)) {
-                        store.showToast("已唤起 QQ 空间占位")
-                    }
-                    ShareOptionButton(title: "微博", icon: "eye.fill", color: Color(red: 0.93, green: 0.06, blue: 0.04)) {
-                        store.showToast("已唤起微博分享占位")
-                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
@@ -375,23 +343,8 @@ struct ShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
-                    ShareUtilityButton(title: "问点点", icon: "bubble.left") {
-                        store.showToast("已打开问答占位")
-                    }
                     ShareUtilityButton(title: "复制链接", icon: "link") {
                         store.copyToPasteboard("zhoubiantuan://post/\(post.id)", label: "站内链接")
-                    }
-                    ShareUtilityButton(title: "生成分享图", icon: "photo") {
-                        store.showToast("已生成分享图占位")
-                    }
-                    ShareUtilityButton(title: "引用发制品", icon: "quote.bubble") {
-                        store.showToast("已带引用进入发布占位")
-                    }
-                    ShareUtilityButton(title: "建群分享", icon: "person.2") {
-                        store.showToast("已打开建群分享占位")
-                    }
-                    ShareUtilityButton(title: "保存图片", icon: "square.and.arrow.down") {
-                        store.showToast("已保存分享图占位")
                     }
                 }
                 .padding(.horizontal, 24)
@@ -612,24 +565,7 @@ struct ProfileShareSheetView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Button {
-                        store.showToast("已打开邀请好友占位")
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 32, weight: .semibold))
-                                .foregroundStyle(Theme.text)
-                                .frame(width: 66, height: 66)
-                                .background(Theme.panelRaised, in: Circle())
-                            Text("邀请好友")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.subtext)
-                                .frame(width: 82)
-                            Text(" ")
-                                .font(.system(size: 12))
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    EmptyView()
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 10)
@@ -643,21 +579,6 @@ struct ProfileShareSheetView: View {
                     ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
                         isRecipientPickerPresented = true
                     }
-                    ShareOptionButton(title: "微信好友", icon: "bubble.left.and.bubble.right.fill", color: Color(red: 0.05, green: 0.76, blue: 0.32)) {
-                        store.showToast("已唤起微信分享占位")
-                    }
-                    ShareOptionButton(title: "朋友圈", icon: "camera.aperture", color: Color(red: 0.35, green: 0.84, blue: 0.05)) {
-                        store.showToast("已唤起朋友圈分享占位")
-                    }
-                    ShareOptionButton(title: "QQ 好友", icon: "person.crop.circle.fill", color: Color(red: 0.09, green: 0.68, blue: 0.9)) {
-                        store.showToast("已唤起 QQ 分享占位")
-                    }
-                    ShareOptionButton(title: "QQ 空间", icon: "star.fill", color: Color(red: 1, green: 0.79, blue: 0.03)) {
-                        store.showToast("已唤起 QQ 空间占位")
-                    }
-                    ShareOptionButton(title: "微博", icon: "eye.fill", color: Color(red: 0.93, green: 0.06, blue: 0.04)) {
-                        store.showToast("已唤起微博分享占位")
-                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
@@ -669,12 +590,6 @@ struct ProfileShareSheetView: View {
                 HStack(spacing: 26) {
                     ShareUtilityButton(title: "复制链接", icon: "link") {
                         store.copyToPasteboard("zhoubiantuan://profile/\(user.id)", label: "主页链接")
-                    }
-                    ShareUtilityButton(title: "生成分享图", icon: "photo") {
-                        store.showToast("已生成主页分享图占位")
-                    }
-                    ShareUtilityButton(title: "保存图片", icon: "square.and.arrow.down") {
-                        store.showToast("已保存主页分享图占位")
                     }
                 }
                 .padding(.horizontal, 24)

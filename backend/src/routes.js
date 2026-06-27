@@ -11,7 +11,7 @@ import { collectionToClient, commentToClient, moderationReviewToClient, postToCl
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
-import { createUploadTarget, signedReadUrl } from "./oss.js";
+import { createUploadTarget, deleteObjects, signedReadUrl } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
@@ -21,6 +21,7 @@ import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, a
 const SIGNED_ASSET_URL_TTL_MS = 55 * 1000;
 const MAX_SIGNED_ASSET_URL_CACHE_SIZE = 1000;
 const signedAssetUrlCache = new Map();
+const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export function createRouter() {
   const router = express.Router();
@@ -42,6 +43,8 @@ export function createRouter() {
     keyGenerator: (req) => `${req.ip}:${normalizeEmail(req.body?.email)}:${req.body?.purpose || ""}`
   });
   const assetLimiter = createRateLimiter({
+    name: "asset",
+    store: sharedRateLimitStore,
     windowMs: 60 * 1000,
     max: 120,
     message: "图片请求太频繁，请稍后再试",
@@ -65,7 +68,12 @@ export function createRouter() {
         return res.status(upstream.status || 404).json({ error: "图片不存在" });
       }
 
-      res.setHeader("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+      // Never echo an attacker-controlled Content-Type back from our own domain.
+      // Only known image types pass through; anything else (e.g. uploaded HTML or
+      // SVG-with-script) is forced to a non-renderable type so it cannot execute.
+      res.setHeader("Content-Type", safeImageContentType(upstream.headers.get("content-type")));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", "inline");
       res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
       Readable.fromWeb(upstream.body).on("error", next).pipe(res);
     } catch (error) {
@@ -193,6 +201,69 @@ export function createRouter() {
 
   router.get("/me", requireAuth, async (req, res) => {
     res.json({ user: userToClient(req.user, {}, req.user.id) });
+  });
+
+  // App-internal account deletion (App Store Guideline 5.1.1(v)).
+  // Soft-delete + de-identify: the row is kept for integrity/audit but stripped
+  // of personal data; the email is released so it can be registered again, and
+  // all authored content is hidden. Existing tokens stop working immediately
+  // because userForToken() filters on deleted_at IS NULL AND status = 'active'.
+  router.delete("/me", requireAuth, async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const objectKeys = await withTransaction(async (client) => {
+        // Collect this user's OSS object keys before scrubbing, for cleanup.
+        const ownImages = await client.query(
+          "SELECT avatar_object_key, background_object_key FROM users WHERE id = $1",
+          [userId]
+        );
+        const postImages = await client.query(
+          "SELECT image_object_keys, preview_image_object_keys FROM posts WHERE author_id = $1",
+          [userId]
+        );
+        const messageImages = await client.query(
+          "SELECT image_object_key FROM direct_messages WHERE sender_id = $1 AND image_object_key IS NOT NULL",
+          [userId]
+        );
+        const keys = collectObjectKeys(ownImages.rows, postImages.rows, messageImages.rows);
+
+        // De-identify the account and RELEASE the email (users.email UNIQUE
+        // allows multiple NULLs, so the address becomes registerable again).
+        await client.query(
+          `UPDATE users
+           SET status = 'deleted', deleted_at = now(),
+               email = NULL, password_hash = NULL, phone_number = '',
+               nickname = '已注销用户', bio = '', red_book_id = '',
+               gender = '未设置', birthday = '选择生日', region = '未设置',
+               avatar_object_key = NULL, background_object_key = NULL,
+               updated_at = now()
+           WHERE id = $1`,
+          [userId]
+        );
+        // Remove login identities so the freed email/provider_subject is reusable.
+        await client.query("DELETE FROM auth_identities WHERE user_id = $1", [userId]);
+
+        // Hide everything the user authored.
+        await client.query("UPDATE posts SET status = 'deleted', updated_at = now() WHERE author_id = $1 AND status <> 'deleted'", [userId]);
+        await client.query("UPDATE comments SET status = 'deleted' WHERE author_id = $1 AND status <> 'deleted'", [userId]);
+        await client.query("UPDATE group_collections SET status = 'deleted', updated_at = now() WHERE owner_id = $1 AND status <> 'deleted'", [userId]);
+
+        // Drop social edges and interactions so other users' counts settle.
+        await client.query("DELETE FROM follows WHERE follower_id = $1 OR following_id = $1", [userId]);
+        await client.query("DELETE FROM post_likes WHERE user_id = $1", [userId]);
+        await client.query("DELETE FROM post_favorites WHERE user_id = $1", [userId]);
+        await client.query("DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1", [userId]);
+
+        return keys;
+      });
+
+      // Best-effort OSS cleanup outside the transaction; never block deletion on it.
+      deleteObjects(objectKeys).catch(() => {});
+      logger.info("account.deleted", { userID: userId, objectKeys: objectKeys.length });
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/me/identities", requireAuth, async (req, res, next) => {
@@ -695,6 +766,60 @@ export function createRouter() {
     }
   });
 
+  router.get("/me/blocked-users", requireAuth, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `SELECT u.*,
+           (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
+           (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
+           (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+         FROM user_blocks b
+         JOIN users u ON u.id = b.blocked_id
+         WHERE b.blocker_id = $1
+         ORDER BY b.created_at DESC`,
+        [req.user.id]
+      );
+      res.json({ blockedUsers: rows.map((row) => userToClient(row, row, req.user.id)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/users/:id/block", requireAuth, async (req, res, next) => {
+    try {
+      const blockedId = trimmedString(req.params.id);
+      if (!blockedId || blockedId === req.user.id) throw badRequest("不能拉黑自己");
+      await withTransaction(async (client) => {
+        const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [blockedId]);
+        if (!target.rows[0]) throw badRequest("用户不存在");
+        await client.query(
+          "INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT (blocker_id, blocked_id) DO NOTHING",
+          [req.user.id, blockedId]
+        );
+        // Blocking severs any follow relationship in either direction.
+        await client.query(
+          "DELETE FROM follows WHERE (follower_id = $1 AND following_id = $2) OR (follower_id = $2 AND following_id = $1)",
+          [req.user.id, blockedId]
+        );
+      });
+      logger.info("user.blocked", { userID: req.user.id, blockedID: blockedId });
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/users/:id/block", requireAuth, async (req, res, next) => {
+    try {
+      const blockedId = trimmedString(req.params.id);
+      await query("DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2", [req.user.id, blockedId]);
+      logger.info("user.unblocked", { userID: req.user.id, blockedID: blockedId });
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/messages/threads/:id/messages", requireAuth, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
@@ -713,6 +838,9 @@ export function createRouter() {
 
       const recipient = await query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [recipientUserID]);
       if (!recipient.rows[0]) throw badRequest("收信人不存在");
+      if (await blockExistsBetween({ query }, req.user.id, recipientUserID)) {
+        throw badRequest("无法向该用户发送消息");
+      }
 
       if (relatedPostID) {
         const post = await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [relatedPostID]);
@@ -919,9 +1047,13 @@ export function createRouter() {
       const { rows } = await query(
         `INSERT INTO reports (id, target_type, target_id, reason, detail, reporter_id)
          VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (reporter_id, target_type, target_id) DO NOTHING
          RETURNING *`,
         [`rp-${randomUUID()}`, targetType, targetId, trimmedString(req.body.reason, "用户举报"), trimmedString(req.body.detail), req.user.id]
       );
+      if (!rows[0]) {
+        return res.status(200).json({ ok: true, message: "你已举报过该内容，我们会尽快处理" });
+      }
       res.status(201).json({ report: rows[0] });
     } catch (error) {
       next(error);
@@ -980,14 +1112,22 @@ export function createRouter() {
     }
   });
 
-  router.post("/uploads/presign", requireAuth, (req, res) => {
-    const target = createUploadTarget({
-      userId: req.user.id,
-      kind: req.body.kind,
-      filename: req.body.filename,
-      contentType: req.body.contentType
-    });
-    res.json(target);
+  router.post("/uploads/presign", requireAuth, (req, res, next) => {
+    try {
+      const contentType = String(req.body.contentType || "").split(";")[0].trim().toLowerCase();
+      if (!ALLOWED_IMAGE_CONTENT_TYPES.has(contentType)) {
+        throw badRequest("仅支持上传 JPEG / PNG / WebP 图片");
+      }
+      const target = createUploadTarget({
+        userId: req.user.id,
+        kind: req.body.kind,
+        filename: req.body.filename,
+        contentType
+      });
+      res.json(target);
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;
@@ -1142,6 +1282,7 @@ async function setFollowState({ followerId, followingId, enabled }) {
   return withTransaction(async (client) => {
     const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [followingId]);
     if (!target.rows[0]) return [];
+    if (enabled && (await blockExistsBetween(client, followerId, followingId))) return [];
 
     const result = enabled
       ? await client.query("INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [followerId, followingId])
@@ -1190,6 +1331,34 @@ async function selectThreadMessage(client, threadId, messageId) {
   return rows[0];
 }
 
+function collectObjectKeys(userRows = [], postRows = [], messageRows = []) {
+  const keys = new Set();
+  for (const row of userRows) {
+    if (row.avatar_object_key) keys.add(row.avatar_object_key);
+    if (row.background_object_key) keys.add(row.background_object_key);
+  }
+  for (const row of postRows) {
+    for (const key of row.image_object_keys || []) keys.add(key);
+    for (const key of row.preview_image_object_keys || []) keys.add(key);
+  }
+  for (const row of messageRows) {
+    if (row.image_object_key) keys.add(row.image_object_key);
+  }
+  return [...keys];
+}
+
+async function blockExistsBetween(executor, userA, userB) {
+  if (!userA || !userB) return false;
+  const { rows } = await executor.query(
+    `SELECT 1 FROM user_blocks
+     WHERE (blocker_id = $1 AND blocked_id = $2)
+        OR (blocker_id = $2 AND blocked_id = $1)
+     LIMIT 1`,
+    [userA, userB]
+  );
+  return Boolean(rows[0]);
+}
+
 function uniqueIds(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -1198,6 +1367,11 @@ function boundedFeedLimit(value) {
   const parsed = Number.parseInt(String(value || "40"), 10);
   if (!Number.isFinite(parsed)) return 40;
   return Math.min(Math.max(parsed, 1), 60);
+}
+
+function safeImageContentType(rawContentType) {
+  const normalized = String(rawContentType || "").split(";")[0].trim().toLowerCase();
+  return ALLOWED_IMAGE_CONTENT_TYPES.has(normalized) ? normalized : "application/octet-stream";
 }
 
 function cachedSignedReadUrl(objectKey) {

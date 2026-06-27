@@ -17,13 +17,27 @@ function required(name) {
   return value;
 }
 
-function requiredInProduction(name, fallback) {
+const KNOWN_WEAK_SECRETS = new Set([
+  "dev-only-change-before-beta",
+  "dev-only-email-code-secret"
+]);
+
+// Security-critical secrets must always be provided explicitly. We never fall
+// back to a default. The previous behavior silently used a weak key whenever
+// NODE_ENV !== "production" (e.g. when NODE_ENV was simply unset on the
+// server), which meant tokens/codes could be signed with a publicly known key.
+function requiredSecret(name) {
   const value = process.env[name];
-  if (value) return value;
-  if (nodeEnv === "production") {
+  if (!value) {
     throw new Error(`Missing required environment variable ${name}`);
   }
-  return fallback;
+  if (KNOWN_WEAK_SECRETS.has(value)) {
+    throw new Error(`Environment variable ${name} uses a known insecure default; set a strong random value (e.g. \`openssl rand -base64 48\`)`);
+  }
+  if (value.length < 32) {
+    console.warn(`[config] ${name} is shorter than 32 characters; use a longer random secret in production`);
+  }
+  return value;
 }
 
 function enumValue(name, fallback, allowedValues) {
@@ -36,7 +50,7 @@ export const config = {
   port: Number(process.env.PORT || 8080),
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL || `http://localhost:${process.env.PORT || 8080}/api`,
   publicAssetBaseUrl: process.env.PUBLIC_ASSET_BASE_URL || process.env.CDN_ASSET_BASE_URL || "",
-  jwtSecret: requiredInProduction("JWT_SECRET", "dev-only-change-before-beta"),
+  jwtSecret: requiredSecret("JWT_SECRET"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "30d",
   databaseUrl: process.env.DATABASE_URL,
   db: {
@@ -69,7 +83,7 @@ export const config = {
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
     from: process.env.EMAIL_FROM || "",
-    codeSecret: requiredInProduction("EMAIL_CODE_SECRET", "dev-only-email-code-secret"),
+    codeSecret: requiredSecret("EMAIL_CODE_SECRET"),
     codeTtlMinutes: Number(process.env.EMAIL_CODE_TTL_MINUTES || 10),
     codeResendSeconds: Number(process.env.EMAIL_CODE_RESEND_SECONDS || 60),
     smtp: {

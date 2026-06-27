@@ -18,14 +18,14 @@ struct LegalDocumentView: View {
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Beta 版本说明")
+                Text("服务说明")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Theme.hotPink)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Theme.hotPink.opacity(0.12), in: Capsule())
 
-                Text("本页面用于内测阶段向用户说明周边团的服务规则和个人信息处理方式。正式公开发布前，页面内容会与 App Store Connect 隐私标签和公开隐私政策 URL 保持一致。")
+                Text("本页面向你说明周边团的服务规则和个人信息处理方式。完整条款以《用户服务协议》《隐私政策》及 App Store 中展示的隐私说明为准。")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.subtext)
                     .lineSpacing(6)

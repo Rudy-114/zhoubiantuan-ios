@@ -137,6 +137,10 @@ struct BackendUser: Decodable {
     }
 }
 
+struct BackendBlockedUsersResponse: Decodable {
+    let blockedUsers: [BackendUser]?
+}
+
 struct BackendRole: Decodable {
     let id: String?
     let name: String
@@ -655,8 +659,25 @@ final class AliyunBackendClient {
             "targetType": "post",
             "targetID": postID,
             "reason": reason,
-            "detail": "来自 iOS 内测版举报"
+            "detail": "来自 iOS 用户举报"
         ])
+    }
+
+    func deleteAccount(token: String) async throws {
+        try await emptyRequest("/me", method: "DELETE", token: token)
+    }
+
+    func blockUser(token: String, userID: String) async throws {
+        try await emptyRequest("/users/\(userID)/block", method: "POST", token: token)
+    }
+
+    func unblockUser(token: String, userID: String) async throws {
+        try await emptyRequest("/users/\(userID)/block", method: "DELETE", token: token)
+    }
+
+    func blockedUsers(token: String) async throws -> [User] {
+        let payload: BackendBlockedUsersResponse = try await request("/me/blocked-users", token: token)
+        return (payload.blockedUsers ?? []).map { $0.localUser() }
     }
 
     func uploadPostImages(token: String, images: [Data]) async throws -> [String] {

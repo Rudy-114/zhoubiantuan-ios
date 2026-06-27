@@ -54,6 +54,24 @@ export function createUploadTarget({ userId, kind, filename, contentType }) {
   };
 }
 
+export async function deleteObjects(objectKeys = []) {
+  const keys = (Array.isArray(objectKeys) ? objectKeys : []).filter(
+    (key) => typeof key === "string" && key.length > 0
+  );
+  if (!keys.length) return { deleted: 0 };
+  let deleted = 0;
+  for (const key of keys) {
+    try {
+      await client.delete(key);
+      deleted += 1;
+    } catch {
+      // Best-effort cleanup: orphaned objects can be swept later. Never let OSS
+      // availability block account deletion.
+    }
+  }
+  return { deleted };
+}
+
 function extensionFor(filename, contentType) {
   const fromName = path.extname(String(filename || "")).toLowerCase();
   if (/^\.[a-z0-9]{1,8}$/.test(fromName)) return fromName;

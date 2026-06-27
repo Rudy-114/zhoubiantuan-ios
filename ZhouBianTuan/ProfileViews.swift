@@ -2013,17 +2013,7 @@ struct TagContentView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(Theme.text)
 
-                        Button {
-                            if store.requireLogin(prompt: "登录后才能分享") {
-                                store.showToast("已打开标签分享占位")
-                            }
-                        } label: {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 27, weight: .medium))
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.text)
+                        EmptyView()
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
@@ -2047,18 +2037,6 @@ struct TagContentView: View {
                             .buttonStyle(.plain)
                         }
                         Spacer()
-                        Button {
-                            store.showToast("筛选功能占位")
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text("筛选")
-                                    .font(.system(size: 21, weight: .semibold))
-                                Image(systemName: "line.3.horizontal.decrease")
-                                    .font(.system(size: 19, weight: .semibold))
-                            }
-                            .foregroundStyle(Theme.subtext)
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 18)
@@ -2194,6 +2172,27 @@ struct UserProfileView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(user.id == store.currentUserID)
+                            }
+
+                            if user.id != store.currentUserID {
+                                Button {
+                                    Task {
+                                        if store.isBlocked(user.id) {
+                                            await store.unblockUser(user.id)
+                                        } else {
+                                            await store.blockUser(user.id)
+                                        }
+                                    }
+                                } label: {
+                                    Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
+                                        .font(.system(size: 15, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.top, 10)
                             }
                         }
                         .padding(.horizontal, 16)

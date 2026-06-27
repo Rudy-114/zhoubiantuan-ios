@@ -21,6 +21,7 @@ final class MockAppStore: ObservableObject {
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
     @Published var followingIDsByUserID: [String: Set<String>]
+    @Published var blockedUserIDs: Set<String> = []
     @Published var browsingHistoryIDs: [String] {
         didSet {
             UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
@@ -300,6 +301,7 @@ final class MockAppStore: ObservableObject {
         do {
             let payload = try await backendClient.bootstrap(token: backendToken)
             applyBackendPayload(payload)
+            await loadBlockedUsers()
             if !silent {
                 showToast("云端数据已同步")
             }
@@ -531,6 +533,7 @@ final class MockAppStore: ObservableObject {
         var postsByID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
         var order = posts.map(\.id)
         for post in backendPosts {
+            if blockedUserIDs.contains(post.authorID) { continue }
             if postsByID[post.id] == nil {
                 guard post.status != .deleted else { continue }
                 order.insert(post.id, at: 0)
@@ -1176,6 +1179,74 @@ final class MockAppStore: ObservableObject {
         }
     }
 
+    // MARK: - Account Deletion & Blocking
+
+    func isBlocked(_ userID: String) -> Bool {
+        blockedUserIDs.contains(userID)
+    }
+
+    func loadBlockedUsers() async {
+        guard isBackendEnabled, let token = backendToken else { return }
+        guard let blocked = try? await backendClient.blockedUsers(token: token) else { return }
+        mergeUsers(blocked)
+        blockedUserIDs = Set(blocked.map(\.id))
+        if !blockedUserIDs.isEmpty {
+            filterBlockedContentLocally()
+        }
+    }
+
+    func blockUser(_ userID: String) async {
+        guard userID != currentUserID else { return }
+        guard isBackendEnabled, let token = backendToken else {
+            showToast("请先登录后再操作")
+            return
+        }
+        do {
+            try await backendClient.blockUser(token: token, userID: userID)
+            blockedUserIDs.insert(userID)
+            followedUserIDs.remove(userID)
+            followingIDsByUserID[currentUserID]?.remove(userID)
+            filterBlockedContentLocally()
+            showToast("已拉黑，对方将无法私信你")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    func unblockUser(_ userID: String) async {
+        guard isBackendEnabled, let token = backendToken else { return }
+        do {
+            try await backendClient.unblockUser(token: token, userID: userID)
+            blockedUserIDs.remove(userID)
+            showToast("已解除拉黑")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    func deleteAccount() async -> Bool {
+        guard isBackendEnabled, let token = backendToken else {
+            showToast("请先登录后再操作")
+            return false
+        }
+        do {
+            try await backendClient.deleteAccount(token: token)
+            logOut()
+            showToast("账号已删除")
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func filterBlockedContentLocally() {
+        posts.removeAll { blockedUserIDs.contains($0.authorID) }
+        comments.removeAll { blockedUserIDs.contains($0.authorID) }
+        threads.removeAll { blockedUserIDs.contains($0.buyerUserID) || blockedUserIDs.contains($0.publisherUserID) }
+    }
+
     func logOut() {
         stopBackendAutoRefresh()
         SyncCursorStore.remove(for: currentUserID)
@@ -1195,6 +1266,7 @@ final class MockAppStore: ObservableObject {
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
+        blockedUserIDs.removeAll()
         followingIDsByUserID = [Self.demoUserID: []]
         browsingHistoryIDs.removeAll()
         authSessionVersion = UUID()

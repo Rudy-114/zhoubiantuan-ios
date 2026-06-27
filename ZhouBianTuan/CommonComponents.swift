@@ -586,7 +586,7 @@ struct ReminderMiniCard: View {
                 .frame(width: 44, height: 44)
                 .background(Theme.hotPink.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.hasReminded ? "你收藏的团购即将截团" : "截团提醒已开启")
+                Text(reminder.hasReminded ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text("《\(post.title)》\(post.deadline.shortDeadlineText)")
@@ -619,7 +619,7 @@ struct ReminderLargeCard: View {
                 Text("截团：\(post.deadline.fullDisplay)")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.subtext)
-                Text(reminder.hasReminded ? "已模拟发送提醒" : "将在截团前提醒")
+                Text(reminder.hasReminded ? "即将截团" : "请留意截团时间")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(reminder.hasReminded ? Color.green : Theme.hotPink)
             }

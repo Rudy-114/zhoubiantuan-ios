@@ -484,14 +484,14 @@ enum LegalDocument: String, CaseIterable, Identifiable {
                 LegalSection(title: "我们收集的信息", body: "为提供账号和社区功能，我们会收集邮箱、昵称、个人资料、你主动发布的帖子、评论、私信、举报内容，以及你主动选择上传的图片。"),
                 LegalSection(title: "使用目的", body: "这些信息用于注册登录、验证码发送、账号展示、内容发布、互动通知、私信沟通、内容安全、举报处理、客服支持和基础运营维护。"),
                 LegalSection(title: "存储与安全", body: "账号密码以哈希形式保存，登录状态使用令牌维护。图片上传到云存储，后端服务访问数据库和对象存储时使用服务端密钥，密钥不会放入 iOS 客户端。"),
-                LegalSection(title: "你的选择", body: "你可以退出登录、编辑资料、删除本地浏览记录，或通过平台提供的反馈渠道请求更正、删除账号相关信息。我们不会将上述信息用于跨 App 或跨网站追踪。")
+                LegalSection(title: "你的选择", body: "你可以退出登录、编辑资料、删除本地浏览记录，或在「设置 - 账号与安全 - 删除账号」中直接删除账号。如需更正信息或寻求帮助，可在「设置 - 帮助与反馈」通过客服邮箱联系我们。我们不会将上述信息用于跨 App 或跨网站追踪。")
             ]
         case .minorsPolicy:
             return [
                 LegalSection(title: "监护人同意", body: "未成年人使用本服务前，应取得父母或其他监护人的同意，并在监护人指导下理解团购信息、个人信息保护和网络交易风险。"),
                 LegalSection(title: "最小必要", body: "平台仅围绕账号、内容发布和沟通功能处理必要信息。未成年人不应公开发布身份证件、住址、学校、银行卡、精确定位等敏感信息。"),
                 LegalSection(title: "交易提醒", body: "未成年人不应独立进行高金额或高风险交易。涉及付款、补款、退款或线下见面时，应由监护人参与判断并保留沟通凭证。"),
-                LegalSection(title: "保护请求", body: "监护人如发现未成年人信息被不当展示或使用，可以通过平台反馈渠道联系我们处理。")
+                LegalSection(title: "保护请求", body: "监护人如发现未成年人信息被不当展示或使用，可以在「设置 - 帮助与反馈」通过客服邮箱联系我们处理。")
             ]
         case .personalInfoList:
             return [
@@ -505,7 +505,7 @@ enum LegalDocument: String, CaseIterable, Identifiable {
                 LegalSection(title: "云服务", body: "后端部署在云服务器，数据库和对象存储用于保存账号、内容和图片。邮件服务用于发送注册和登录验证码。"),
                 LegalSection(title: "外部交易渠道", body: "帖子中可能展示微信、QQ、群聊或表单链接等外部联系方式。你离开本 App 后的信息处理和交易规则由相应第三方或团长负责。"),
                 LegalSection(title: "法定披露", body: "如法律法规、监管要求、司法机关或平台安全处置需要，我们可能在必要范围内提供相关信息。"),
-                LegalSection(title: "不用于追踪", body: "当前 Beta 版本不接入广告追踪 SDK，不将收集的信息用于跨 App 或跨网站追踪。")
+                LegalSection(title: "不用于追踪", body: "本应用不接入广告追踪 SDK，不将收集的信息用于跨 App 或跨网站追踪。")
             ]
         }
     }

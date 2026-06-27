@@ -226,7 +226,7 @@ struct LaunchSplashView: View {
             (isDarkMode ? Color.black : Color.white)
                 .ignoresSafeArea()
 
-            Text(isDarkMode ? "周边团" : "欧美团")
+            Text("周边团")
                 .font(.system(size: 48, weight: .black, design: .rounded))
                 .foregroundStyle(Theme.hotPink)
                 .scaleEffect(isPresented ? 1 : 0.92)
