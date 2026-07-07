@@ -44,8 +44,9 @@ export function arrayOfStrings(value) {
   return value.filter((item) => item != null).map((item) => String(item).trim()).filter(Boolean);
 }
 
-export function badRequest(message) {
+export function badRequest(message, apiCode) {
   const error = new Error(message);
   error.status = 400;
+  if (apiCode) error.apiCode = apiCode;
   return error;
 }

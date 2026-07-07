@@ -789,20 +789,30 @@ export function createRouter() {
     try {
       const blockedId = trimmedString(req.params.id);
       if (!blockedId || blockedId === req.user.id) throw badRequest("不能拉黑自己");
-      await withTransaction(async (client) => {
+      const syncEvents = await withTransaction(async (client) => {
         const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [blockedId]);
         if (!target.rows[0]) throw badRequest("用户不存在");
         await client.query(
           "INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT (blocker_id, blocked_id) DO NOTHING",
           [req.user.id, blockedId]
         );
-        // Blocking severs any follow relationship in either direction.
+        // Blocking removes both follow edges. Unblocking does not restore them;
+        // either user must follow again manually after the block is cleared.
         await client.query(
-          "DELETE FROM follows WHERE (follower_id = $1 AND following_id = $2) OR (follower_id = $2 AND following_id = $1)",
+          `DELETE FROM follows
+           WHERE (follower_id = $1 AND following_id = $2)
+              OR (follower_id = $2 AND following_id = $1)`,
           [req.user.id, blockedId]
         );
+        return createRelationshipSyncEvents(client, {
+          userIds: [req.user.id, blockedId],
+          eventType: "user.blocked"
+        });
       });
-      logger.info("user.blocked", { userID: req.user.id, blockedID: blockedId });
+      if (syncEvents.length) {
+        logger.info("user.blocked", { userID: req.user.id, blockedID: blockedId, events: syncEvents.length });
+        notifySyncEvents(syncEvents);
+      }
       res.status(204).end();
     } catch (error) {
       next(error);
@@ -812,8 +822,18 @@ export function createRouter() {
   router.delete("/users/:id/block", requireAuth, async (req, res, next) => {
     try {
       const blockedId = trimmedString(req.params.id);
-      await query("DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2", [req.user.id, blockedId]);
-      logger.info("user.unblocked", { userID: req.user.id, blockedID: blockedId });
+      const syncEvents = await withTransaction(async (client) => {
+        const result = await client.query("DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2", [req.user.id, blockedId]);
+        if (!result.rowCount) return [];
+        return createRelationshipSyncEvents(client, {
+          userIds: [req.user.id, blockedId],
+          eventType: "user.unblocked"
+        });
+      });
+      if (syncEvents.length) {
+        logger.info("user.unblocked", { userID: req.user.id, blockedID: blockedId, events: syncEvents.length });
+        notifySyncEvents(syncEvents);
+      }
       res.status(204).end();
     } catch (error) {
       next(error);
@@ -838,8 +858,16 @@ export function createRouter() {
 
       const recipient = await query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [recipientUserID]);
       if (!recipient.rows[0]) throw badRequest("收信人不存在");
-      if (await blockExistsBetween({ query }, req.user.id, recipientUserID)) {
-        throw badRequest("无法向该用户发送消息");
+      const blockRows = await query(
+        `SELECT blocker_id FROM user_blocks
+         WHERE (blocker_id = $1 AND blocked_id = $2)
+            OR (blocker_id = $2 AND blocked_id = $1)`,
+        [req.user.id, recipientUserID]
+      );
+      if (blockRows.rows.length) {
+        // 双向都拉黑时「对方拉黑我」优先，客户端按 code 展示失败原因。
+        const blockedByRecipient = blockRows.rows.some((row) => row.blocker_id === recipientUserID);
+        throw badRequest("无法向该用户发送消息", blockedByRecipient ? "blocked_by_recipient" : "blocked_recipient");
       }
 
       if (relatedPostID) {
@@ -1302,6 +1330,20 @@ async function setFollowState({ followerId, followingId, enabled }) {
     }
     return syncEvents;
   });
+}
+
+async function createRelationshipSyncEvents(client, { userIds, eventType }) {
+  const audience = uniqueIds(userIds);
+  const syncEvents = [];
+  for (const entityId of audience) {
+    syncEvents.push(...(await createSyncEventsForUsers(client, {
+      userIds: audience,
+      eventType,
+      entityType: "user",
+      entityId
+    })));
+  }
+  return syncEvents;
 }
 
 function canonicalThreadId(userA, userB) {

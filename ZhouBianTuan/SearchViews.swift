@@ -60,7 +60,7 @@ struct SearchView: View {
             pool.append(contentsOf: post.fandomTags)
             pool.append(contentsOf: post.unsoldRoles.map(\.name))
         }
-        for user in store.users where user.id != store.currentUserID {
+        for user in store.users where user.id != store.currentUserID && store.canShowContent(from: user.id) {
             pool.append(user.nickname)
             pool.append(user.redBookID)
             pool.append(user.region)

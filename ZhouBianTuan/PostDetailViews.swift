@@ -9,10 +9,21 @@ struct PostDetailView: View {
     @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
     @State private var isAuthorProfilePresented = false
+    @State private var authorProfileUserID: String?
     @State private var selectedImageIndex = 0
     let postID: String
 
     var body: some View {
+        detailBody
+            .navigationDestination(isPresented: $isAuthorProfilePresented) {
+                if let authorProfileUserID {
+                    UserProfileView(userID: authorProfileUserID)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var detailBody: some View {
         if let post = store.post(id: postID) {
             let author = store.user(id: post.authorID)
             let imageCount = max(1, max(post.remoteImageURLs.count, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count))
@@ -132,9 +143,6 @@ struct PostDetailView: View {
             .onChange(of: imageCount) {
                 selectedImageIndex = min(selectedImageIndex, max(0, imageCount - 1))
             }
-            .navigationDestination(isPresented: $isAuthorProfilePresented) {
-                UserProfileView(userID: author.id)
-            }
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
@@ -166,6 +174,7 @@ struct PostDetailView: View {
             dismiss()
         } else if value.translation.width < -92 {
             hideKeyboard()
+            authorProfileUserID = authorID
             withAnimation(AppMotion.page) {
                 isAuthorProfilePresented = true
             }

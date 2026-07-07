@@ -22,6 +22,7 @@ final class MockAppStore: ObservableObject {
     @Published var followedUserIDs: Set<String>
     @Published var followingIDsByUserID: [String: Set<String>]
     @Published var blockedUserIDs: Set<String> = []
+    @Published var blockedByUserIDs: Set<String> = []
     @Published var browsingHistoryIDs: [String] {
         didSet {
             UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
@@ -64,6 +65,8 @@ final class MockAppStore: ObservableObject {
     private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
     private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
     private static let messageLimitDefaultsKey = "zhoubiantuan.limitsUnrepliedMessages"
+    private static let legacyMessageLimitDefaultDisabledMigrationKey = "zhoubiantuan.limitsUnrepliedMessages.defaultDisabled.v1"
+    private static let messageLimitDefaultRestoredMigrationKey = "zhoubiantuan.limitsUnrepliedMessages.defaultRestored.v1"
     private static let backendEnabledDefaultsKey = "zhoubiantuan.isBackendEnabled"
     private static let backendTokenDefaultsKey = "zhoubiantuan.backendToken"
     private static let backendTokenFallbackDefaultsKey = "zhoubiantuan.backendToken.fallback"
@@ -72,8 +75,8 @@ final class MockAppStore: ObservableObject {
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
-    private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 10_000_000_000
-    private static let backendFallbackGraceInterval: TimeInterval = 15
+    private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
+    private static let backendFallbackGraceInterval: TimeInterval = 3
     let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
@@ -83,19 +86,35 @@ final class MockAppStore: ObservableObject {
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
     private var lastRealtimeActivityAt = Date.distantPast
+    private var authExpirySuppressedUntil = Date.distantPast
     var backendToken: String? {
         get {
-            cachedBackendToken ?? KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
+            if let cachedBackendToken {
+                return cachedBackendToken
+            }
+            if let keychainToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey) {
+                return keychainToken
+            }
+            #if DEBUG
+            return UserDefaults.standard.string(forKey: Self.backendTokenFallbackDefaultsKey)
+            #else
+            return nil
+            #endif
         }
         set {
             if let newValue, !newValue.isEmpty {
                 if KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey) {
                     cachedBackendToken = newValue
+                    UserDefaults.standard.removeObject(forKey: Self.backendTokenFallbackDefaultsKey)
                 } else {
+                    #if DEBUG
+                    cachedBackendToken = newValue
+                    UserDefaults.standard.set(newValue, forKey: Self.backendTokenFallbackDefaultsKey)
+                    #else
                     cachedBackendToken = nil
                     toastMessage = "安全存储异常，请重新登录"
+                    #endif
                 }
-                UserDefaults.standard.removeObject(forKey: Self.backendTokenFallbackDefaultsKey)
             } else {
                 cachedBackendToken = nil
                 KeychainStore.delete(forKey: Self.backendTokenDefaultsKey)
@@ -118,6 +137,15 @@ final class MockAppStore: ObservableObject {
         }
         defaults.removeObject(forKey: backendTokenDefaultsKey)
         defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
+    }
+
+    private static func restoreMessageLimitDefaultIfDisabledByTemporaryMigration() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: legacyMessageLimitDefaultDisabledMigrationKey),
+              !defaults.bool(forKey: messageLimitDefaultRestoredMigrationKey)
+        else { return }
+        defaults.set(true, forKey: messageLimitDefaultsKey)
+        defaults.set(true, forKey: messageLimitDefaultRestoredMigrationKey)
     }
 
     private static func browsingHistoryDefaultsKey(for userID: String) -> String {
@@ -188,8 +216,10 @@ final class MockAppStore: ObservableObject {
         let fileData = Self.messageThreadsStorageURL.flatMap { try? Data(contentsOf: $0) }
         guard let data = fileData ?? UserDefaults.standard.data(forKey: Self.messageThreadsDefaultsKey),
               let restoredThreads = try? JSONDecoder().decode([MessageThread].self, from: data) else { return }
+        var seenThreadIDs = Set<String>()
+        let dedupedThreads = restoredThreads.filter { seenThreadIDs.insert($0.id).inserted }
         isRestoringThreads = true
-        threads = restoredThreads
+        threads = dedupedThreads
         isRestoringThreads = false
     }
 
@@ -202,6 +232,7 @@ final class MockAppStore: ObservableObject {
     init() {
         Self.resetLocalDataForEmptyBetaIfNeeded()
         Self.migrateBackendTokenToKeychain()
+        Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
         cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
         let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
         isLoggedIn = startsLoggedIn
@@ -227,10 +258,8 @@ final class MockAppStore: ObservableObject {
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
         restorePersistedThreads()
-        if isBackendEnabled {
-            if backendToken == nil {
-                isLoggedIn = false
-            }
+        if isBackendEnabled, backendToken == nil {
+            invalidateCloudSessionForMissingToken(prompt: false)
         }
     }
 
@@ -376,17 +405,17 @@ final class MockAppStore: ObservableObject {
 
     private func runFallbackSyncIfNeeded() async {
         guard isBackendEnabled, backendToken != nil else { return }
-        guard !isRealtimeConnected,
-              Date().timeIntervalSince(lastRealtimeActivityAt) >= Self.backendFallbackGraceInterval else { return }
+        guard Date().timeIntervalSince(lastRealtimeActivityAt) >= Self.backendFallbackGraceInterval else { return }
         await syncFromBackend(reason: "fallback")
     }
 
     private func isAuthExpiredError(_ error: Error) -> Bool {
         let nsError = error as NSError
-        return nsError.domain == "AliyunBackendClient" && [401, 403].contains(nsError.code)
+        return nsError.domain == "AliyunBackendClient" && nsError.code == 401
     }
 
     private func expireCloudSession(silent: Bool = false) {
+        guard Date() >= authExpirySuppressedUntil else { return }
         stopBackendAutoRefresh()
         SyncCursorStore.remove(for: currentUserID)
         backendToken = nil
@@ -399,6 +428,22 @@ final class MockAppStore: ObservableObject {
         authSessionVersion = UUID()
         if !silent {
             showToast("登录已失效，请重新注册或登录")
+        }
+    }
+
+    private func invalidateCloudSessionForMissingToken(prompt: Bool, toast: String? = nil) {
+        stopBackendAutoRefresh()
+        SyncCursorStore.remove(for: currentUserID)
+        backendToken = nil
+        isLoggedIn = false
+        isAuthPromptPresented = prompt
+        likedPostIDs.removeAll()
+        favoritePostIDs.removeAll()
+        followedUserIDs.removeAll()
+        followingIDsByUserID[currentUserID] = []
+        authSessionVersion = UUID()
+        if let toast {
+            showToast(toast)
         }
     }
 
@@ -438,6 +483,12 @@ final class MockAppStore: ObservableObject {
         if let followingByUserID = payload.followingByUserID {
             self.followingIDsByUserID = followingByUserID.mapValues { Set($0) }
         }
+        if let blockedUserIDs = payload.blockedUserIDs {
+            self.blockedUserIDs = Set(blockedUserIDs)
+        }
+        if let blockedByUserIDs = payload.blockedByUserIDs {
+            self.blockedByUserIDs = Set(blockedByUserIDs)
+        }
         if let currentUser = payload.currentUser?.localUser() {
             if !users.contains(where: { $0.id == currentUser.id }) {
                 users.append(currentUser)
@@ -476,7 +527,9 @@ final class MockAppStore: ObservableObject {
             if var backendThread = merged[localThread.id] {
                 backendThread = preservingLocalMessageState(backendThread: backendThread, localThread: localThread)
                 let backendMessageIDs = Set(backendThread.messages.map(\.id))
-                let localOnlyMessages = localThread.messages.filter { !backendMessageIDs.contains($0.id) && $0.createdAt > recentCutoff }
+                let localOnlyMessages = localThread.messages.filter {
+                    !backendMessageIDs.contains($0.id) && ($0.createdAt > recentCutoff || $0.deliveryStatus.isFailed)
+                }
                 if !localOnlyMessages.isEmpty {
                     backendThread.messages.append(contentsOf: localOnlyMessages)
                     backendThread.messages.sort { $0.createdAt < $1.createdAt }
@@ -485,7 +538,8 @@ final class MockAppStore: ObservableObject {
                 }
                 continue
             }
-            let hasRecentDraft = localThread.updatedAt > recentCutoff || localThread.messages.contains { $0.createdAt > recentCutoff }
+            let hasRecentDraft = localThread.updatedAt > recentCutoff
+                || localThread.messages.contains { $0.createdAt > recentCutoff || $0.deliveryStatus.isFailed }
             if hasRecentDraft {
                 merged[localThread.id] = localThread
             }
@@ -511,6 +565,12 @@ final class MockAppStore: ObservableObject {
         if let followingByUserID = payload.followingByUserID {
             self.followingIDsByUserID = followingByUserID.mapValues { Set($0) }
         }
+        if let blockedUserIDs = payload.blockedUserIDs {
+            self.blockedUserIDs = Set(blockedUserIDs)
+        }
+        if let blockedByUserIDs = payload.blockedByUserIDs {
+            self.blockedByUserIDs = Set(blockedByUserIDs)
+        }
         followingIDsByUserID[currentUserID] = followedUserIDs
         SyncCursorStore.set(payload.nextCursor, for: currentUserID)
     }
@@ -533,7 +593,6 @@ final class MockAppStore: ObservableObject {
         var postsByID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
         var order = posts.map(\.id)
         for post in backendPosts {
-            if blockedUserIDs.contains(post.authorID) { continue }
             if postsByID[post.id] == nil {
                 guard post.status != .deleted else { continue }
                 order.insert(post.id, at: 0)
@@ -573,12 +632,14 @@ final class MockAppStore: ObservableObject {
     private func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
         guard !backendThreads.isEmpty else { return }
         let recentCutoff = Date().addingTimeInterval(-120)
-        var merged = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        var merged = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
         for var backendThread in backendThreads {
             if let localThread = merged[backendThread.id] {
                 backendThread = preservingLocalMessageState(backendThread: backendThread, localThread: localThread)
                 let backendMessageIDs = Set(backendThread.messages.map(\.id))
-                let localOnlyMessages = localThread.messages.filter { !backendMessageIDs.contains($0.id) && $0.createdAt > recentCutoff }
+                let localOnlyMessages = localThread.messages.filter {
+                    !backendMessageIDs.contains($0.id) && ($0.createdAt > recentCutoff || $0.deliveryStatus.isFailed)
+                }
                 if !localOnlyMessages.isEmpty {
                     backendThread.messages.append(contentsOf: localOnlyMessages)
                     backendThread.messages.sort { $0.createdAt < $1.createdAt }
@@ -629,10 +690,11 @@ final class MockAppStore: ObservableObject {
     // MARK: - Queries
 
     var activePosts: [GroupBuyPost] {
-        posts.filter { $0.status == .active }
+        posts.filter { $0.status == .active && canShowContent(from: $0.authorID) }
     }
 
     func profilePosts(userID: String) -> [GroupBuyPost] {
+        guard canShowContent(from: userID) else { return [] }
         let source = activePosts.filter { $0.authorID == userID }
         return sortedFeedPosts(source)
     }
@@ -700,7 +762,9 @@ final class MockAppStore: ObservableObject {
     }
 
     func post(id: String) -> GroupBuyPost? {
-        posts.first(where: { $0.id == id })
+        guard let post = posts.first(where: { $0.id == id }),
+              canShowContent(from: post.authorID) else { return nil }
+        return post
     }
 
     func collection(id: String?) -> GroupCollection? {
@@ -737,10 +801,11 @@ final class MockAppStore: ObservableObject {
     }
 
     func relationUsers(for userID: String, kind: UserRelationKind) -> [User] {
-        switch kind {
+        let users = switch kind {
         case .following: followingUsers(for: userID)
         case .followers: followerUsers(for: userID)
         }
+        return users.filter { canShowContent(from: $0.id) }
     }
 
     private func followingIDs(for userID: String) -> Set<String> {
@@ -748,7 +813,8 @@ final class MockAppStore: ObservableObject {
     }
 
     func collections(ownerID: String) -> [GroupCollection] {
-        collections
+        guard canShowContent(from: ownerID) else { return [] }
+        return collections
             .filter { $0.ownerID == ownerID }
             .sorted { lhs, rhs in
                 if lhs.isEnded != rhs.isEnded {
@@ -802,6 +868,7 @@ final class MockAppStore: ObservableObject {
         let trimmed = keyword.trimmed
         let userMatches = users.filter { user in
             guard user.id != currentUserID else { return false }
+            guard canShowContent(from: user.id) else { return false }
             guard !trimmed.isEmpty else { return false }
             let authoredText = posts
                 .filter { $0.authorID == user.id && $0.status == .active }
@@ -869,6 +936,7 @@ final class MockAppStore: ObservableObject {
         comments
             .filter { comment in
                 comment.postID == postID &&
+                canShowContent(from: comment.authorID) &&
                 (comment.status == .active || (comment.authorID == currentUserID && comment.status != .deleted))
             }
             .sorted { $0.createdAt < $1.createdAt }
@@ -1185,28 +1253,31 @@ final class MockAppStore: ObservableObject {
         blockedUserIDs.contains(userID)
     }
 
+    func canShowContent(from userID: String) -> Bool {
+        userID == currentUserID || (!blockedUserIDs.contains(userID) && !blockedByUserIDs.contains(userID))
+    }
+
     func loadBlockedUsers() async {
         guard isBackendEnabled, let token = backendToken else { return }
         guard let blocked = try? await backendClient.blockedUsers(token: token) else { return }
         mergeUsers(blocked)
         blockedUserIDs = Set(blocked.map(\.id))
-        if !blockedUserIDs.isEmpty {
-            filterBlockedContentLocally()
-        }
     }
 
     func blockUser(_ userID: String) async {
         guard userID != currentUserID else { return }
-        guard isBackendEnabled, let token = backendToken else {
-            showToast("请先登录后再操作")
+        guard requireLogin(prompt: "登录后才能拉黑") else { return }
+        suppressAuthExpiryDuringBlockMutation()
+        guard let token = cloudMutationToken(missingMessage: "云端登录状态异常，请重新登录后再拉黑") else {
+            if canApplyLocalOnlyAccountMutation {
+                applyLocalBlock(userID)
+                showToast("已拉黑，对方将无法私信你")
+            }
             return
         }
         do {
             try await backendClient.blockUser(token: token, userID: userID)
-            blockedUserIDs.insert(userID)
-            followedUserIDs.remove(userID)
-            followingIDsByUserID[currentUserID]?.remove(userID)
-            filterBlockedContentLocally()
+            applyLocalBlock(userID)
             showToast("已拉黑，对方将无法私信你")
         } catch {
             showToast(error.localizedDescription)
@@ -1214,13 +1285,84 @@ final class MockAppStore: ObservableObject {
     }
 
     func unblockUser(_ userID: String) async {
-        guard isBackendEnabled, let token = backendToken else { return }
+        guard requireLogin(prompt: "登录后才能管理拉黑") else { return }
+        suppressAuthExpiryDuringBlockMutation()
+        guard let token = cloudMutationToken(missingMessage: "云端登录状态异常，请重新登录后再管理拉黑") else {
+            if canApplyLocalOnlyAccountMutation {
+                blockedUserIDs.remove(userID)
+                showToast("已解除拉黑")
+                await restoreVisibleContentAfterUnblock()
+            }
+            return
+        }
         do {
             try await backendClient.unblockUser(token: token, userID: userID)
             blockedUserIDs.remove(userID)
             showToast("已解除拉黑")
+            await restoreVisibleContentAfterUnblock()
         } catch {
             showToast(error.localizedDescription)
+        }
+    }
+
+    private var canApplyLocalOnlyAccountMutation: Bool {
+        !isBackendEnabled && isLoggedIn
+    }
+
+    private func cloudMutationToken(missingMessage: String) -> String? {
+        guard isBackendEnabled else { return nil }
+        guard let token = backendToken else {
+            invalidateCloudSessionForMissingToken(prompt: true, toast: missingMessage)
+            return nil
+        }
+        return token
+    }
+
+    private func suppressAuthExpiryDuringBlockMutation() {
+        authExpirySuppressedUntil = Date().addingTimeInterval(8)
+    }
+
+    private func applyLocalBlock(_ userID: String) {
+        let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
+        let targetIndex = users.firstIndex(where: { $0.id == userID })
+        let removedCurrentFollow = followedUserIDs.remove(userID) != nil
+        let hadTargetFollowingIDs = followingIDsByUserID[userID] != nil
+        var targetFollowingIDs = followingIDsByUserID[userID] ?? []
+        let removedTargetFollow = targetFollowingIDs.remove(currentUserID) != nil
+
+        blockedUserIDs.insert(userID)
+        followingIDsByUserID[currentUserID] = followedUserIDs
+        if hadTargetFollowingIDs {
+            followingIDsByUserID[userID] = targetFollowingIDs
+        }
+
+        if let currentIndex {
+            users[currentIndex].followingCount = followedUserIDs.count
+            if removedTargetFollow {
+                users[currentIndex].followersCount = max(0, users[currentIndex].followersCount - 1)
+            }
+        }
+        if let targetIndex {
+            if hadTargetFollowingIDs {
+                users[targetIndex].followingCount = targetFollowingIDs.count
+            }
+            if removedCurrentFollow {
+                users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
+            }
+        }
+    }
+
+    private func restoreVisibleContentAfterUnblock() async {
+        guard isBackendEnabled else { return }
+        if backendToken != nil {
+            await refreshFromBackend(silent: true)
+            return
+        }
+        do {
+            let payload = try await backendClient.feed(limit: 80)
+            applyPublicFeedPayload(payload)
+        } catch {
+            // Best-effort public refresh for debug/local-token-missing sessions.
         }
     }
 
@@ -1239,12 +1381,6 @@ final class MockAppStore: ObservableObject {
             showToast(error.localizedDescription)
             return false
         }
-    }
-
-    private func filterBlockedContentLocally() {
-        posts.removeAll { blockedUserIDs.contains($0.authorID) }
-        comments.removeAll { blockedUserIDs.contains($0.authorID) }
-        threads.removeAll { blockedUserIDs.contains($0.buyerUserID) || blockedUserIDs.contains($0.publisherUserID) }
     }
 
     func logOut() {
@@ -1267,6 +1403,7 @@ final class MockAppStore: ObservableObject {
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
         blockedUserIDs.removeAll()
+        blockedByUserIDs.removeAll()
         followingIDsByUserID = [Self.demoUserID: []]
         browsingHistoryIDs.removeAll()
         authSessionVersion = UUID()
@@ -1533,10 +1670,13 @@ final class MockAppStore: ObservableObject {
         if let existing = messageThreads.first(where: { peerUserID(for: $0) == userID }) {
             return existing.id
         }
-        if !isBackendEnabled, let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
+        if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
             return existing.id
         }
         let threadID = isBackendEnabled ? stableThreadID(forRecipient: userID) : "t-\(UUID().uuidString)"
+        if threads.contains(where: { $0.id == threadID }) {
+            return threadID
+        }
         let thread = MessageThread(
             id: threadID,
             buyerUserID: currentUserID,
@@ -1561,10 +1701,18 @@ final class MockAppStore: ObservableObject {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return false }
+        if let failureStatus = localBlockFailureStatus(forPeer: peerUserID(for: threads[index])) {
+            appendFailedMessage(
+                DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date(), deliveryStatus: failureStatus),
+                toThreadAt: index
+            )
+            return true
+        }
         guard canSendMessage(in: threads[index]) else {
-            showToast("对方未关注你时，回复前最多发送两条消息")
+            showToast("对方未关注你前最多发送两条消息")
             return false
         }
+        guard canAttemptCloudMessage() else { return false }
         let message = DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date())
         threads[index].messages.append(message)
         threads[index].updatedAt = Date()
@@ -1578,11 +1726,19 @@ final class MockAppStore: ObservableObject {
     func sendImageMessage(threadID: String, imageData: Data) -> Bool {
         guard requireLogin(prompt: "登录后才能发私信") else { return false }
         guard let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return false }
+        let storedImageData = Self.normalizedMessageImageData(imageData)
+        if let failureStatus = localBlockFailureStatus(forPeer: peerUserID(for: threads[index])) {
+            appendFailedMessage(
+                DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: "[图片]", createdAt: Date(), imageData: storedImageData, deliveryStatus: failureStatus),
+                toThreadAt: index
+            )
+            return true
+        }
         guard canSendMessage(in: threads[index]) else {
-            showToast("对方未关注你时，回复前最多发送两条消息")
+            showToast("对方未关注你前最多发送两条消息")
             return false
         }
-        let storedImageData = Self.normalizedMessageImageData(imageData)
+        guard canAttemptCloudMessage() else { return false }
         let message = DirectMessage(
             id: "m-\(UUID().uuidString)",
             senderID: currentUserID,
@@ -1599,6 +1755,72 @@ final class MockAppStore: ObservableObject {
         return true
     }
 
+    private func appendFailedMessage(_ message: DirectMessage, toThreadAt index: Int) {
+        threads[index].messages.append(message)
+        threads[index].updatedAt = Date()
+        persistThreads()
+    }
+
+    func retryFailedMessage(threadID: String, messageID: String) {
+        guard let threadIndex = localThreadIndex(threadID: threadID, messageID: messageID),
+              let messageIndex = threads[threadIndex].messages.firstIndex(where: { $0.id == messageID }),
+              threads[threadIndex].messages[messageIndex].deliveryStatus.isFailed else { return }
+        if let failureStatus = localBlockFailureStatus(forPeer: peerUserID(for: threads[threadIndex])) {
+            threads[threadIndex].messages[messageIndex].deliveryStatus = failureStatus
+            persistThreads()
+            if failureStatus == .failedBlockedByPeer {
+                showToast("你已被对方拉黑，无法发送消息")
+            } else {
+                showToast("你已拉黑对方，解除拉黑后才能发送")
+            }
+            return
+        }
+        guard canSendMessage(in: threads[threadIndex]) else {
+            showToast("对方未关注你前最多发送两条消息")
+            return
+        }
+        guard canAttemptCloudMessage() else { return }
+        var message = threads[threadIndex].messages.remove(at: messageIndex)
+        message.deliveryStatus = .sent
+        message.createdAt = Date()
+        threads[threadIndex].messages.append(message)
+        threads[threadIndex].updatedAt = Date()
+        let thread = threads[threadIndex]
+        persistThreads()
+        syncMessageToBackendIfNeeded(thread: thread, message: message)
+    }
+
+    private func localBlockFailureStatus(forPeer peerID: String) -> MessageDeliveryStatus? {
+        // 双方互拉时「你已被对方拉黑」优先展示。
+        if blockedByUserIDs.contains(peerID) { return .failedBlockedByPeer }
+        if blockedUserIDs.contains(peerID) { return .failedBlockedPeer }
+        return nil
+    }
+
+    private func blockedSendFailureStatus(_ error: Error, recipientUserID: String) -> MessageDeliveryStatus? {
+        let nsError = error as NSError
+        guard nsError.domain == "AliyunBackendClient" else { return nil }
+        switch nsError.userInfo[AliyunBackendClient.errorCodeUserInfoKey] as? String {
+        case "blocked_by_recipient": return .failedBlockedByPeer
+        case "blocked_recipient": return .failedBlockedPeer
+        default: break
+        }
+        // 旧版后端无 code 字段时按文案兜底，方向靠本地拉黑状态推断。
+        if nsError.code == 400 && nsError.localizedDescription == "无法向该用户发送消息" {
+            return isBlocked(recipientUserID) ? .failedBlockedPeer : .failedBlockedByPeer
+        }
+        return nil
+    }
+
+    private func canAttemptCloudMessage() -> Bool {
+        guard isBackendEnabled else { return true }
+        guard backendToken != nil else {
+            invalidateCloudSessionForMissingToken(prompt: true, toast: "云端登录状态异常，请重新登录后再发私信")
+            return false
+        }
+        return true
+    }
+
     private func syncMessageToBackendIfNeeded(thread: MessageThread, message: DirectMessage, successToast: String? = nil) {
         guard isBackendEnabled else {
             if let successToast {
@@ -1606,7 +1828,13 @@ final class MockAppStore: ObservableObject {
             }
             return
         }
-        guard let backendToken else { return }
+        guard let backendToken else {
+            updateLocalMessage(threadID: thread.id, messageID: message.id) { localMessage in
+                localMessage.deliveryStatus = .failedNetwork
+            }
+            invalidateCloudSessionForMissingToken(prompt: true, toast: "云端登录状态异常，请重新登录后再发私信")
+            return
+        }
         let recipientUserID = peerUserID(for: thread)
         Task {
             do {
@@ -1625,6 +1853,18 @@ final class MockAppStore: ObservableObject {
                     showToast(successToast)
                 }
             } catch {
+                if let failureStatus = blockedSendFailureStatus(error, recipientUserID: recipientUserID) {
+                    if failureStatus == .failedBlockedByPeer {
+                        blockedByUserIDs.insert(recipientUserID)
+                    }
+                    updateLocalMessage(threadID: thread.id, messageID: message.id) { localMessage in
+                        localMessage.deliveryStatus = failureStatus
+                    }
+                    return
+                }
+                updateLocalMessage(threadID: thread.id, messageID: message.id) { localMessage in
+                    localMessage.deliveryStatus = .failedNetwork
+                }
                 showToast(error.localizedDescription)
                 await refreshFromBackend(silent: true)
             }
@@ -1654,8 +1894,11 @@ final class MockAppStore: ObservableObject {
         guard limitsUnrepliedMessages else { return true }
         let peerFollowsCurrentUser = followingIDs(for: peerUserID(for: thread)).contains(currentUserID)
         guard !peerFollowsCurrentUser else { return true }
-        let trailingOwnMessages = thread.messages.reversed().prefix { $0.senderID == currentUserID }.count
-        return trailingOwnMessages < 2
+        let ownSentMessagesBeforeFollow = thread.messages
+            .filter { !$0.deliveryStatus.isFailed }
+            .filter { $0.senderID == currentUserID }
+            .count
+        return ownSentMessagesBeforeFollow < 2
     }
 
     func markThreadRead(threadID: String) {

@@ -207,6 +207,15 @@ struct MessageThread: Identifiable, Hashable, Codable {
     var updatedAt: Date
 }
 
+enum MessageDeliveryStatus: String, Hashable, Codable {
+    case sent
+    case failedNetwork
+    case failedBlockedPeer
+    case failedBlockedByPeer
+
+    var isFailed: Bool { self != .sent }
+}
+
 struct DirectMessage: Identifiable, Hashable, Codable {
     let id: String
     var senderID: String
@@ -219,6 +228,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
     var isDeletedForMe: Bool = false
     var sharedPostID: String? = nil
     var sharedProfileUserID: String? = nil
+    var deliveryStatus: MessageDeliveryStatus = .sent
 
     init(
         id: String,
@@ -231,7 +241,8 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         isRevoked: Bool = false,
         isDeletedForMe: Bool = false,
         sharedPostID: String? = nil,
-        sharedProfileUserID: String? = nil
+        sharedProfileUserID: String? = nil,
+        deliveryStatus: MessageDeliveryStatus = .sent
     ) {
         self.id = id
         self.senderID = senderID
@@ -244,6 +255,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         self.isDeletedForMe = isDeletedForMe
         self.sharedPostID = sharedPostID
         self.sharedProfileUserID = sharedProfileUserID
+        self.deliveryStatus = deliveryStatus
     }
 
     enum CodingKeys: String, CodingKey {
@@ -258,6 +270,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         case isDeletedForMe
         case sharedPostID
         case sharedProfileUserID
+        case deliveryStatus
     }
 
     init(from decoder: Decoder) throws {
@@ -273,6 +286,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         isDeletedForMe = try container.decodeIfPresent(Bool.self, forKey: .isDeletedForMe) ?? false
         sharedPostID = try container.decodeIfPresent(String.self, forKey: .sharedPostID)
         sharedProfileUserID = try container.decodeIfPresent(String.self, forKey: .sharedProfileUserID)
+        deliveryStatus = (try? container.decode(MessageDeliveryStatus.self, forKey: .deliveryStatus)) ?? .sent
     }
 }
 

@@ -203,11 +203,13 @@ async function loadCommentsForSync(userId, commentIds) {
 }
 
 async function loadRelationshipState(userId) {
-  const [likedResult, favoriteResult, followedResult, followsResult] = await Promise.all([
+  const [likedResult, favoriteResult, followedResult, followsResult, blockedResult, blockedByResult] = await Promise.all([
     query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
     query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
-    query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId])
+    query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId]),
+    query("SELECT blocked_id FROM user_blocks WHERE blocker_id = $1", [userId]),
+    query("SELECT blocker_id FROM user_blocks WHERE blocked_id = $1", [userId])
   ]);
 
   const followingByUserID = {};
@@ -220,7 +222,9 @@ async function loadRelationshipState(userId) {
     likedPostIDs: likedResult.rows.map((row) => row.post_id),
     favoritePostIDs: favoriteResult.rows.map((row) => row.post_id),
     followedUserIDs: followedResult.rows.map((row) => row.following_id),
-    followingByUserID
+    followingByUserID,
+    blockedUserIDs: blockedResult.rows.map((row) => row.blocked_id),
+    blockedByUserIDs: blockedByResult.rows.map((row) => row.blocker_id)
   };
 }
 

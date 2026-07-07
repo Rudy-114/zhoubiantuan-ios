@@ -39,6 +39,8 @@ struct BackendPayload: Decodable {
     var favoritePostIDs: [String]?
     var followedUserIDs: [String]?
     var followingByUserID: [String: [String]]?
+    var blockedUserIDs: [String]?
+    var blockedByUserIDs: [String]?
 }
 
 enum BackendAssetURLMapper {
@@ -369,6 +371,8 @@ struct BackendSyncPayload: Decodable {
     let favoritePostIDs: [String]?
     let followedUserIDs: [String]?
     let followingByUserID: [String: [String]]?
+    let blockedUserIDs: [String]?
+    let blockedByUserIDs: [String]?
 }
 
 struct BackendSyncEvent: Decodable {
@@ -760,16 +764,23 @@ final class AliyunBackendClient {
         let _: EmptyResponse = try await request(path, method: method, token: token)
     }
 
+    static let errorCodeUserInfoKey = "AliyunBackendClientErrorCode"
+
     private func validate(response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
-            let errorMessage = (try? JSONDecoder().decode(APIError.self, from: data).error) ?? "请求失败"
-            throw NSError(domain: "AliyunBackendClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+            let apiError = try? JSONDecoder().decode(APIError.self, from: data)
+            var userInfo: [String: Any] = [NSLocalizedDescriptionKey: apiError?.error ?? "请求失败"]
+            if let code = apiError?.code {
+                userInfo[Self.errorCodeUserInfoKey] = code
+            }
+            throw NSError(domain: "AliyunBackendClient", code: http.statusCode, userInfo: userInfo)
         }
     }
 
     private struct APIError: Decodable {
         let error: String
+        let code: String?
     }
 }
 

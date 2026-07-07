@@ -465,6 +465,8 @@ struct UserRelationRow: View {
 
 struct ProfileEmptyNotesView: View {
     @EnvironmentObject private var store: MockAppStore
+    var message = "你还没有发布过制品"
+    var showsPublishButton = true
 
     var body: some View {
         VStack(spacing: 24) {
@@ -472,22 +474,24 @@ struct ProfileEmptyNotesView: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 70, weight: .light))
                 .foregroundStyle(Theme.muted)
-            Text("你还没有发布过制品")
+            Text(message)
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Theme.text.opacity(0.86))
-            Button {
-                store.showToast("请点击底部 + 去发布")
-            } label: {
-                Text("去发布")
-                    .font(.system(size: 20, weight: .black))
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 12)
-                    .overlay {
-                        Capsule().stroke(Theme.subtext, lineWidth: 1)
-                    }
+            if showsPublishButton {
+                Button {
+                    store.showToast("请点击底部 + 去发布")
+                } label: {
+                    Text("去发布")
+                        .font(.system(size: 20, weight: .black))
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 12)
+                        .overlay {
+                            Capsule().stroke(Theme.subtext, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             Spacer()
         }
     }
@@ -2061,6 +2065,7 @@ struct UserProfileView: View {
     @State private var chatThreadID: String?
     @State private var isChatPresented = false
     @State private var selectedTab = "制品"
+    @State private var pendingBlockConfirmation: BlockConfirmation?
     let userID: String
 
     private let tabs = ["制品", "拼团合集"]
@@ -2158,7 +2163,7 @@ struct UserProfileView: View {
                                         .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(user.id == store.currentUserID)
+                                .disabled(user.id == store.currentUserID || store.isBlocked(user.id))
 
                                 Button {
                                     openChat(with: user)
@@ -2176,13 +2181,11 @@ struct UserProfileView: View {
 
                             if user.id != store.currentUserID {
                                 Button {
-                                    Task {
-                                        if store.isBlocked(user.id) {
-                                            await store.unblockUser(user.id)
-                                        } else {
-                                            await store.blockUser(user.id)
-                                        }
-                                    }
+                                    pendingBlockConfirmation = BlockConfirmation(
+                                        userID: user.id,
+                                        nickname: user.nickname,
+                                        isUnblock: store.isBlocked(user.id)
+                                    )
                                 } label: {
                                     Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
                                         .font(.system(size: 15, weight: .bold))
@@ -2228,7 +2231,10 @@ struct UserProfileView: View {
                             ProfileCollectionsPanel(ownerID: userID, canManage: userID == store.currentUserID)
                                 .padding(.bottom, 24)
                         } else if userPosts.isEmpty {
-                            ProfileEmptyNotesView()
+                            ProfileEmptyNotesView(
+                                message: profileEmptyMessage(for: user),
+                                showsPublishButton: user.id == store.currentUserID
+                            )
                                 .frame(minHeight: 360)
                         } else {
                             WaterfallGrid(posts: userPosts)
@@ -2252,6 +2258,37 @@ struct UserProfileView: View {
                 ChatView(threadID: chatThreadID)
             }
         }
+        .alert(
+            Text(pendingBlockConfirmation?.isUnblock == true ? "确认解除拉黑该用户？" : "确认拉黑该用户？"),
+            isPresented: Binding(
+                get: { pendingBlockConfirmation != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingBlockConfirmation = nil
+                    }
+                }
+            ),
+            presenting: pendingBlockConfirmation
+        ) { confirmation in
+            Button("取消", role: .cancel) {
+                pendingBlockConfirmation = nil
+            }
+            Button("确认", role: confirmation.isUnblock ? nil : ButtonRole.destructive) {
+                let userID = confirmation.userID
+                pendingBlockConfirmation = nil
+                Task {
+                    if confirmation.isUnblock {
+                        await store.unblockUser(userID)
+                    } else {
+                        await store.blockUser(userID)
+                    }
+                }
+            }
+        } message: { confirmation in
+            Text(confirmation.isUnblock
+                ? "解除拉黑 \(confirmation.nickname) 后，你会重新看到对方的内容，对方也可以再次私信你。"
+                : "拉黑 \(confirmation.nickname) 后，对方将无法私信你，你也会隐藏来自对方的内容。")
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -2262,9 +2299,22 @@ struct UserProfileView: View {
         )
     }
 
+    private func profileEmptyMessage(for user: User) -> String {
+        if user.id == store.currentUserID { return "你还没有发布过制品" }
+        return store.isBlocked(user.id) ? "对方还没发过任何帖子" : "他还没有发布过任何作品"
+    }
+
     private func openChat(with user: User) {
         guard let threadID = store.directMessageThreadID(for: user.id) else { return }
         chatThreadID = threadID
         isChatPresented = true
     }
+}
+
+private struct BlockConfirmation: Identifiable {
+    let userID: String
+    let nickname: String
+    let isUnblock: Bool
+
+    var id: String { userID }
 }

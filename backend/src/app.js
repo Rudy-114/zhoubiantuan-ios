@@ -24,7 +24,9 @@ export function createApp() {
     if (status >= 500) {
       logger.error("request.error", { error, method: req.method, path: req.path, status });
     }
-    res.status(status).json({ error: error.message || "服务暂时不可用" });
+    const body = { error: error.message || "服务暂时不可用" };
+    if (error.apiCode) body.code = error.apiCode;
+    res.status(status).json(body);
   });
   return app;
 }

@@ -181,17 +181,12 @@ struct ChatView: View {
                 ScrollViewReader { proxy in
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 18) {
-                            Text("05-03 23:26")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(Theme.muted)
-                                .padding(.top, 18)
-
                             ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
-                                if index == 2 {
-                                    Text("05-04 15:36")
+                                if showsTimeSeparator(at: index, in: visibleMessages) {
+                                    Text(ChatTimeSeparator.label(for: message.createdAt))
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundStyle(Theme.muted)
-                                        .padding(.top, 10)
+                                        .padding(.top, index == 0 ? 18 : 10)
                                 }
                                 ChatBubble(threadID: thread.id, message: message)
                                     .id(message.id)
@@ -339,6 +334,11 @@ struct ChatView: View {
         }
     }
 
+    private func showsTimeSeparator(at index: Int, in messages: [DirectMessage]) -> Bool {
+        guard index > 0 else { return true }
+        return messages[index].createdAt.timeIntervalSince(messages[index - 1].createdAt) > 5 * 60
+    }
+
     private func closeInputSurfaces() {
         hideKeyboard()
         isMessageFieldFocused = false
@@ -353,6 +353,30 @@ struct ChatView: View {
               abs(value.translation.height) < 72 else { return }
         closeInputSurfaces()
         dismiss()
+    }
+}
+
+enum ChatTimeSeparator {
+    static func label(for date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return timeFormatter.string(from: date)
+        }
+        if calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
+            return sameYearFormatter.string(from: date)
+        }
+        return fullFormatter.string(from: date)
+    }
+
+    private static let timeFormatter = makeFormatter("HH:mm")
+    private static let sameYearFormatter = makeFormatter("MM-dd HH:mm")
+    private static let fullFormatter = makeFormatter("yyyy-MM-dd HH:mm")
+
+    private static func makeFormatter(_ format: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
     }
 }
 
@@ -565,7 +589,7 @@ struct ChatBubble: View {
                 if !isMine {
                     avatar(for: store.user(id: message.senderID), size: 34)
                 }
-                messageImage
+                failureDecorated(messageImage)
                 if isMine {
                     avatar(for: store.currentUser, size: 34)
                 } else {
@@ -578,18 +602,54 @@ struct ChatBubble: View {
                 if !isMine {
                     avatar(for: store.user(id: message.senderID), size: 34)
                 }
-                Text(message.body)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
-                    .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                failureDecorated(
+                    Text(message.body)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 11)
+                        .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                )
                 if isMine {
                     avatar(for: store.currentUser, size: 34)
                 } else {
                     Spacer(minLength: 48)
                 }
             }
+        }
+    }
+
+    private var failureReasonText: String? {
+        guard isMine else { return nil }
+        switch message.deliveryStatus {
+        case .failedBlockedByPeer: return "你已被对方拉黑，无法发送消息"
+        case .failedBlockedPeer: return "你已拉黑对方，解除拉黑后才能发送"
+        case .failedNetwork: return "发送失败，请稍后重试"
+        case .sent: return nil
+        }
+    }
+
+    @ViewBuilder
+    private func failureDecorated<Bubble: View>(_ bubble: Bubble) -> some View {
+        if let failureReasonText {
+            VStack(alignment: .trailing, spacing: 5) {
+                HStack(spacing: 8) {
+                    Button {
+                        store.retryFailedMessage(threadID: threadID, messageID: message.id)
+                    } label: {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                    bubble
+                }
+                Text(failureReasonText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red.opacity(0.85))
+            }
+        } else {
+            bubble
         }
     }
 

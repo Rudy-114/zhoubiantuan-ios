@@ -124,7 +124,7 @@ struct GeneralSettingsView: View {
                         }
                     }
                 SettingsSeparator()
-                SettingsToggleRow(title: "未关注回复前最多两条私信", subtitle: "开启后，对方未关注你时，对方回复之前只能连续发送两条消息", isOn: $store.limitsUnrepliedMessages)
+                SettingsToggleRow(title: "未关注前最多两条私信", subtitle: "开启后，对方关注你之前，你最多只能发送两条消息", isOn: $store.limitsUnrepliedMessages)
             }
         }
     }
@@ -434,6 +434,7 @@ struct HelpFeedbackView: View {
 struct BlockedUsersView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    @State private var pendingUnblockUser: User?
 
     private var blockedUsers: [User] {
         store.users.filter { store.blockedUserIDs.contains($0.id) }
@@ -458,7 +459,7 @@ struct BlockedUsersView: View {
                                 .lineLimit(1)
                             Spacer(minLength: 12)
                             Button {
-                                Task { await store.unblockUser(user.id) }
+                                pendingUnblockUser = user
                             } label: {
                                 Text("解除")
                                     .font(.system(size: 15, weight: .bold))
@@ -476,6 +477,29 @@ struct BlockedUsersView: View {
             }
         }
         .task { await store.loadBlockedUsers() }
+        .alert(
+            "确认解除拉黑该用户？",
+            isPresented: Binding(
+                get: { pendingUnblockUser != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingUnblockUser = nil
+                    }
+                }
+            ),
+            presenting: pendingUnblockUser
+        ) { user in
+            Button("取消", role: .cancel) {
+                pendingUnblockUser = nil
+            }
+            Button("确认") {
+                let userID = user.id
+                pendingUnblockUser = nil
+                Task { await store.unblockUser(userID) }
+            }
+        } message: { user in
+            Text("解除拉黑 \(user.nickname) 后，你会重新看到对方的内容，对方也可以再次私信你。")
+        }
     }
 }
 

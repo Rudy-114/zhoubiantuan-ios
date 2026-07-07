@@ -3,14 +3,19 @@ import { query } from "./db.js";
 import { attachPostCounts } from "./postCounts.js";
 
 export async function loadBootstrap(userId) {
-  const [rawPostsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult, followsResult, threadsResult, messagesResult] = await Promise.all([
+  const [rawPostsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult, followsResult, threadsResult, messagesResult, blockedResult, blockedByResult] = await Promise.all([
     query(`
       SELECT p.*,
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM posts p
-      WHERE p.status = 'active'
-         OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
+      WHERE (p.status = 'active'
+         OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed')))
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks b
+          WHERE (b.blocker_id = $1 AND b.blocked_id = p.author_id)
+             OR (b.blocker_id = p.author_id AND b.blocked_id = $1)
+        )
       ORDER BY p.created_at DESC
       LIMIT 200
     `, [userId]),
@@ -21,8 +26,13 @@ export async function loadBootstrap(userId) {
       LEFT JOIN posts p ON p.collection_id = c.id AND (
         p.status = 'active' OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
       )
-      WHERE c.status = 'active'
-         OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected'))
+      WHERE (c.status = 'active'
+         OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected')))
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks b
+          WHERE (b.blocker_id = $1 AND b.blocked_id = c.owner_id)
+             OR (b.blocker_id = c.owner_id AND b.blocked_id = $1)
+        )
       GROUP BY c.id
       ORDER BY c.created_at DESC
       LIMIT 200
@@ -34,8 +44,13 @@ export async function loadBootstrap(userId) {
            (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
            (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
          FROM comments cm
-         WHERE cm.status = 'active'
-            OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected'))
+         WHERE (cm.status = 'active'
+            OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected')))
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = $1 AND b.blocked_id = cm.author_id)
+                OR (b.blocker_id = cm.author_id AND b.blocked_id = $1)
+           )
          ORDER BY cm.created_at DESC
          LIMIT 500
        ) recent_comments
@@ -84,7 +99,9 @@ export async function loadBootstrap(userId) {
        ) recent_messages
        ORDER BY created_at ASC`,
       [userId]
-    )
+    ),
+    query("SELECT blocked_id FROM user_blocks WHERE blocker_id = $1", [userId]),
+    query("SELECT blocker_id FROM user_blocks WHERE blocked_id = $1", [userId])
   ]);
 
   const posts = await attachPostCounts(rawPostsResult.rows);
@@ -95,7 +112,8 @@ export async function loadBootstrap(userId) {
     ...commentsResult.rows.map((row) => row.author_id),
     ...followsResult.rows.flatMap((row) => [row.follower_id, row.following_id]),
     ...threadsResult.rows.flatMap((row) => [row.buyer_user_id, row.publisher_user_id]),
-    ...messagesResult.rows.map((row) => row.sender_id)
+    ...messagesResult.rows.map((row) => row.sender_id),
+    ...blockedResult.rows.map((row) => row.blocked_id)
   ]);
   const usersResult = userIds.length
     ? await query(
@@ -134,7 +152,9 @@ export async function loadBootstrap(userId) {
     likedPostIDs: likedResult.rows.map((row) => row.post_id),
     favoritePostIDs: favoriteResult.rows.map((row) => row.post_id),
     followedUserIDs: followedResult.rows.map((row) => row.following_id),
-    followingByUserID
+    followingByUserID,
+    blockedUserIDs: blockedResult.rows.map((row) => row.blocked_id),
+    blockedByUserIDs: blockedByResult.rows.map((row) => row.blocker_id)
   };
 }
 
