@@ -1,105 +1,118 @@
-# Codex 迁移交接说明
+# Codex Conversation Handoff
 
-## 项目概况
+Status: Ready for a new thread
+Generated: 2026-07-07 11:05 CST
+Project root: `/Users/rudy2009/Documents/欧美团app`
 
-- 项目名称：周边团 / ZhouBianTuan
-- 项目路径：`/Users/panpanpan/Documents/欧美团app`
-- 类型：原生 SwiftUI iOS 高保真原型
-- 定位：小红书式娱乐周边团购社区，只展示团购信息、站内互动和外部联系方式
-- 当前阶段：可编译高保真原型
-- Xcode 工程：`ZhouBianTuan.xcodeproj`
-- Scheme：`ZhouBianTuan`
-- Target：`ZhouBianTuan`
-- Bundle Display Name：`周边团`
-- Bundle Identifier：`com.panpanpan.zhoubiantuan`
+## Resume Prompt
 
-## 当前实现进度
+请读取 `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`，用当前文件系统和 Git 状态复核后继续。第一优先级是准备公开 HTTPS 隐私政策 URL 与 App Store Connect 送审资料；同时记住 `support@zhoubiantuanmail.top` 已能收发，但后续必须给这个客服邮箱配置一个能处理/回复邮件的 agent 或人工值守流程。
 
-目前 app 已经实现一个本地 Mock 数据驱动的 SwiftUI 原型。核心页面包括：
+## Objective And User Intent
 
-- 首页：关注 / 发现 / 市集切换，双列瀑布流
-- 市集页：团购商品浏览
-- 搜索页：搜索和筛选入口
-- 团购详情页：图片、团购信息、联系方式、风险提示、评论、底部互动栏
-- 发布页：图片选择、必填字段、发布校验
-- 消息页：私信列表
-- 聊天页：站内私信模拟
-- 我的页：个人中心、收藏、提醒、后台入口
-- 收藏页：收藏团购
-- 截团提醒页：提醒列表
-- 管理后台：举报列表、隐藏、下架、警告、忽略等模拟处理
-- 用户主页：团长资料和帖子列表
+项目是 iOS App「周边团」，目标是完成 App Store 首次上架前的合规、安全、客服、隐私政策和送审材料收尾。Rudy 已确认 `support@zhoubiantuanmail.top` 邮箱可以收发，但提醒：现在还没有人或 agent 来实际回复邮件，后续要为这个邮箱配置邮件回复 agent。
 
-## 已实现交互
+## Current State
 
-- 点赞 / 取消点赞
-- 收藏 / 取消收藏，并同步创建或移除截团提醒
-- 关注 / 取消关注团长
-- 添加评论
-- 举报帖子
-- 管理员处理举报
-- 复制微信 / QQ 到剪贴板
-- 发送站内私信
-- 创建新的团购帖子
-- Toast 提示反馈
+- Git 分支：`main`
+- Git 状态：本地 `main` 比 `origin/main` ahead 2。
+- 最新提交：
+  - `0cf8126 Finalize support email and mail dependency`
+  - `5e483fd Checkpoint app review compliance fixes`
+- 生产 API：`https://api.zhoubiantuanmail.top/api/health` 已验证 OK。
+- 邮箱域名：`zhoubiantuanmail.top` 的 MX 和 SPF 已配置；企业微信邮箱可用。
+- App 内客服入口：`ZhouBianTuan/SettingsViews.swift` 使用 `support@zhoubiantuanmail.top`。
+- iOS 构建号：`CURRENT_PROJECT_VERSION = 10`，营销版本仍为 `1.0`。
+- 后端 `nodemailer` 已升级到 `9.0.3`，本地与服务器 audit 均为 0 vulnerabilities。
 
-## 重要文件
+## Completed Work
 
-- `README.md`：项目说明和运行方式
-- `project_progress.json`：当前项目进度、文件清单、实现范围和风险记录
-- `file_manifest.txt`：迁移包文件清单
-- `ZhouBianTuan/ZhouBianTuanApp.swift`：当前主要 SwiftUI 源码，包含模型、MockAppStore、页面和组件
-- `ZhouBianTuan/Assets.xcassets/`：8 张原创娱乐周边样例图和资源配置
-- `ZhouBianTuan.xcodeproj/project.pbxproj`：Xcode 工程配置
+- 实现并部署上架前 P0/P1 修复：账号删除、用户拉黑、举报去重、密钥强制配置、上传白名单、图片代理安全、正式客服入口、清理假功能/Beta 文案。
+- 服务器 env 已补齐并重启，生产服务正常。
+- 生产迁移已执行到 `001` 至 `012`。
+- 腾讯企业邮箱域名配置完成，`support@zhoubiantuanmail.top` 已由 Rudy 确认可收发。
+- 删除客服邮箱 TODO，构建号升到 10。
+- 升级 `nodemailer` 到 `9.0.3`，并同步部署到服务器。
 
-## 构建验证
+## Files Changed
 
-迁移前已在当前设备上执行过构建验证，命令如下：
+最近由 Codex 完成并提交：
 
-```bash
-xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/SettingsViews.swift`
+- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan.xcodeproj/project.pbxproj`
+- `/Users/rudy2009/Documents/欧美团app/backend/package.json`
+- `/Users/rudy2009/Documents/欧美团app/backend/package-lock.json`
+
+本次 handoff 更新：
+
+- `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`
+- `/Users/rudy2009/Documents/欧美团app/HANDOFF-2026-06-27.md`
+
+## Verification
+
+最近已通过：
+
+```sh
+npm --prefix backend audit --omit=dev --registry=https://registry.npmjs.org
+EMAIL_CODE_SECRET="$(openssl rand -base64 48)" npm --prefix backend test
+node --check backend/src/routes.js
+node --check backend/src/email.js
+git diff --check
+xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan \
+  -configuration Debug -destination 'generic/platform=iOS Simulator' \
+  build CODE_SIGNING_ALLOWED=NO
+curl -fsS https://api.zhoubiantuanmail.top/api/health
 ```
 
-结果：`BUILD SUCCEEDED`
+结果：audit 0 vulnerabilities；后端测试 14/14 通过；iOS Debug 构建成功；公网健康检查 OK。
 
-迁移到新设备后，建议先执行：
+本次只更新文档，未重新跑构建。
 
-```bash
-cd "欧美团app"
-xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-```
+## Running Services And Environment
 
-也可以直接用 Xcode 打开：
+- 生产后端由服务器 systemd 服务 `zbt-backend.service` 管理，最近已确认 active。
+- 本地没有需要保留的长期运行服务。
+- 不要把 `.project-secrets/backend.env`、服务器密钥、邮箱密码或任何 token 写入聊天、文档或 Git。
 
-```text
-欧美团app/ZhouBianTuan.xcodeproj
-```
+## Key Decisions And Constraints
 
-## 当前限制
+- `support@zhoubiantuanmail.top` 是正式 App 内客服邮箱，也应填入 App Store Connect 的支持/联系信息。
+- 当前客服邮箱只是可收发，不代表已经有人长期处理邮件。必须在后续上线运营前配置邮件 agent 或明确人工值守。
+- 首版仍不做站内支付、订单、退款、物流、担保交易。
+- 高影响操作前先 checkpoint；不要回滚用户未明确要求回滚的改动。
 
-- 所有业务状态都存在本地 `MockAppStore` 中，重启 app 后不会持久化
-- 暂无真实后端、账号登录、权限、内容审核服务或外部表单接口
-- 暂无站内支付、订单、退款、物流、售后或担保交易
-- 暂无单元测试、UI 测试和截图回归测试
-- 源码目前集中在单个 `ZhouBianTuanApp.swift` 文件中，后续建议拆分
-- Git 仓库当前还没有首个提交，所有文件仍是未跟踪状态
+## Unfinished Work
 
-## 建议下一步
+- 公开 HTTPS 隐私政策 URL。
+- App Store Connect 资料：支持 URL、隐私政策 URL、App Privacy 问卷、截图、描述、关键词、年龄分级、审核账号。
+- 为 `support@zhoubiantuanmail.top` 配置邮件回复 agent 或人工值守流程；至少要能接收、分类、回复用户支持邮件。
+- 可选但建议：补 DKIM、DMARC 更严格策略，提高邮箱信誉。
+- 可选但建议：补后端路由级集成测试，覆盖账号删除、拉黑、举报去重、越权和事务失败。
+- 可选但建议：真实本地通知、私信会话内拉黑入口、`/feed` 未登录资料收敛。
 
-1. 在新设备解压迁移包后，用 Xcode 打开工程并构建一次。
-2. 确认页面能在模拟器中启动和浏览。
-3. 建议先创建首个 Git 提交，固定当前可编译原型基线。
-4. 后续继续开发前，优先拆分 `ZhouBianTuanApp.swift`：
-   - `Models/`
-   - `Store/`
-   - `Views/`
-   - `Components/`
-5. 补充最小测试：发布校验、收藏提醒、举报处理、评论新增。
+## Risks And Known Issues
 
-## 给新设备 Codex 的接手提示
+- 本地 `main` ahead 2，尚未 push 到远端。
+- 旧文档 `HANDOFF-2026-06-27.md` 部分早期描述已经过期；以当前文件系统、Git 和本文件为准。
+- 如果没人或 agent 看 `support@...`，App 内客服入口虽可用，但运营上会变成无人回复。
+- 隐私政策 URL 和 ASC 隐私问卷未完成前，不建议提交 App Review。
 
-如果要让新设备上的 Codex 继续开发，可以把下面这段话发给它：
+## Next Actions
 
-```text
-请读取当前目录下的 CODEX_HANDOFF.md、project_progress.json 和 file_manifest.txt，接手这个 SwiftUI iOS 项目。先不要大改结构，先确认 Xcode 工程能构建，再根据我的新需求继续迭代。当前项目是“周边团”高保真原型，主要源码在 ZhouBianTuan/ZhouBianTuanApp.swift。
+1. 准备并发布公开 HTTPS 隐私政策页面，确保内容与 App 实际数据处理、`PrivacyInfo.xcprivacy` 和 ASC 问卷一致。
+2. 整理 App Store Connect 资料，并把支持邮箱/支持入口指向 `support@zhoubiantuanmail.top` 或对应支持页面。
+3. 为 `support@zhoubiantuanmail.top` 设计并接入邮件回复 agent/值守流程，至少覆盖自动确认、分类、人工接管和异常升级。
+4. 需要上传前，确认 Git 是否 push、Archive build 10、上传 TestFlight 并做真机/审核账号验证。
+
+## Important Commands And Paths
+
+```sh
+cd /Users/rudy2009/Documents/欧美团app
+git status --short --branch
+npm --prefix backend audit --omit=dev --registry=https://registry.npmjs.org
+EMAIL_CODE_SECRET="$(openssl rand -base64 48)" npm --prefix backend test
+xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan \
+  -configuration Debug -destination 'generic/platform=iOS Simulator' \
+  build CODE_SIGNING_ALLOWED=NO
+curl -fsS https://api.zhoubiantuanmail.top/api/health
 ```
