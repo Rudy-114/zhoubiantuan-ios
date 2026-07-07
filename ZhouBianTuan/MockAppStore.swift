@@ -133,7 +133,18 @@ final class MockAppStore: ObservableObject {
             return
         }
         if KeychainStore.string(forKey: backendTokenDefaultsKey) == nil {
-            KeychainStore.set(legacyToken, forKey: backendTokenDefaultsKey)
+            if KeychainStore.set(legacyToken, forKey: backendTokenDefaultsKey) {
+                defaults.removeObject(forKey: backendTokenDefaultsKey)
+                defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: backendTokenDefaultsKey)
+                #if DEBUG
+                defaults.set(legacyToken, forKey: backendTokenFallbackDefaultsKey)
+                #else
+                defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
+                #endif
+            }
+            return
         }
         defaults.removeObject(forKey: backendTokenDefaultsKey)
         defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
