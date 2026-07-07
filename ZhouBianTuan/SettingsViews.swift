@@ -2,8 +2,6 @@ import SwiftUI
 import UIKit
 
 enum SupportContact {
-    // TODO(Rudy): 替换为真实、可正常收信的客服邮箱（见交接文档「客服邮箱」一节）。
-    // 同一地址需填入 App Store Connect 的「支持 URL / 联系人」。
     static let email = "support@zhoubiantuanmail.top"
 }
 
