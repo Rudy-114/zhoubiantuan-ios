@@ -11,10 +11,13 @@ test("public asset URLs fall back to API proxy without CDN base", async () => {
   delete process.env.PUBLIC_ASSET_BASE_URL;
   delete process.env.CDN_ASSET_BASE_URL;
 
-  const { publicAssetUrl } = await import("../src/oss.js");
+  const { publicAssetUrlForBase } = await import("../src/oss.js");
 
   assert.equal(
-    publicAssetUrl("post/u-1/2026-06-02/a b.jpg"),
+    publicAssetUrlForBase("post/u-1/2026-06-02/a b.jpg", {
+      publicApiBaseUrl: "https://api.example.com/api",
+      publicAssetBaseUrl: ""
+    }),
     "https://api.example.com/api/assets/post/u-1/2026-06-02/a%20b.jpg"
   );
 });

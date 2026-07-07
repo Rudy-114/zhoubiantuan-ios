@@ -10,10 +10,13 @@ test("public asset URLs use CDN base when configured", async () => {
   process.env.PUBLIC_API_BASE_URL = "https://api.example.com/api";
   process.env.PUBLIC_ASSET_BASE_URL = "https://cdn.example.com/zbt-assets/";
 
-  const { publicAssetUrl } = await import("../src/oss.js");
+  const { publicAssetUrlForBase } = await import("../src/oss.js");
 
   assert.equal(
-    publicAssetUrl("post/u-1/2026-06-02/a b.jpg"),
+    publicAssetUrlForBase("post/u-1/2026-06-02/a b.jpg", {
+      publicApiBaseUrl: "https://api.example.com/api",
+      publicAssetBaseUrl: "https://cdn.example.com/zbt-assets/"
+    }),
     "https://cdn.example.com/zbt-assets/post/u-1/2026-06-02/a%20b.jpg"
   );
 });

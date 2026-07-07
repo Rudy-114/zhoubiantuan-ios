@@ -27,13 +27,20 @@ export function signedReadUrl(objectKey, expires = 900) {
 }
 
 export function publicAssetUrl(objectKey) {
+  return publicAssetUrlForBase(objectKey, {
+    publicApiBaseUrl: config.publicApiBaseUrl,
+    publicAssetBaseUrl: config.publicAssetBaseUrl
+  });
+}
+
+export function publicAssetUrlForBase(objectKey, { publicApiBaseUrl, publicAssetBaseUrl }) {
   if (!objectKey) return "";
-  const baseURL = (config.publicAssetBaseUrl || config.publicApiBaseUrl).replace(/\/+$/, "");
+  const baseURL = (publicAssetBaseUrl || publicApiBaseUrl).replace(/\/+$/, "");
   const encodedPath = String(objectKey)
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  const proxyPrefix = config.publicAssetBaseUrl ? "" : "/assets";
+  const proxyPrefix = publicAssetBaseUrl ? "" : "/assets";
   return `${baseURL}${proxyPrefix}/${encodedPath}`;
 }
 
