@@ -3,6 +3,7 @@ import compression from "compression";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import { PRIVACY_POLICY_PATHS, servePrivacyPolicy } from "./legal.js";
 import { logger } from "./logger.js";
 import { createRouter } from "./routes.js";
 
@@ -14,6 +15,7 @@ export function createApp() {
   app.use(compression({ threshold: 1024 }));
   app.use(express.json({ limit: "2mb" }));
   app.use(morgan("tiny"));
+  app.get(PRIVACY_POLICY_PATHS, servePrivacyPolicy);
   app.use("/api", createRouter());
   app.get("/", (_req, res) => res.json({ name: "ZhouBianTuan API", ok: true }));
   app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
