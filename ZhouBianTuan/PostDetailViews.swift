@@ -143,10 +143,68 @@ struct PostDetailView: View {
             .onChange(of: imageCount) {
                 selectedImageIndex = min(selectedImageIndex, max(0, imageCount - 1))
             }
+        } else if store.isPostHiddenByBlock(id: postID) {
+            hiddenByBlockBody
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
         }
+    }
+
+    private var hiddenByBlockBody: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 31, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+
+            Spacer()
+
+            VStack(spacing: 18) {
+                Image(systemName: "eye.slash.fill")
+                    .font(.system(size: 58, weight: .bold))
+                    .foregroundStyle(Theme.hotPink)
+                    .frame(width: 86, height: 86)
+                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+
+                Text("帖子不可见")
+                    .font(.system(size: 25, weight: .black))
+                    .foregroundStyle(Theme.text)
+
+                Text("你已拉黑该用户，或对方已拉黑你，因此无法查看这条帖子。")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.subtext)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(5)
+                    .padding(.horizontal, 34)
+            }
+
+            Spacer()
+            Spacer().frame(height: 44)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    guard value.translation.width > 92,
+                          abs(value.translation.height) < 72 else { return }
+                    dismiss()
+                }
+        )
     }
 
     private func imageHeight(for post: GroupBuyPost, index: Int) -> CGFloat {

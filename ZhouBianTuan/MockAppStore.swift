@@ -778,6 +778,11 @@ final class MockAppStore: ObservableObject {
         return post
     }
 
+    func isPostHiddenByBlock(id: String) -> Bool {
+        guard let post = posts.first(where: { $0.id == id }) else { return false }
+        return post.status == .active && !canShowContent(from: post.authorID)
+    }
+
     func collection(id: String?) -> GroupCollection? {
         guard let id else { return nil }
         return collections.first(where: { $0.id == id })
@@ -1657,6 +1662,17 @@ final class MockAppStore: ObservableObject {
         return threadID(forRecipient: userID, relatedPostID: nil)
     }
 
+    func directMessageThreadRouteID(for userID: String) -> String? {
+        guard isLoggedIn, userID != currentUserID else { return nil }
+        if let existing = messageThreads.first(where: { peerUserID(for: $0) == userID }) {
+            return existing.id
+        }
+        if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
+            return existing.id
+        }
+        return stableThreadID(forRecipient: userID)
+    }
+
     func ensureMutualFriendThreads() {
         guard !isBackendEnabled else { return }
         for friend in mutualFriendUsers() where !threads.contains(where: { isCurrentUserThread($0) && peerUserID(for: $0) == friend.id && $0.relatedPostID == nil }) {
@@ -1684,7 +1700,7 @@ final class MockAppStore: ObservableObject {
         if let existing = threads.first(where: { isCurrentUserThread($0) && peerUserID(for: $0) == userID }) {
             return existing.id
         }
-        let threadID = isBackendEnabled ? stableThreadID(forRecipient: userID) : "t-\(UUID().uuidString)"
+        let threadID = stableThreadID(forRecipient: userID)
         if threads.contains(where: { $0.id == threadID }) {
             return threadID
         }

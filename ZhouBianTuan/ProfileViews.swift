@@ -2062,8 +2062,6 @@ struct TagContentView: View {
 struct UserProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
-    @State private var chatThreadID: String?
-    @State private var isChatPresented = false
     @State private var selectedTab = "制品"
     @State private var pendingBlockConfirmation: BlockConfirmation?
     let userID: String
@@ -2165,18 +2163,35 @@ struct UserProfileView: View {
                                 .buttonStyle(.plain)
                                 .disabled(user.id == store.currentUserID || store.isBlocked(user.id))
 
-                                Button {
-                                    openChat(with: user)
-                                } label: {
-                                    Text("发私信")
-                                        .font(.system(size: 20, weight: .black))
-                                        .foregroundStyle(.white)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 15)
-                                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                if let threadID = store.directMessageThreadRouteID(for: user.id) {
+                                    NavigationLink(value: Route.chat(threadID)) {
+                                        Text("发私信")
+                                            .font(.system(size: 20, weight: .black))
+                                            .foregroundStyle(.white)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 15)
+                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .simultaneousGesture(
+                                        TapGesture().onEnded {
+                                            _ = store.directMessageThreadID(for: user.id)
+                                        }
+                                    )
+                                } else {
+                                    Button {
+                                        _ = store.directMessageThreadID(for: user.id)
+                                    } label: {
+                                        Text("发私信")
+                                            .font(.system(size: 20, weight: .black))
+                                            .foregroundStyle(.white)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 15)
+                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(user.id == store.currentUserID)
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(user.id == store.currentUserID)
                             }
 
                             if user.id != store.currentUserID {
@@ -2253,11 +2268,6 @@ struct UserProfileView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
-        .navigationDestination(isPresented: $isChatPresented) {
-            if let chatThreadID {
-                ChatView(threadID: chatThreadID)
-            }
-        }
         .alert(
             Text(pendingBlockConfirmation?.isUnblock == true ? "确认解除拉黑该用户？" : "确认拉黑该用户？"),
             isPresented: Binding(
@@ -2302,12 +2312,6 @@ struct UserProfileView: View {
     private func profileEmptyMessage(for user: User) -> String {
         if user.id == store.currentUserID { return "你还没有发布过制品" }
         return store.isBlocked(user.id) ? "对方还没发过任何帖子" : "他还没有发布过任何作品"
-    }
-
-    private func openChat(with user: User) {
-        guard let threadID = store.directMessageThreadID(for: user.id) else { return }
-        chatThreadID = threadID
-        isChatPresented = true
     }
 }
 
