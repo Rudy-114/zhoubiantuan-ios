@@ -171,6 +171,21 @@ enum AccountAuthMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum AuthErrorField: Hashable {
+    case nickname
+    case email
+    case code
+    case password
+    case confirmPassword
+    case agreement
+    case general
+}
+
+private struct AuthFieldError {
+    let field: AuthErrorField
+    let message: String
+}
+
 struct AccountAuthView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
@@ -183,6 +198,7 @@ struct AccountAuthView: View {
     @State private var hasAcceptedTerms = false
     @State private var isSendingCode = false
     @State private var codeResendSecondsRemaining = 0
+    @State private var formError: AuthFieldError?
 
     var canSubmit: Bool {
         switch mode {
@@ -209,7 +225,7 @@ struct AccountAuthView: View {
     }
 
     var canRequestCode: Bool {
-        email.trimmed.contains("@") && !isSendingCode && codeResendSecondsRemaining == 0
+        !isSendingCode && codeResendSecondsRemaining == 0
     }
 
     var body: some View {
@@ -268,36 +284,42 @@ struct AccountAuthView: View {
 
                     VStack(spacing: 14) {
                         if mode == .register {
-                            AuthTextField(title: "昵称", placeholder: "设置你的昵称", text: $nickname)
+                            AuthTextField(title: "昵称", placeholder: "设置你的昵称", text: $nickname, error: errorMessage(for: .nickname))
                         }
                         AuthTextField(
                             title: "邮箱",
                             placeholder: "输入邮箱",
                             text: $email,
                             keyboardType: .emailAddress,
-                            textContentType: .emailAddress
+                            textContentType: .emailAddress,
+                            error: errorMessage(for: .email)
                         )
                         if shouldShowCodeField {
-                            HStack(alignment: .bottom, spacing: 10) {
-                                AuthTextField(title: "验证码", placeholder: "6 位数字", text: $code, keyboardType: .numberPad, textContentType: .oneTimeCode)
-                                Button {
-                                    Task { await requestCode() }
-                                } label: {
-                                    Text(codeButtonTitle)
-                                        .font(.system(size: 14, weight: .black))
-                                        .foregroundStyle(.white)
-                                        .frame(width: 104, height: 52)
-                                        .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .bottom, spacing: 10) {
+                                    AuthTextField(title: "验证码", placeholder: "6 位数字", text: $code, keyboardType: .numberPad, textContentType: .oneTimeCode)
+                                    Button {
+                                        Task { await requestCode() }
+                                    } label: {
+                                        Text(codeButtonTitle)
+                                            .font(.system(size: 14, weight: .black))
+                                            .foregroundStyle(.white)
+                                            .frame(width: 104, height: 52)
+                                            .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!canRequestCode)
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(!canRequestCode)
+                                if let error = errorMessage(for: .code) {
+                                    AuthFieldErrorText(error)
+                                }
                             }
                         }
                         if mode != .codeLogin {
-                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password)
+                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password, error: errorMessage(for: .password))
                         }
                         if mode == .register {
-                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword)
+                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword, error: errorMessage(for: .confirmPassword))
                         }
                     }
 
@@ -311,22 +333,51 @@ struct AccountAuthView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(canSubmit ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canSubmit)
+                    if let error = errorMessage(for: .general) {
+                        AuthFieldErrorText(error)
+                            .padding(.top, -18)
+                    }
 
                     LegalAgreementRow(
                         isAccepted: $hasAcceptedTerms,
                         documents: [.userAgreement, .privacyPolicy, .minorsPolicy],
                         textColor: Color(red: 0.76, green: 0.82, blue: 0.91)
                     )
+                    if let error = errorMessage(for: .agreement) {
+                        AuthFieldErrorText(error)
+                            .padding(.top, -18)
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.bottom, 28)
             }
         }
         .background(Color(red: 0.015, green: 0.016, blue: 0.022).ignoresSafeArea())
+        .onChange(of: mode) {
+            clearAuthError()
+        }
+        .onChange(of: nickname) {
+            clearAuthError(for: .nickname)
+        }
+        .onChange(of: email) {
+            clearAuthError(for: .email)
+        }
+        .onChange(of: code) {
+            clearAuthError(for: .code)
+        }
+        .onChange(of: password) {
+            clearAuthError(for: .password)
+            clearAuthError(for: .confirmPassword)
+        }
+        .onChange(of: confirmPassword) {
+            clearAuthError(for: .confirmPassword)
+        }
+        .onChange(of: hasAcceptedTerms) {
+            clearAuthError(for: .agreement)
+        }
     }
 
     private var codeButtonTitle: String {
@@ -367,12 +418,16 @@ struct AccountAuthView: View {
     }
 
     private func requestCode() async {
+        clearAuthError()
+        guard validateEmailForCodeRequest() else { return }
         isSendingCode = true
         let purpose = mode == .register ? "register" : "login"
         let didSend = await store.requestEmailCode(email: email, purpose: purpose)
         isSendingCode = false
         if didSend {
             startCodeCooldown()
+        } else {
+            applyRemoteAuthError(defaultField: .email)
         }
     }
 
@@ -391,28 +446,150 @@ struct AccountAuthView: View {
     }
 
     private func submit() async {
-        guard hasAcceptedTerms else {
-            store.showToast("请先勾选并同意协议")
-            return
-        }
+        clearAuthError()
+        guard validateForSubmit() else { return }
         switch mode {
         case .register:
-            guard password == confirmPassword else {
-                store.showToast("两次输入的密码不一致")
-                return
-            }
             if await store.registerAccount(nickname: nickname, email: email, password: password, code: code) {
                 dismiss()
+            } else {
+                applyRemoteAuthError(defaultField: .general)
             }
         case .passwordLogin:
             if await store.loginWithEmail(email: email, password: password) {
                 dismiss()
+            } else {
+                applyRemoteAuthError(defaultField: .password)
             }
         case .codeLogin:
             if await store.loginWithEmailCode(email: email, code: code) {
                 dismiss()
+            } else {
+                applyRemoteAuthError(defaultField: .code)
             }
         }
+    }
+
+    private func validateEmailForCodeRequest() -> Bool {
+        guard isValidEmail(email.trimmed) else {
+            setAuthError(.email, "请填写有效邮箱")
+            return false
+        }
+        return true
+    }
+
+    private func validateForSubmit() -> Bool {
+        switch mode {
+        case .register:
+            guard !nickname.trimmed.isEmpty else {
+                setAuthError(.nickname, "请填写昵称")
+                return false
+            }
+            guard isValidEmail(email.trimmed) else {
+                setAuthError(.email, "请填写有效邮箱")
+                return false
+            }
+            guard code.trimmed.count == 6 else {
+                setAuthError(.code, "请填写 6 位验证码")
+                return false
+            }
+            guard password.trimmed.count >= 8 else {
+                setAuthError(.password, "密码至少 8 位")
+                return false
+            }
+            guard password == confirmPassword else {
+                setAuthError(.confirmPassword, "两次输入的密码不一致")
+                return false
+            }
+            guard hasAcceptedTerms else {
+                setAuthError(.agreement, "请先勾选并同意协议")
+                return false
+            }
+        case .passwordLogin:
+            guard isValidEmail(email.trimmed) else {
+                setAuthError(.email, "请填写有效邮箱")
+                return false
+            }
+            guard !password.trimmed.isEmpty else {
+                setAuthError(.password, "请输入密码")
+                return false
+            }
+            guard hasAcceptedTerms else {
+                setAuthError(.agreement, "请先勾选并同意协议")
+                return false
+            }
+        case .codeLogin:
+            guard isValidEmail(email.trimmed) else {
+                setAuthError(.email, "请填写有效邮箱")
+                return false
+            }
+            guard code.trimmed.count == 6 else {
+                setAuthError(.code, "请填写 6 位验证码")
+                return false
+            }
+            guard hasAcceptedTerms else {
+                setAuthError(.agreement, "请先勾选并同意协议")
+                return false
+            }
+        }
+        return true
+    }
+
+    private func isValidEmail(_ value: String) -> Bool {
+        value.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) != nil
+    }
+
+    private func setAuthError(_ field: AuthErrorField, _ message: String, showsToast: Bool = true) {
+        formError = AuthFieldError(field: field, message: message)
+        if showsToast {
+            store.showToast(message)
+        }
+    }
+
+    private func applyRemoteAuthError(defaultField: AuthErrorField) {
+        let message = normalizedRemoteAuthError(store.toastMessage ?? "操作失败，请稍后重试")
+        setAuthError(remoteField(for: message, defaultField: defaultField), message, showsToast: false)
+    }
+
+    private func normalizedRemoteAuthError(_ message: String) -> String {
+        if message.contains("该邮箱已注册") || message.contains("本邮箱已经注册过") {
+            return "该邮箱已注册"
+        }
+        if message.contains("验证码无效") || message.contains("验证码错误") || message.contains("邮箱或验证码不正确") {
+            return "验证码不正确或已过期"
+        }
+        if message.contains("邮箱或密码不正确") {
+            return "密码和邮箱不匹配"
+        }
+        return message
+    }
+
+    private func remoteField(for message: String, defaultField: AuthErrorField) -> AuthErrorField {
+        if message.contains("邮箱") && (message.contains("注册") || message.contains("有效")) {
+            return .email
+        }
+        if message.contains("验证码") {
+            return .code
+        }
+        if message.contains("密码") {
+            return .password
+        }
+        return defaultField
+    }
+
+    private func errorMessage(for field: AuthErrorField) -> String? {
+        guard formError?.field == field else { return nil }
+        return formError?.message
+    }
+
+    private func clearAuthError(for field: AuthErrorField) {
+        if formError?.field == field {
+            formError = nil
+        }
+    }
+
+    private func clearAuthError() {
+        formError = nil
     }
 }
 
@@ -422,6 +599,7 @@ struct AuthTextField: View {
     @Binding var text: String
     var keyboardType: UIKeyboardType = .default
     var textContentType: UITextContentType? = nil
+    var error: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -441,8 +619,11 @@ struct AuthTextField: View {
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
                 }
+            if let error {
+                AuthFieldErrorText(error)
+            }
         }
     }
 }
@@ -451,6 +632,7 @@ struct AuthSecureField: View {
     let title: String
     let placeholder: String
     @Binding var text: String
+    var error: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -463,9 +645,27 @@ struct AuthSecureField: View {
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
                 }
+            if let error {
+                AuthFieldErrorText(error)
+            }
         }
+    }
+}
+
+private struct AuthFieldErrorText: View {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+
+    var body: some View {
+        Text(message)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(Theme.hotPink)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
