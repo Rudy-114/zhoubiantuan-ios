@@ -1310,7 +1310,13 @@ async function setFollowState({ followerId, followingId, enabled }) {
   return withTransaction(async (client) => {
     const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [followingId]);
     if (!target.rows[0]) return [];
-    if (enabled && (await blockExistsBetween(client, followerId, followingId))) return [];
+    if (enabled) {
+      const blockRows = await userBlockRowsBetween(client, followerId, followingId);
+      if (blockRows.length) {
+        const blockedByRecipient = blockRows.some((row) => row.blocker_id === followingId);
+        throw badRequest("无法关注该用户", blockedByRecipient ? "blocked_by_recipient" : "blocked_recipient");
+      }
+    }
 
     const result = enabled
       ? await client.query("INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [followerId, followingId])
@@ -1390,15 +1396,19 @@ function collectObjectKeys(userRows = [], postRows = [], messageRows = []) {
 }
 
 async function blockExistsBetween(executor, userA, userB) {
-  if (!userA || !userB) return false;
+  return (await userBlockRowsBetween(executor, userA, userB)).length > 0;
+}
+
+async function userBlockRowsBetween(executor, userA, userB) {
+  if (!userA || !userB) return [];
   const { rows } = await executor.query(
-    `SELECT 1 FROM user_blocks
+    `SELECT blocker_id FROM user_blocks
      WHERE (blocker_id = $1 AND blocked_id = $2)
         OR (blocker_id = $2 AND blocked_id = $1)
-     LIMIT 1`,
+     LIMIT 2`,
     [userA, userB]
   );
-  return Boolean(rows[0]);
+  return rows;
 }
 
 function uniqueIds(values) {

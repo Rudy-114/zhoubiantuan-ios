@@ -1040,6 +1040,14 @@ final class MockAppStore: ObservableObject {
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
             }
         } else {
+            if blockedByUserIDs.contains(userID) {
+                showToast("你已被对方拉黑，无法关注")
+                return
+            }
+            if blockedUserIDs.contains(userID) {
+                showToast("你已拉黑对方，解除拉黑后才能关注")
+                return
+            }
             followedUserIDs.insert(userID)
             followingIDsByUserID[currentUserID] = followedUserIDs
             if let currentIndex {
@@ -1050,8 +1058,46 @@ final class MockAppStore: ObservableObject {
             }
             showToast("已关注团长")
             runBackendMutation(syncAfterSuccess: true) { token in
-                try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
+                do {
+                    try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
+                } catch {
+                    await MainActor.run {
+                        if let failureMessage = self.followBlockedFailureMessage(error, userID: userID) {
+                            self.revertLocalFollow(userID: userID)
+                            self.showToast(failureMessage)
+                        } else {
+                            self.showToast(error.localizedDescription)
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    private func followBlockedFailureMessage(_ error: Error, userID: String) -> String? {
+        let nsError = error as NSError
+        guard nsError.domain == "AliyunBackendClient" else { return nil }
+        switch nsError.userInfo[AliyunBackendClient.errorCodeUserInfoKey] as? String {
+        case "blocked_by_recipient":
+            blockedByUserIDs.insert(userID)
+            return "你已被对方拉黑，无法关注"
+        case "blocked_recipient":
+            blockedUserIDs.insert(userID)
+            return "你已拉黑对方，解除拉黑后才能关注"
+        default:
+            return nil
+        }
+    }
+
+    private func revertLocalFollow(userID: String) {
+        guard followedUserIDs.contains(userID) else { return }
+        followedUserIDs.remove(userID)
+        followingIDsByUserID[currentUserID] = followedUserIDs
+        if let currentIndex = users.firstIndex(where: { $0.id == currentUserID }) {
+            users[currentIndex].followingCount = followedUserIDs.count
+        }
+        if let targetIndex = users.firstIndex(where: { $0.id == userID }) {
+            users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
         }
     }
 

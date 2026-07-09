@@ -1459,12 +1459,6 @@ struct ProfileSideMenu: View {
                 }
                 .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
                 .buttonStyle(.plain)
-
-                NavigationLink(value: Route.admin) {
-                    DrawerRowContent(icon: "checkmark.shield", title: "审核后台")
-                }
-                .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
-                .buttonStyle(.plain)
             }
             .padding(.vertical, 12)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
