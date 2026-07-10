@@ -16,6 +16,7 @@ import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSafetyReportRouter } from "./safety/reportRoutes.js";
+import { COLLECTION_PUBLIC_VISIBILITY_PREDICATE, COMMENT_PUBLIC_VISIBILITY_PREDICATE, POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
 
@@ -394,8 +395,8 @@ export function createRouter() {
       const limit = boundedFeedLimit(req.query.limit);
       const { rows: postRows } = await query(
         `SELECT p.*
-        FROM posts p
-        WHERE p.status = 'active'
+        FROM posts_with_safety_context p
+        WHERE ${POST_PUBLIC_VISIBILITY_PREDICATE}
         ORDER BY p.created_at DESC
         LIMIT $1`,
         [limit]
@@ -409,7 +410,7 @@ export function createRouter() {
               `SELECT u.*,
                 (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
                 (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
-                (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+                (SELECT count(*) FROM posts_with_safety_context p WHERE p.author_id = u.id AND ${POST_PUBLIC_VISIBILITY_PREDICATE}) AS post_count
               FROM users u
               WHERE u.id = ANY($1::text[])
                 AND u.deleted_at IS NULL
@@ -422,9 +423,9 @@ export function createRouter() {
               `SELECT c.*,
                 COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
               FROM group_collections c
-              LEFT JOIN posts p ON p.collection_id = c.id AND p.status = 'active'
+              LEFT JOIN posts_with_safety_context p ON p.collection_id = c.id AND ${POST_PUBLIC_VISIBILITY_PREDICATE}
               WHERE c.id = ANY($1::text[])
-                AND c.status = 'active'
+                AND ${COLLECTION_PUBLIC_VISIBILITY_PREDICATE}
               GROUP BY c.id`,
               [collectionIds]
             )
@@ -444,12 +445,19 @@ export function createRouter() {
     try {
       const { rows } = await query(
         `SELECT p.*
-        FROM posts p WHERE p.id = $1 AND p.status = 'active'`,
+        FROM posts_with_safety_context p WHERE p.id = $1 AND ${POST_PUBLIC_VISIBILITY_PREDICATE}`,
         [req.params.id]
       );
       if (!rows[0]) return res.status(404).json({ error: "帖子不存在" });
       const [post] = await attachPostCounts([rows[0]]);
-      const comments = await query("SELECT * FROM comments WHERE post_id = $1 AND status = 'active' ORDER BY created_at ASC", [req.params.id]);
+      const comments = await query(
+        `SELECT cm.*
+         FROM comments cm
+         JOIN posts_with_safety_context p ON p.id = cm.post_id
+         WHERE cm.post_id = $1 AND ${COMMENT_PUBLIC_VISIBILITY_PREDICATE}
+         ORDER BY cm.created_at ASC`,
+        [req.params.id]
+      );
       res.json({ post: postToClient(post, post), comments: comments.rows.map(commentToClient) });
     } catch (error) {
       next(error);
@@ -609,11 +617,17 @@ export function createRouter() {
       const body = trimmedString(req.body.body);
       const replyToID = trimmedString(req.body.replyToID);
       if (!body) throw badRequest("评论不能为空");
-      const post = await query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [req.params.id]);
+      const post = await query(`SELECT id, author_id FROM posts_with_safety_context p WHERE id = $1 AND ${POST_PUBLIC_VISIBILITY_PREDICATE}`, [req.params.id]);
       if (!post.rows[0]) throw badRequest("帖子不存在或不可评论");
       let replyAuthorId = "";
       if (replyToID) {
-        const reply = await query("SELECT id, author_id FROM comments WHERE id = $1 AND post_id = $2 AND status = 'active'", [replyToID, req.params.id]);
+        const reply = await query(
+          `SELECT cm.id, cm.author_id
+           FROM comments cm
+           JOIN posts_with_safety_context p ON p.id = cm.post_id
+           WHERE cm.id = $1 AND cm.post_id = $2 AND ${COMMENT_PUBLIC_VISIBILITY_PREDICATE}`,
+          [replyToID, req.params.id]
+        );
         if (!reply.rows[0]) throw badRequest("回复的评论不存在");
         replyAuthorId = reply.rows[0].author_id;
       }
@@ -774,7 +788,7 @@ export function createRouter() {
         `SELECT u.*,
            (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
            (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
-           (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+           (SELECT count(*) FROM posts_with_safety_context p WHERE p.author_id = u.id AND ${POST_PUBLIC_VISIBILITY_PREDICATE}) AS post_count
          FROM user_blocks b
          JOIN users u ON u.id = b.blocked_id
          WHERE b.blocker_id = $1
@@ -873,7 +887,7 @@ export function createRouter() {
       }
 
       if (relatedPostID) {
-        const post = await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [relatedPostID]);
+        const post = await query(`SELECT id FROM posts_with_safety_context p WHERE id = $1 AND ${POST_PUBLIC_VISIBILITY_PREDICATE}`, [relatedPostID]);
         if (!post.rows[0]) throw badRequest("关联帖子不存在");
       }
 
@@ -1275,7 +1289,7 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
     throw badRequest("互动类型无效");
   }
   return withTransaction(async (client) => {
-    const post = await client.query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [postId]);
+    const post = await client.query(`SELECT id, author_id FROM posts_with_safety_context p WHERE id = $1 AND ${POST_PUBLIC_VISIBILITY_PREDICATE}`, [postId]);
     if (!post.rows[0]) return [];
 
     const result = enabled

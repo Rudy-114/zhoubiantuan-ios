@@ -32,6 +32,8 @@ export function userToClient(row, counts = {}, viewerUserId = "") {
 export function postToClient(row, counts = {}) {
   const imageKeys = row.image_object_keys || [];
   const previewImageKeys = row.preview_image_object_keys || [];
+  const contactVisibility = row.collection_contact_visibility || "active";
+  const isContactHidden = contactVisibility === "hidden";
   return {
     id: row.id,
     title: row.title,
@@ -51,10 +53,10 @@ export function postToClient(row, counts = {}) {
     condition: row.condition || "",
     isFormed: Boolean(row.is_formed),
     description: row.description || "",
-    wechat: row.wechat || "",
-    qq: row.qq || "",
-    groupNumber: row.group_number || "",
-    groupInfo: row.group_info || "",
+    wechat: isContactHidden ? "" : row.wechat || "",
+    qq: isContactHidden ? "" : row.qq || "",
+    groupNumber: isContactHidden ? "" : row.group_number || "",
+    groupInfo: isContactHidden ? "" : row.group_info || "",
     externalLink: row.external_link || "",
     createdAt: row.created_at.toISOString(),
     likedCount: Number(counts.liked_count ?? row.liked_count ?? 0),
@@ -67,24 +69,30 @@ export function postToClient(row, counts = {}) {
     imageAspect: Number(row.image_aspect || 1.08),
     pingguAveragePrice: row.pinggu_average_price || "",
     pingguNote: row.pinggu_note || "",
-    unsoldRoles: row.unsold_roles || []
+    unsoldRoles: row.unsold_roles || [],
+    safetyStatus: row.safety_status || "active",
+    contactVisibility
   };
 }
 
 export function collectionToClient(row, postIDs = []) {
+  const contactVisibility = row.contact_visibility || "active";
+  const isContactHidden = contactVisibility === "hidden";
   return {
     id: row.id,
     ownerID: row.owner_id,
     name: row.name,
-    contactWechat: row.contact_wechat || "",
-    contactQQ: row.contact_qq || "",
-    contactGroupNumber: row.contact_group_number || "",
-    groupInfo: row.group_info || "",
+    contactWechat: isContactHidden ? "" : row.contact_wechat || "",
+    contactQQ: isContactHidden ? "" : row.contact_qq || "",
+    contactGroupNumber: isContactHidden ? "" : row.contact_group_number || "",
+    groupInfo: isContactHidden ? "" : row.group_info || "",
     deadline: row.deadline.toISOString(),
     defaultNote: row.default_note || "",
     postIDs,
     createdAt: row.created_at.toISOString(),
-    status: row.status || "active"
+    status: row.status || "active",
+    safetyStatus: row.safety_status || "active",
+    contactVisibility
   };
 }
 
@@ -106,16 +114,18 @@ export function directMessageToClient(row, viewerUserID = "") {
   const deletedForUserIds = Array.isArray(row.deleted_for_user_ids) ? row.deleted_for_user_ids : [];
   const isDeletedForMe = Boolean(viewerUserID && deletedForUserIds.includes(viewerUserID));
   const isRevoked = Boolean(row.revoked_at);
+  const isSafetyHidden = row.safety_status === "hidden";
   return {
     id: row.id,
     senderID: row.sender_id,
-    body: isRevoked ? "" : row.body || "",
+    body: isRevoked || isSafetyHidden ? "" : row.body || "",
     createdAt: row.created_at.toISOString(),
-    imageURL: isRevoked ? "" : publicAssetUrl(row.image_object_key),
+    imageURL: isRevoked || isSafetyHidden ? "" : publicAssetUrl(row.image_object_key),
     isRevoked,
+    isSafetyHidden,
     isDeletedForMe,
-    sharedPostID: row.shared_post_id || null,
-    sharedProfileUserID: row.shared_profile_user_id || null
+    sharedPostID: isRevoked || isSafetyHidden ? null : row.shared_post_id || null,
+    sharedProfileUserID: isRevoked || isSafetyHidden ? null : row.shared_profile_user_id || null
   };
 }
 

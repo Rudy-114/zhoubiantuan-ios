@@ -3,6 +3,7 @@ import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
+import { COLLECTION_PUBLIC_VISIBILITY_PREDICATE, COMMENT_PUBLIC_VISIBILITY_PREDICATE, POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 
 const DEFAULT_SYNC_LIMIT = 100;
 const MAX_SYNC_LIMIT = 200;
@@ -130,7 +131,7 @@ async function loadUsersForSync(viewerUserId, userIds) {
     `SELECT u.*,
         (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
         (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
-        (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+        (SELECT count(*) FROM posts_with_safety_context p WHERE p.author_id = u.id AND ${POST_PUBLIC_VISIBILITY_PREDICATE}) AS post_count
       FROM users u
       WHERE u.id = ANY($1::text[])
         AND u.deleted_at IS NULL
@@ -148,11 +149,11 @@ async function loadPostsForSync(userId, postIds) {
     `SELECT p.*,
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
-      FROM posts p
+      FROM posts_with_safety_context p
       WHERE p.id = ANY($2::text[])
         AND (
-          p.status IN ('active', 'deleted')
-          OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
+          ${POST_PUBLIC_VISIBILITY_PREDICATE}
+          OR (p.author_id = $1 AND p.status IN ('active', 'pending', 'review', 'rejected', 'hidden', 'removed'))
         )
       ORDER BY p.created_at DESC`,
     [userId, ids]
@@ -168,13 +169,13 @@ async function loadCollectionsForSync(userId, collectionIds) {
     `SELECT c.*,
         COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
       FROM group_collections c
-      LEFT JOIN posts p ON p.collection_id = c.id AND (
-        p.status = 'active' OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
+      LEFT JOIN posts_with_safety_context p ON p.collection_id = c.id AND (
+        ${POST_PUBLIC_VISIBILITY_PREDICATE} OR (p.author_id = $1 AND p.status IN ('active', 'pending', 'review', 'rejected', 'hidden', 'removed'))
       )
       WHERE c.id = ANY($2::text[])
         AND (
-          c.status = 'active'
-          OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected'))
+          ${COLLECTION_PUBLIC_VISIBILITY_PREDICATE}
+          OR (c.owner_id = $1 AND c.status IN ('active', 'pending', 'review', 'rejected'))
         )
       GROUP BY c.id
       ORDER BY c.created_at DESC`,
@@ -191,10 +192,11 @@ async function loadCommentsForSync(userId, commentIds) {
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM comments cm
+      JOIN posts_with_safety_context p ON p.id = cm.post_id
       WHERE cm.id = ANY($2::text[])
         AND (
-          cm.status IN ('active', 'deleted')
-          OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected'))
+          ${COMMENT_PUBLIC_VISIBILITY_PREDICATE}
+          OR (cm.author_id = $1 AND cm.status IN ('active', 'pending', 'review', 'rejected'))
         )
       ORDER BY cm.created_at ASC`,
     [userId, ids]

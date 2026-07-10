@@ -7,7 +7,7 @@ export async function attachPostCounts(postRows, client = { query }) {
   const [likes, favorites, comments, reports] = await Promise.all([
     countByPost(client, "post_likes", "post_id = ANY($1::text[])", "post_id", ids),
     countByPost(client, "post_favorites", "post_id = ANY($1::text[])", "post_id", ids),
-    countByPost(client, "comments", "post_id = ANY($1::text[]) AND status = 'active'", "post_id", ids),
+    countByPost(client, "comments", "post_id = ANY($1::text[]) AND status = 'active' AND safety_status = 'active'", "post_id", ids),
     countByPost(client, "reports", "target_type = 'post' AND target_id = ANY($1::text[])", "target_id", ids)
   ]);
 

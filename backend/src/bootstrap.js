@@ -2,6 +2,7 @@ import { collectionToClient, commentToClient, directMessageToClient, messageThre
 import { query } from "./db.js";
 import { attachPostCounts } from "./postCounts.js";
 import { safetyReportToBootstrapClient } from "./safety/reportMapper.js";
+import { COLLECTION_PUBLIC_VISIBILITY_PREDICATE, COMMENT_PUBLIC_VISIBILITY_PREDICATE, POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 
 export async function loadBootstrap(userId) {
   const [rawPostsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult, followsResult, threadsResult, messagesResult, blockedResult, blockedByResult] = await Promise.all([
@@ -9,9 +10,9 @@ export async function loadBootstrap(userId) {
       SELECT p.*,
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
-      FROM posts p
-      WHERE (p.status = 'active'
-         OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed')))
+      FROM posts_with_safety_context p
+      WHERE (${POST_PUBLIC_VISIBILITY_PREDICATE}
+         OR (p.author_id = $1 AND p.status IN ('active', 'pending', 'review', 'rejected', 'hidden', 'removed')))
         AND NOT EXISTS (
           SELECT 1 FROM user_blocks b
           WHERE (b.blocker_id = $1 AND b.blocked_id = p.author_id)
@@ -24,11 +25,11 @@ export async function loadBootstrap(userId) {
       SELECT c.*,
         COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
       FROM group_collections c
-      LEFT JOIN posts p ON p.collection_id = c.id AND (
-        p.status = 'active' OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
+      LEFT JOIN posts_with_safety_context p ON p.collection_id = c.id AND (
+        ${POST_PUBLIC_VISIBILITY_PREDICATE} OR (p.author_id = $1 AND p.status IN ('active', 'pending', 'review', 'rejected', 'hidden', 'removed'))
       )
-      WHERE (c.status = 'active'
-         OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected')))
+      WHERE (${COLLECTION_PUBLIC_VISIBILITY_PREDICATE}
+         OR (c.owner_id = $1 AND c.status IN ('active', 'pending', 'review', 'rejected')))
         AND NOT EXISTS (
           SELECT 1 FROM user_blocks b
           WHERE (b.blocker_id = $1 AND b.blocked_id = c.owner_id)
@@ -45,8 +46,9 @@ export async function loadBootstrap(userId) {
            (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
            (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
          FROM comments cm
-         WHERE (cm.status = 'active'
-            OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected')))
+         JOIN posts_with_safety_context p ON p.id = cm.post_id
+         WHERE (${COMMENT_PUBLIC_VISIBILITY_PREDICATE}
+            OR (cm.author_id = $1 AND cm.status IN ('active', 'pending', 'review', 'rejected')))
            AND NOT EXISTS (
              SELECT 1 FROM user_blocks b
              WHERE (b.blocker_id = $1 AND b.blocked_id = cm.author_id)
@@ -69,7 +71,7 @@ export async function loadBootstrap(userId) {
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
     query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId]),
     query(
-      `SELECT mt.*,
+      `SELECT mt.*, CASE WHEN ${POST_PUBLIC_VISIBILITY_PREDICATE} THEN mt.related_post_id ELSE NULL END AS related_post_id,
         (SELECT count(*)
          FROM direct_messages dm
          WHERE dm.thread_id = mt.id
@@ -81,6 +83,7 @@ export async function loadBootstrap(userId) {
              '-infinity'::timestamptz
            )) AS unread_count
        FROM message_threads mt
+       LEFT JOIN posts_with_safety_context p ON p.id = mt.related_post_id
        WHERE mt.buyer_user_id = $1 OR mt.publisher_user_id = $1
        ORDER BY mt.updated_at DESC
        LIMIT 100`,
@@ -89,7 +92,7 @@ export async function loadBootstrap(userId) {
     query(
       `SELECT *
        FROM (
-         SELECT dm.*
+         SELECT dm.*, CASE WHEN ${POST_PUBLIC_VISIBILITY_PREDICATE} THEN dm.shared_post_id ELSE NULL END AS shared_post_id
          FROM direct_messages dm
          JOIN (
            SELECT id
@@ -98,6 +101,7 @@ export async function loadBootstrap(userId) {
            ORDER BY updated_at DESC
            LIMIT 100
          ) mt ON mt.id = dm.thread_id
+         LEFT JOIN posts_with_safety_context p ON p.id = dm.shared_post_id
          WHERE dm.revoked_at IS NULL
            AND NOT ($1 = ANY(dm.deleted_for_user_ids))
          ORDER BY dm.created_at DESC
@@ -126,7 +130,7 @@ export async function loadBootstrap(userId) {
         `SELECT u.*,
           (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
           (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
-          (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
+          (SELECT count(*) FROM posts_with_safety_context p WHERE p.author_id = u.id AND ${POST_PUBLIC_VISIBILITY_PREDICATE}) AS post_count
         FROM users u
         WHERE u.id = ANY($1::text[])
           AND u.deleted_at IS NULL

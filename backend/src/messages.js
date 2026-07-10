@@ -1,8 +1,9 @@
 import { directMessageToClient, messageThreadToClient } from "./mappers.js";
+import { POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 
 export async function loadMessageThreadForUser(client, threadId, userId) {
   const thread = await client.query(
-    `SELECT mt.*,
+    `SELECT mt.*, CASE WHEN ${POST_PUBLIC_VISIBILITY_PREDICATE} THEN mt.related_post_id ELSE NULL END AS related_post_id,
       (SELECT count(*)
        FROM direct_messages dm
        WHERE dm.thread_id = mt.id
@@ -14,6 +15,7 @@ export async function loadMessageThreadForUser(client, threadId, userId) {
            '-infinity'::timestamptz
          )) AS unread_count
      FROM message_threads mt
+     LEFT JOIN posts_with_safety_context p ON p.id = mt.related_post_id
      WHERE mt.id = $1
        AND (mt.buyer_user_id = $2 OR mt.publisher_user_id = $2)`,
     [threadId, userId]
@@ -24,7 +26,14 @@ export async function loadMessageThreadForUser(client, threadId, userId) {
     error.status = 404;
     throw error;
   }
-  const messages = await client.query("SELECT * FROM direct_messages WHERE thread_id = $1 ORDER BY created_at ASC", [threadId]);
+  const messages = await client.query(
+    `SELECT dm.*, CASE WHEN ${POST_PUBLIC_VISIBILITY_PREDICATE} THEN dm.shared_post_id ELSE NULL END AS shared_post_id
+     FROM direct_messages dm
+     LEFT JOIN posts_with_safety_context p ON p.id = dm.shared_post_id
+     WHERE dm.thread_id = $1
+     ORDER BY dm.created_at ASC`,
+    [threadId]
+  );
   return messageThreadToClient(row, messages.rows.map((messageRow) => directMessageToClient(messageRow, userId)));
 }
 
