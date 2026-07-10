@@ -15,6 +15,7 @@ import { createUploadTarget, deleteObjects, signedReadUrl } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
+import { createSafetyReportRouter } from "./safety/reportRoutes.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
 
@@ -1067,27 +1068,11 @@ export function createRouter() {
     }
   });
 
-  router.post("/reports", requireAuth, async (req, res, next) => {
-    try {
-      const targetType = req.body.targetType === "comment" ? "comment" : "post";
-      const targetId = trimmedString(req.body.targetID);
-      if (!targetId) throw badRequest("举报目标不能为空");
-      await assertReportTargetExists(targetType, targetId);
-      const { rows } = await query(
-        `INSERT INTO reports (id, target_type, target_id, reason, detail, reporter_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (reporter_id, target_type, target_id) DO NOTHING
-         RETURNING *`,
-        [`rp-${randomUUID()}`, targetType, targetId, trimmedString(req.body.reason, "用户举报"), trimmedString(req.body.detail), req.user.id]
-      );
-      if (!rows[0]) {
-        return res.status(200).json({ ok: true, message: "你已举报过该内容，我们会尽快处理" });
-      }
-      res.status(201).json({ report: rows[0] });
-    } catch (error) {
-      next(error);
-    }
-  });
+  if (config.safety.enabled) {
+    router.use(createSafetyReportRouter());
+  } else {
+    mountLegacyReportRoute(router);
+  }
 
   router.get("/moderation/reviews", requireAuth, requireModerationAdmin, async (req, res, next) => {
     try {
@@ -1458,6 +1443,97 @@ async function assertReportTargetExists(targetType, targetId) {
   if (!target.rows[0]) {
     throw badRequest(targetType === "comment" ? "举报的评论不存在" : "举报的帖子不存在");
   }
+}
+
+function mountLegacyReportRoute(router) {
+  router.post("/reports", requireAuth, async (req, res, next) => {
+    try {
+      const targetType = req.body.targetType === "comment" ? "comment" : "post";
+      const targetId = trimmedString(req.body.targetID);
+      if (!targetId) throw badRequest("举报目标不能为空");
+      await assertReportTargetExists(targetType, targetId);
+      const report = await withTransaction(async (client) => {
+        await closeLegacyTerminalPendingReports(client, req.user.id, targetType, targetId);
+        const safetyCase = await findOrCreateLegacyOpenCase(client, targetType, targetId);
+        const { rows } = await client.query(
+          `INSERT INTO reports (
+             id, target_type, target_id, reason, detail, reporter_id, status,
+             client_request_id, case_id, source_type, source_id, subject_type, subject_id, reason_code, reported_field
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, 'pending',
+             $7, $8, $2, $3, $2, $3, 'other', 'content'
+           )
+           ON CONFLICT DO NOTHING
+           RETURNING *`,
+          [
+            `rp-${randomUUID()}`,
+            targetType,
+            targetId,
+            trimmedString(req.body.reason, "用户举报"),
+            trimmedString(req.body.detail),
+            req.user.id,
+            `legacy-${randomUUID()}`,
+            safetyCase.id
+          ]
+        );
+        return rows[0] || null;
+      });
+      if (!report) return res.status(200).json({ ok: true, message: "你已举报过该内容，我们会尽快处理" });
+      res.status(201).json({ report });
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
+async function closeLegacyTerminalPendingReports(client, reporterID, targetType, targetID) {
+  await client.query(
+    `UPDATE reports r
+     SET status = 'closed', updated_at = now()
+     FROM safety_cases sc
+     WHERE r.case_id = sc.id
+       AND r.reporter_id = $1
+       AND r.target_type = $2
+       AND r.target_id = $3
+       AND r.reason_code = 'other'
+       AND r.status = 'pending'
+       AND sc.category = 'other'
+       AND sc.status IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')`,
+    [reporterID, targetType, targetID]
+  );
+}
+
+async function findOrCreateLegacyOpenCase(client, targetType, targetID) {
+  const existing = await findLegacyOpenCase(client, targetType, targetID);
+  if (existing) return existing;
+
+  const { rows } = await client.query(
+    `INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope)
+     VALUES ($1, $2, $3, 'other', $2)
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    [`sc-${randomUUID()}`, targetType, targetID]
+  );
+  if (rows[0]) return rows[0];
+
+  const raced = await findLegacyOpenCase(client, targetType, targetID);
+  if (raced) return raced;
+  throw new Error("Unable to create legacy safety case");
+}
+
+async function findLegacyOpenCase(client, targetType, targetID) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM safety_cases
+     WHERE subject_type = $1
+       AND subject_id = $2
+       AND category = 'other'
+       AND status NOT IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')
+     LIMIT 1
+     FOR UPDATE`,
+    [targetType, targetID]
+  );
+  return rows[0] || null;
 }
 
 async function createCollection(userId, body) {

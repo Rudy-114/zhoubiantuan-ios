@@ -1,6 +1,7 @@
-import { collectionToClient, commentToClient, directMessageToClient, messageThreadToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
+import { collectionToClient, commentToClient, directMessageToClient, messageThreadToClient, postToClient, userToClient } from "./mappers.js";
 import { query } from "./db.js";
 import { attachPostCounts } from "./postCounts.js";
+import { safetyReportToBootstrapClient } from "./safety/reportMapper.js";
 
 export async function loadBootstrap(userId) {
   const [rawPostsResult, collectionsResult, commentsResult, reportsResult, likedResult, favoriteResult, followedResult, followsResult, threadsResult, messagesResult, blockedResult, blockedByResult] = await Promise.all([
@@ -57,7 +58,12 @@ export async function loadBootstrap(userId) {
        ORDER BY created_at ASC`,
       [userId]
     ),
-    query("SELECT * FROM reports WHERE reporter_id = $1 ORDER BY created_at DESC LIMIT 100", [userId]),
+    query(`SELECT r.*, sc.status AS case_status
+           FROM reports r
+           LEFT JOIN safety_cases sc ON sc.id = r.case_id
+           WHERE r.reporter_id = $1
+           ORDER BY r.created_at DESC
+           LIMIT 100`, [userId]),
     query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
     query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
@@ -148,7 +154,7 @@ export async function loadBootstrap(userId) {
     collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids)),
     comments: commentsResult.rows.map(commentToClient),
     messageThreads: threadsResult.rows.map((row) => messageThreadToClient(row, messagesByThreadID[row.id] || [])),
-    reports: reportsResult.rows.map(reportToClient),
+    reports: reportsResult.rows.map((row) => safetyReportToBootstrapClient(row, userId)),
     likedPostIDs: likedResult.rows.map((row) => row.post_id),
     favoritePostIDs: favoriteResult.rows.map((row) => row.post_id),
     followedUserIDs: followedResult.rows.map((row) => row.following_id),

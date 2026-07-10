@@ -45,6 +45,11 @@ function enumValue(name, fallback, allowedValues) {
   return allowedValues.includes(value) ? value : fallback;
 }
 
+function positiveFiniteInteger(name, fallback) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export const config = {
   nodeEnv,
   port: Number(process.env.PORT || 8080),
@@ -79,6 +84,14 @@ export const config = {
       .split(",")
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean)
+  },
+  safety: {
+    enabled: String(process.env.SAFETY_CASES_ENABLED || "false").toLowerCase() === "true",
+    aiMode: enumValue("SAFETY_AI_MODE", "off", ["off", "shadow", "enforce"]),
+    autoActionsEnabled: String(process.env.SAFETY_AUTO_ACTIONS_ENABLED || "false").toLowerCase() === "true",
+    reportAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_ACCOUNT_MAX_24H", 20),
+    reportIpMax24h: positiveFiniteInteger("SAFETY_REPORT_IP_MAX_24H", 60),
+    reportBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_BURST_MAX_MINUTE", 5)
   },
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
