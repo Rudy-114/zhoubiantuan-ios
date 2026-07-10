@@ -9,7 +9,8 @@
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "verify:websocket": "node scripts/verify-websocket.mjs",
-    "test": "node --test"
+    "test": "find test -type f -name '*.test.js' ! -name '*.integration.test.js' -exec node --test {} +",
+    "test:db": "bash scripts/run-db-tests.sh"
   },
   "dependencies": {
     "@alicloud/pop-core": "^1.8.0",
