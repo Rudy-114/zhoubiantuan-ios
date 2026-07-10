@@ -16,6 +16,9 @@ Package.resolved
 # macOS
 .DS_Store
 
+# Local Git worktrees
+.worktrees/
+
 # Logs
 *.log
 
