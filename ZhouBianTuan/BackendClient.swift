@@ -811,6 +811,7 @@ final class RealtimeConnection {
     private var shouldReconnect = false
     private var reconnectAttempt = 0
     private var isConnected = false
+    private var connectionState = RealtimeConnectionState()
 
     init(
         backendClient: AliyunBackendClient,
@@ -837,13 +838,15 @@ final class RealtimeConnection {
         reconnectTask = nil
         receiveTask?.cancel()
         receiveTask = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
-        webSocketTask = nil
+        cancelCurrentTask(&webSocketTask, requestedTask: nil) {
+            $0.cancel(with: .goingAway, reason: nil)
+        }
+        connectionState.disconnect()
         updateConnected(false)
     }
 
     private func open() {
-        guard shouldReconnect, let token else { return }
+        guard shouldReconnect, let token, webSocketTask == nil else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
 
@@ -853,10 +856,21 @@ final class RealtimeConnection {
 
         let task = session.webSocketTask(with: request)
         webSocketTask = task
+        connectionState.beginOpening()
         task.resume()
-        updateConnected(true)
         startReceiveLoop(for: task)
-        resetAttemptAfterStableConnection()
+        task.sendPing { [weak self, weak task] error in
+            Task { @MainActor [weak self, weak task] in
+                guard let self, let task, self.webSocketTask === task else { return }
+                if error != nil {
+                    self.handleDisconnect(for: task)
+                    return
+                }
+                self.connectionState.confirmOpen()
+                self.updateConnected(true)
+                self.reconnectAttempt = 0
+            }
+        }
     }
 
     private func startReceiveLoop(for task: URLSessionWebSocketTask) {
@@ -865,16 +879,17 @@ final class RealtimeConnection {
             while !Task.isCancelled {
                 do {
                     let message = try await task.receive()
-                    await self?.handle(message)
+                    await self?.handle(message, from: task)
                 } catch {
-                    self?.handleDisconnect()
+                    self?.handleDisconnect(for: task)
                     return
                 }
             }
         }
     }
 
-    private func handle(_ message: URLSessionWebSocketTask.Message) async {
+    private func handle(_ message: URLSessionWebSocketTask.Message, from task: URLSessionWebSocketTask) async {
+        guard webSocketTask === task else { return }
         let data: Data?
         switch message {
         case .string(let string):
@@ -886,14 +901,21 @@ final class RealtimeConnection {
         }
         guard let data,
               let event = try? JSONDecoder().decode(BackendRealtimeEvent.self, from: data) else { return }
+        if !connectionState.isConnected {
+            connectionState.confirmOpen()
+            updateConnected(true)
+        }
         reconnectAttempt = 0
         await onEvent(event)
     }
 
-    private func handleDisconnect() {
-        webSocketTask = nil
+    private func handleDisconnect(for task: URLSessionWebSocketTask? = nil) {
+        guard cancelCurrentTask(&webSocketTask, requestedTask: task, cancel: {
+            $0.cancel(with: .goingAway, reason: nil)
+        }) else { return }
         receiveTask?.cancel()
         receiveTask = nil
+        connectionState.disconnect()
         updateConnected(false)
         scheduleReconnectIfNeeded()
     }
@@ -904,16 +926,18 @@ final class RealtimeConnection {
         let delay = delays[min(reconnectAttempt, delays.count - 1)]
         reconnectAttempt += 1
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
-            self?.open()
-        }
-    }
-
-    private func resetAttemptAfterStableConnection() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let self, self.isConnected else { return }
-            self.reconnectAttempt = 0
+            do {
+                try await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            } catch {
+                return
+            }
+            guard let self,
+                  shouldOpenRealtimeConnection(
+                    reconnectTaskIsCancelled: Task.isCancelled,
+                    hasActiveWebSocketTask: self.webSocketTask != nil
+                  )
+            else { return }
+            self.open()
         }
     }
 

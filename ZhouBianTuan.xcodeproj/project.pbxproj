@@ -11,6 +11,8 @@
 		7D4E6E562C8A4A5100A10001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E512C8A4A5100A10001 /* Models.swift */; };
 		7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E522C8A4A5100A10001 /* Utilities.swift */; };
 		7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E532C8A4A5100A10001 /* BackendClient.swift */; };
+		7D4E6EB22C8A4A5100A10001 /* RealtimePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EB02C8A4A5100A10001 /* RealtimePolicy.swift */; };
+		7D4E6EB32C8A4A5100A10001 /* SafetyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */; };
 		7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */; };
 		7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */; };
 		7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E612C8A4A5100A10001 /* AdminViews.swift */; };
@@ -42,6 +44,8 @@
 		7D4E6E512C8A4A5100A10001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		7D4E6E522C8A4A5100A10001 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		7D4E6E532C8A4A5100A10001 /* BackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
+		7D4E6EB02C8A4A5100A10001 /* RealtimePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimePolicy.swift; sourceTree = "<group>"; };
+		7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyModels.swift; sourceTree = "<group>"; };
 		7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
 		7D4E6E612C8A4A5100A10001 /* AdminViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminViews.swift; sourceTree = "<group>"; };
@@ -121,6 +125,8 @@
 				7D4E6E512C8A4A5100A10001 /* Models.swift */,
 				7D4E6E522C8A4A5100A10001 /* Utilities.swift */,
 				7D4E6E532C8A4A5100A10001 /* BackendClient.swift */,
+				7D4E6EB02C8A4A5100A10001 /* RealtimePolicy.swift */,
+				7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */,
 				7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */,
 				7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */,
 				7D4E6E612C8A4A5100A10001 /* AdminViews.swift */,
@@ -256,6 +262,8 @@
 				7D4E6E562C8A4A5100A10001 /* Models.swift in Sources */,
 				7D4E6E572C8A4A5100A10001 /* Utilities.swift in Sources */,
 				7D4E6E582C8A4A5100A10001 /* BackendClient.swift in Sources */,
+				7D4E6EB22C8A4A5100A10001 /* RealtimePolicy.swift in Sources */,
+				7D4E6EB32C8A4A5100A10001 /* SafetyModels.swift in Sources */,
 				7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */,
 				7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */,
 				7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */,

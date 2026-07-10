@@ -75,8 +75,6 @@ final class MockAppStore: ObservableObject {
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
-    private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
-    private static let backendFallbackGraceInterval: TimeInterval = 3
     let backendClient = AliyunBackendClient()
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
@@ -85,7 +83,8 @@ final class MockAppStore: ObservableObject {
     private var isSyncingFromBackend = false
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
-    private var lastRealtimeActivityAt = Date.distantPast
+    private let realtimeFallbackPolicy = RealtimeFallbackPolicy()
+    private var realtimeFallbackState = RealtimeFallbackState()
     private var authExpirySuppressedUntil = Date.distantPast
     var backendToken: String? {
         get {
@@ -301,11 +300,22 @@ final class MockAppStore: ObservableObject {
         guard isBackendEnabled, let backendToken else { return }
         startRealtimeConnection(token: backendToken)
         guard backendRefreshTask == nil else { return }
+        realtimeFallbackState.reset()
         backendRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.backendFallbackRefreshIntervalNanoseconds)
+                guard let self else { return }
+                let delay = self.realtimeFallbackPolicy.delayNanoseconds(forAttempt: self.realtimeFallbackState.attempt)
+                try? await Task.sleep(nanoseconds: delay)
                 guard !Task.isCancelled else { break }
-                await self?.runFallbackSyncIfNeeded()
+                if self.isRealtimeConnected {
+                    self.realtimeFallbackState.recordSuccess()
+                    continue
+                }
+                if await self.syncFromBackend(reason: "fallback") {
+                    self.realtimeFallbackState.recordSuccess()
+                } else {
+                    self.realtimeFallbackState.recordFailure()
+                }
             }
         }
     }
@@ -313,6 +323,7 @@ final class MockAppStore: ObservableObject {
     func stopBackendAutoRefresh() {
         backendRefreshTask?.cancel()
         backendRefreshTask = nil
+        realtimeFallbackState.reset()
         realtimeConnection?.disconnect()
         isRealtimeConnected = false
     }
@@ -333,9 +344,10 @@ final class MockAppStore: ObservableObject {
         }
     }
 
-    func refreshFromBackend(silent: Bool = false) async {
-        guard isBackendEnabled, let backendToken else { return }
-        guard !isRefreshingFromBackend else { return }
+    @discardableResult
+    func refreshFromBackend(silent: Bool = false) async -> Bool {
+        guard isBackendEnabled, let backendToken else { return false }
+        guard !isRefreshingFromBackend else { return false }
         isRefreshingFromBackend = true
         defer { isRefreshingFromBackend = false }
         do {
@@ -345,23 +357,25 @@ final class MockAppStore: ObservableObject {
             if !silent {
                 showToast("云端数据已同步")
             }
+            return true
         } catch {
             if isAuthExpiredError(error) {
                 expireCloudSession(silent: silent)
-                return
+                return false
             }
             if !silent {
                 showToast(error.localizedDescription)
             }
+            return false
         }
     }
 
-    func syncFromBackend(reason: String = "manual") async {
-        guard isBackendEnabled, let backendToken else { return }
-        guard !isRefreshingFromBackend, !isSyncingFromBackend else { return }
+    @discardableResult
+    func syncFromBackend(reason: String = "manual") async -> Bool {
+        guard isBackendEnabled, let backendToken else { return false }
+        guard !isRefreshingFromBackend, !isSyncingFromBackend else { return false }
         guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
-            await refreshFromBackend(silent: true)
-            return
+            return await refreshFromBackend(silent: true)
         }
         isSyncingFromBackend = true
         defer { isSyncingFromBackend = false }
@@ -371,14 +385,16 @@ final class MockAppStore: ObservableObject {
             if payload.hasMore {
                 Task { await syncFromBackend(reason: "\(reason).more") }
             }
+            return true
         } catch {
             if isAuthExpiredError(error) {
                 expireCloudSession(silent: true)
-                return
+                return false
             }
             if reason == "foreground" || reason == "manual" {
                 await refreshFromBackend(silent: true)
             }
+            return false
         }
     }
 
@@ -399,8 +415,8 @@ final class MockAppStore: ObservableObject {
 
     private func handleRealtimeStateChange(_ connected: Bool) {
         isRealtimeConnected = connected
-        lastRealtimeActivityAt = Date()
         if connected {
+            realtimeFallbackState.recordSuccess()
             Task {
                 try? await Task.sleep(nanoseconds: 250_000_000)
                 await syncFromBackend(reason: "websocket.connected")
@@ -410,14 +426,7 @@ final class MockAppStore: ObservableObject {
 
     private func handleRealtimeEvent(_ event: BackendRealtimeEvent) async {
         guard event.type == "sync.available" else { return }
-        lastRealtimeActivityAt = Date()
         await syncFromBackend(reason: "websocket.\(event.eventType ?? "event")")
-    }
-
-    private func runFallbackSyncIfNeeded() async {
-        guard isBackendEnabled, backendToken != nil else { return }
-        guard Date().timeIntervalSince(lastRealtimeActivityAt) >= Self.backendFallbackGraceInterval else { return }
-        await syncFromBackend(reason: "fallback")
     }
 
     private func isAuthExpiredError(_ error: Error) -> Bool {
