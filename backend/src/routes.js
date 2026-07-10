@@ -22,6 +22,7 @@ const SIGNED_ASSET_URL_TTL_MS = 55 * 1000;
 const MAX_SIGNED_ASSET_URL_CACHE_SIZE = 1000;
 const signedAssetUrlCache = new Map();
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ALLOWED_UPLOAD_KINDS = new Set(["post", "avatar", "background", "message", "report"]);
 
 export function createRouter() {
   const router = express.Router();
@@ -1146,9 +1147,11 @@ export function createRouter() {
       if (!ALLOWED_IMAGE_CONTENT_TYPES.has(contentType)) {
         throw badRequest("仅支持上传 JPEG / PNG / WebP 图片");
       }
+      const kind = String(req.body.kind || "").trim();
+      if (!ALLOWED_UPLOAD_KINDS.has(kind)) throw badRequest("上传类型不正确");
       const target = createUploadTarget({
         userId: req.user.id,
-        kind: req.body.kind,
+        kind,
         filename: req.body.filename,
         contentType
       });

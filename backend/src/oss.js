@@ -46,19 +46,20 @@ export function publicAssetUrlForBase(objectKey, { publicApiBaseUrl, publicAsset
 
 export function createUploadTarget({ userId, kind, filename, contentType }) {
   const ext = extensionFor(filename, contentType);
-  const safeKind = ["post", "avatar", "background", "message"].includes(kind) ? kind : "post";
+  const safeKind = ["post", "avatar", "background", "message", "report"].includes(kind) ? kind : "post";
   const objectKey = `${safeKind}/${userId}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
   const uploadUrl = readClient.signatureUrl(objectKey, {
     expires: 900,
     method: "PUT",
     "Content-Type": contentType || "application/octet-stream"
   });
-  return {
+  const target = {
     objectKey,
     uploadUrl,
-    expiresIn: 900,
-    readUrl: signedReadUrl(objectKey)
+    expiresIn: 900
   };
+  if (safeKind !== "report") target.readUrl = signedReadUrl(objectKey);
+  return target;
 }
 
 export async function deleteObjects(objectKeys = []) {

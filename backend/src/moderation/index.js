@@ -65,7 +65,7 @@ export async function createModerationReview(client, input) {
 
 export function assertOwnedObjectKeys(userId, objectKeys, allowedKinds) {
   const keys = arrayOfStrings(objectKeys);
-  const kinds = allowedKinds && allowedKinds.length ? allowedKinds : ["post", "avatar", "background"];
+  const kinds = allowedKinds && allowedKinds.length ? allowedKinds : ["post", "avatar", "background", "report"];
   for (const key of keys) {
     const ok = kinds.some((kind) => key.startsWith(`${kind}/${userId}/`));
     if (!ok || key.includes("..")) {
