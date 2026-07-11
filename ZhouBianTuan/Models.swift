@@ -54,6 +54,7 @@ struct GroupBuyPost: Identifiable, Hashable {
     var qq: String
     var groupNumber: String
     var groupInfo: String
+    var contactVisibility: String = "active"
     var externalLink: String
     var createdAt: Date
     var likedCount: Int
@@ -162,6 +163,7 @@ struct GroupCollection: Identifiable, Hashable {
     var contactQQ: String
     var contactGroupNumber: String
     var groupInfo: String
+    var contactVisibility: String = "active"
     var deadline: Date
     var defaultNote: String
     var postIDs: [String]
@@ -226,6 +228,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
     var remoteImageURL: String = ""
     var isRevoked: Bool = false
     var isDeletedForMe: Bool = false
+    var isSafetyHidden: Bool = false
     var sharedPostID: String? = nil
     var sharedProfileUserID: String? = nil
     var deliveryStatus: MessageDeliveryStatus = .sent
@@ -240,6 +243,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         remoteImageURL: String = "",
         isRevoked: Bool = false,
         isDeletedForMe: Bool = false,
+        isSafetyHidden: Bool = false,
         sharedPostID: String? = nil,
         sharedProfileUserID: String? = nil,
         deliveryStatus: MessageDeliveryStatus = .sent
@@ -253,6 +257,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         self.remoteImageURL = remoteImageURL
         self.isRevoked = isRevoked
         self.isDeletedForMe = isDeletedForMe
+        self.isSafetyHidden = isSafetyHidden
         self.sharedPostID = sharedPostID
         self.sharedProfileUserID = sharedProfileUserID
         self.deliveryStatus = deliveryStatus
@@ -268,6 +273,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         case remoteImageURL
         case isRevoked
         case isDeletedForMe
+        case isSafetyHidden
         case sharedPostID
         case sharedProfileUserID
         case deliveryStatus
@@ -284,6 +290,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         remoteImageURL = try container.decodeIfPresent(String.self, forKey: .remoteImageURL) ?? ""
         isRevoked = try container.decodeIfPresent(Bool.self, forKey: .isRevoked) ?? false
         isDeletedForMe = try container.decodeIfPresent(Bool.self, forKey: .isDeletedForMe) ?? false
+        isSafetyHidden = try container.decodeIfPresent(Bool.self, forKey: .isSafetyHidden) ?? false
         sharedPostID = try container.decodeIfPresent(String.self, forKey: .sharedPostID)
         sharedProfileUserID = try container.decodeIfPresent(String.self, forKey: .sharedProfileUserID)
         deliveryStatus = (try? container.decode(MessageDeliveryStatus.self, forKey: .deliveryStatus)) ?? .sent
@@ -351,6 +358,17 @@ enum ReportStatus: String, Hashable {
     case warned = "已警告"
 }
 
+struct SafetyReportPresentationData: Identifiable, Hashable {
+    let id: String
+    let sourceLabel: String
+    let subjectLabel: String
+    let reasonLabel: String
+    let reportedFieldLabel: String
+    let statusLabel: String
+    let detail: String
+    let createdAt: String
+}
+
 enum ColorToken: String, Hashable {
     case rose
     case violet
@@ -411,5 +429,73 @@ extension ReportStatus {
         default:
             return .pending
         }
+    }
+}
+
+extension SafetyTargetType {
+    var displayName: String {
+        switch self {
+        case .post: "帖子"
+        case .comment: "评论"
+        case .user: "用户"
+        case .directMessage: "私信"
+        case .collection: "合集"
+        }
+    }
+}
+
+extension SafetyReasonCode {
+    var displayName: String {
+        switch self {
+        case .suspectedScam: "疑似诈骗"
+        case .falseOrExpiredGroupBuy: "虚假或过期团购"
+        case .invalidContact: "联系方式无效"
+        case .copyrightOrStolenMedia: "侵权或盗图"
+        case .harassmentOrAbuse: "骚扰或辱骂"
+        case .sexualOrIllegal: "色情或违法"
+        case .spamOrAdvertising: "垃圾信息或广告"
+        case .directMessageRisk: "私信风险"
+        case .other: "其他"
+        }
+    }
+}
+
+extension SafetyReportedField {
+    var displayName: String {
+        switch self {
+        case .content: "内容"
+        case .contactWechat: "微信"
+        case .contactQQ: "QQ"
+        case .contactGroupNumber: "QQ群号"
+        case .collectionDeadline: "合集截团时间"
+        case .collectionDescription: "合集说明"
+        case .collectionDefaultNote: "合集默认备注"
+        }
+    }
+}
+
+extension SafetyReportStatus {
+    var displayName: String {
+        switch self {
+        case .received: "已接收"
+        case .reviewing: "审核中"
+        case .handled: "已处理"
+        case .noViolation: "未发现明确违规"
+        }
+    }
+}
+
+extension SafetyReport {
+    var presentationData: SafetyReportPresentationData {
+        SafetyReportPresentationData(
+            id: id,
+            sourceLabel: sourceType.displayName,
+            subjectLabel: subjectType.displayName,
+            reasonLabel: reasonCode.displayName,
+            reportedFieldLabel: reportedField.displayName,
+            statusLabel: status.displayName,
+            detail: detail,
+            createdAt: createdAt
+        )
     }
 }
