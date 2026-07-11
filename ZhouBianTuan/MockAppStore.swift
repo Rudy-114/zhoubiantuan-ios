@@ -16,6 +16,8 @@ final class MockAppStore: ObservableObject {
     }
     @Published var moderationReviews: [ModerationReview]
     @Published var reports: [Report]
+    @Published var safetyReports: [SafetyReport] = []
+    @Published var isSubmittingSafetyReport = false
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
@@ -75,7 +77,7 @@ final class MockAppStore: ObservableObject {
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
-    let backendClient = AliyunBackendClient()
+    let backendClient: AliyunBackendClient
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
     private var backendRefreshTask: Task<Void, Never>?
@@ -83,6 +85,7 @@ final class MockAppStore: ObservableObject {
     private var isSyncingFromBackend = false
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
+    private var safetyReportSubmissionState = SafetyReportSubmissionState()
     private let realtimeFallbackPolicy = RealtimeFallbackPolicy()
     private var realtimeFallbackState = RealtimeFallbackState()
     private var authExpirySuppressedUntil = Date.distantPast
@@ -239,7 +242,8 @@ final class MockAppStore: ObservableObject {
 
     // MARK: - Initialization
 
-    init() {
+    init(backendClient: AliyunBackendClient = AliyunBackendClient()) {
+        self.backendClient = backendClient
         Self.resetLocalDataForEmptyBetaIfNeeded()
         Self.migrateBackendTokenToKeychain()
         Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
@@ -340,6 +344,7 @@ final class MockAppStore: ObservableObject {
         } else {
             stopBackendAutoRefresh()
             backendToken = nil
+            resetSafetyReportSessionState()
             showToast("已切换到本地 Mock 数据")
         }
     }
@@ -348,10 +353,14 @@ final class MockAppStore: ObservableObject {
     func refreshFromBackend(silent: Bool = false) async -> Bool {
         guard isBackendEnabled, let backendToken else { return false }
         guard !isRefreshingFromBackend else { return false }
+        let refreshSessionVersion = authSessionVersion
         isRefreshingFromBackend = true
         defer { isRefreshingFromBackend = false }
         do {
             let payload = try await backendClient.bootstrap(token: backendToken)
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: refreshSessionVersion) else {
+                return false
+            }
             applyBackendPayload(payload)
             await loadBlockedUsers()
             if !silent {
@@ -360,7 +369,15 @@ final class MockAppStore: ObservableObject {
             return true
         } catch {
             if isAuthExpiredError(error) {
-                expireCloudSession(silent: silent)
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: refreshSessionVersion,
+                    silent: silent,
+                    bypassSuppression: false
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: refreshSessionVersion) else {
                 return false
             }
             if !silent {
@@ -377,18 +394,38 @@ final class MockAppStore: ObservableObject {
         guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
             return await refreshFromBackend(silent: true)
         }
+        let syncSessionVersion = authSessionVersion
         isSyncingFromBackend = true
         defer { isSyncingFromBackend = false }
         do {
             let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
-            applySyncPayload(payload)
+            let shouldRefreshSafetyReports = payload.events.contains(where: { $0.eventType == "safety.report.updated" })
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: syncSessionVersion) else {
+                return false
+            }
+            applySyncPayload(payload, advanceCursor: !shouldRefreshSafetyReports)
+            if shouldRefreshSafetyReports {
+                try await refreshSafetyReports(token: backendToken, sessionVersion: syncSessionVersion)
+                guard isCurrentCloudSession(token: backendToken, sessionVersion: syncSessionVersion) else {
+                    return false
+                }
+                SyncCursorStore.set(payload.nextCursor, for: currentUserID)
+            }
             if payload.hasMore {
                 Task { await syncFromBackend(reason: "\(reason).more") }
             }
             return true
         } catch {
             if isAuthExpiredError(error) {
-                expireCloudSession(silent: true)
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: syncSessionVersion,
+                    silent: true,
+                    bypassSuppression: false
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: syncSessionVersion) else {
                 return false
             }
             if reason == "foreground" || reason == "manual" {
@@ -434,8 +471,36 @@ final class MockAppStore: ObservableObject {
         return nsError.domain == "AliyunBackendClient" && nsError.code == 401
     }
 
-    private func expireCloudSession(silent: Bool = false) {
-        guard Date() >= authExpirySuppressedUntil else { return }
+    private func isCurrentCloudSession(token: String, sessionVersion: UUID) -> Bool {
+        authSessionVersion == sessionVersion && backendToken == token
+    }
+
+    @discardableResult
+    private func expireCloudSessionIfCurrent(
+        token: String,
+        sessionVersion: UUID,
+        silent: Bool,
+        bypassSuppression: Bool,
+        preserveSafetyReports: [SafetyReport]? = nil,
+        toast: String? = nil
+    ) -> Bool {
+        guard isCurrentCloudSession(token: token, sessionVersion: sessionVersion) else { return false }
+        return expireCloudSession(
+            silent: silent,
+            bypassSuppression: bypassSuppression,
+            preserveSafetyReports: preserveSafetyReports,
+            toast: toast
+        )
+    }
+
+    @discardableResult
+    private func expireCloudSession(
+        silent: Bool = false,
+        bypassSuppression: Bool = false,
+        preserveSafetyReports: [SafetyReport]? = nil,
+        toast: String? = nil
+    ) -> Bool {
+        guard bypassSuppression || Date() >= authExpirySuppressedUntil else { return false }
         stopBackendAutoRefresh()
         SyncCursorStore.remove(for: currentUserID)
         backendToken = nil
@@ -444,11 +509,16 @@ final class MockAppStore: ObservableObject {
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
+        resetSafetyReportSessionState()
+        if let preserveSafetyReports {
+            safetyReports = preserveSafetyReports
+        }
         followingIDsByUserID[currentUserID] = []
         authSessionVersion = UUID()
         if !silent {
-            showToast("登录已失效，请重新注册或登录")
+            showToast(toast ?? "登录已失效，请重新注册或登录")
         }
+        return true
     }
 
     private func invalidateCloudSessionForMissingToken(prompt: Bool, toast: String? = nil) {
@@ -460,6 +530,7 @@ final class MockAppStore: ObservableObject {
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
+        resetSafetyReportSessionState()
         followingIDsByUserID[currentUserID] = []
         authSessionVersion = UUID()
         if let toast {
@@ -470,6 +541,9 @@ final class MockAppStore: ObservableObject {
     private func applyBackendPayload(_ payload: BackendPayload) {
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
+        if let incomingUserID = payload.currentUser?.id, incomingUserID != currentUserID {
+            resetSafetyReportSessionState()
+        }
         if let token = payload.token {
             backendToken = token
         }
@@ -489,7 +563,8 @@ final class MockAppStore: ObservableObject {
             self.threads = mergedMessageThreads(from: messageThreads.map { $0.localThread() })
         }
         if let reports = payload.reports {
-            self.reports = reports.map { $0.localReport() }
+            self.reports = reports.compactMap { $0.localReport() }
+            mergeSafetyReports(reports.compactMap { $0.safetyReport() })
         }
         if let likedPostIDs = payload.likedPostIDs {
             self.likedPostIDs = Set(likedPostIDs)
@@ -567,7 +642,7 @@ final class MockAppStore: ObservableObject {
         return deduplicatedMessageThreads(Array(merged.values)).sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private func applySyncPayload(_ payload: BackendSyncPayload) {
+    private func applySyncPayload(_ payload: BackendSyncPayload, advanceCursor: Bool = true) {
         mergeUsers(payload.users?.map { $0.localUser() } ?? [])
         mergePosts(payload.posts?.map { $0.localPost() } ?? [])
         mergeCollections(payload.collections?.map { $0.localCollection() } ?? [])
@@ -592,7 +667,9 @@ final class MockAppStore: ObservableObject {
             self.blockedByUserIDs = Set(blockedByUserIDs)
         }
         followingIDsByUserID[currentUserID] = followedUserIDs
-        SyncCursorStore.set(payload.nextCursor, for: currentUserID)
+        if advanceCursor {
+            SyncCursorStore.set(payload.nextCursor, for: currentUserID)
+        }
     }
 
     private func mergeUsers(_ backendUsers: [User]) {
@@ -647,6 +724,66 @@ final class MockAppStore: ObservableObject {
             commentsByID[comment.id] = comment
         }
         comments = order.compactMap { commentsByID[$0] }
+    }
+
+    func mergeSafetyReports(_ incomingReports: [SafetyReport]) {
+        guard !incomingReports.isEmpty else { return }
+        var reportsByID = Dictionary(uniqueKeysWithValues: safetyReports.map { ($0.id, $0) })
+        var stableOrder = Dictionary(uniqueKeysWithValues: safetyReports.enumerated().map { ($0.element.id, $0.offset) })
+        var nextOrder = stableOrder.count
+
+        for report in incomingReports {
+            if stableOrder[report.id] == nil {
+                stableOrder[report.id] = nextOrder
+                nextOrder += 1
+            }
+            if let existing = reportsByID[report.id] {
+                let existingUpdatedAt = BackendDateParser.strictDate(from: existing.updatedAt)
+                let incomingUpdatedAt = BackendDateParser.strictDate(from: report.updatedAt)
+                switch (existingUpdatedAt, incomingUpdatedAt) {
+                case (_, nil):
+                    continue
+                case let (.some(existingDate), .some(incomingDate)) where incomingDate <= existingDate:
+                    continue
+                default:
+                    break
+                }
+            }
+            reportsByID[report.id] = report
+        }
+
+        safetyReports = reportsByID.values.sorted { lhs, rhs in
+            let lhsUpdatedAt = BackendDateParser.strictDate(from: lhs.updatedAt) ?? .distantPast
+            let rhsUpdatedAt = BackendDateParser.strictDate(from: rhs.updatedAt) ?? .distantPast
+            if lhsUpdatedAt != rhsUpdatedAt { return lhsUpdatedAt > rhsUpdatedAt }
+            let lhsCreatedAt = BackendDateParser.strictDate(from: lhs.createdAt) ?? .distantPast
+            let rhsCreatedAt = BackendDateParser.strictDate(from: rhs.createdAt) ?? .distantPast
+            if lhsCreatedAt != rhsCreatedAt { return lhsCreatedAt > rhsCreatedAt }
+            return stableOrder[lhs.id, default: .max] < stableOrder[rhs.id, default: .max]
+        }
+    }
+
+    private func refreshSafetyReports(token: String, sessionVersion: UUID) async throws {
+        let reports = try await backendClient.myReports(token: token)
+        guard isCurrentCloudSession(token: token, sessionVersion: sessionVersion) else { return }
+        mergeSafetyReports(reports)
+    }
+
+    private func beginSafetyReportSubmission() -> UUID? {
+        let submissionID = safetyReportSubmissionState.begin()
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+        return submissionID
+    }
+
+    private func finishSafetyReportSubmission(_ submissionID: UUID) {
+        safetyReportSubmissionState.finish(submissionID)
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+    }
+
+    private func resetSafetyReportSessionState() {
+        safetyReports.removeAll()
+        safetyReportSubmissionState.reset()
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
     }
 
     private func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
@@ -1178,6 +1315,94 @@ final class MockAppStore: ObservableObject {
         }
     }
 
+    func submitSafetyReport(
+        draft: SafetyReportDraft,
+        imageData: [Data],
+        blockUserID: String?
+    ) async -> Bool {
+        guard requireLogin(prompt: "登录后才能举报") else { return false }
+        guard isBackendEnabled else {
+            showToast("当前模式不支持云端举报")
+            return false
+        }
+        guard let backendToken else {
+            invalidateCloudSessionForMissingToken(prompt: true, toast: "云端登录状态异常，请重新登录后再举报")
+            return false
+        }
+        guard let submissionID = beginSafetyReportSubmission() else { return false }
+        defer { finishSafetyReportSubmission(submissionID) }
+        let submissionSessionVersion = authSessionVersion
+
+        do {
+            let objectKeys = try await backendClient.uploadReportImages(token: backendToken, images: imageData)
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return false
+            }
+            let wireDraft = SafetyReportDraft(
+                clientRequestID: draft.clientRequestID,
+                sourceType: draft.sourceType,
+                sourceID: draft.sourceID,
+                reasonCode: draft.reasonCode,
+                reportedField: draft.reportedField,
+                detail: draft.detail,
+                objectKeys: objectKeys
+            )
+            let response = try await backendClient.submitReport(token: backendToken, draft: wireDraft)
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return true
+            }
+            mergeSafetyReports([response.report])
+
+            let acceptedMessage = response.duplicate ? "该问题已在处理中" : "举报已提交"
+            showToast(acceptedMessage)
+            if let blockUserID, blockUserID != currentUserID, !isBlocked(blockUserID) {
+                do {
+                    try await blockUserAndWait(
+                        blockUserID,
+                        token: backendToken,
+                        sessionVersion: submissionSessionVersion
+                    )
+                    guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                        return true
+                    }
+                } catch {
+                    if isAuthExpiredError(error) {
+                        let expiredMessage = "\(acceptedMessage)，但登录已失效，拉黑未完成"
+                        _ = expireCloudSessionIfCurrent(
+                            token: backendToken,
+                            sessionVersion: submissionSessionVersion,
+                            silent: false,
+                            bypassSuppression: true,
+                            preserveSafetyReports: safetyReports,
+                            toast: expiredMessage
+                        )
+                        return true
+                    }
+                    guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                        return true
+                    }
+                    showToast("\(acceptedMessage)，但拉黑失败：\(error.localizedDescription)")
+                }
+            }
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: submissionSessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return false
+            }
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
     func handleReport(reportID: String, status: ReportStatus) {
         guard let reportIndex = reports.firstIndex(where: { $0.id == reportID }) else { return }
         reports[reportIndex].status = status
@@ -1346,13 +1571,32 @@ final class MockAppStore: ObservableObject {
             }
             return
         }
+        let blockSessionVersion = authSessionVersion
         do {
             try await backendClient.blockUser(token: token, userID: userID)
+            guard isCurrentCloudSession(token: token, sessionVersion: blockSessionVersion) else { return }
             applyLocalBlock(userID)
             showToast("已拉黑，对方将无法私信你")
         } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: token,
+                    sessionVersion: blockSessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return
+            }
+            guard isCurrentCloudSession(token: token, sessionVersion: blockSessionVersion) else { return }
             showToast(error.localizedDescription)
         }
+    }
+
+    private func blockUserAndWait(_ userID: String, token: String, sessionVersion: UUID) async throws {
+        suppressAuthExpiryDuringBlockMutation()
+        try await backendClient.blockUser(token: token, userID: userID)
+        guard sessionVersion == authSessionVersion, backendToken == token else { return }
+        applyLocalBlock(userID)
     }
 
     func unblockUser(_ userID: String) async {
@@ -1366,12 +1610,24 @@ final class MockAppStore: ObservableObject {
             }
             return
         }
+        let unblockSessionVersion = authSessionVersion
         do {
             try await backendClient.unblockUser(token: token, userID: userID)
+            guard isCurrentCloudSession(token: token, sessionVersion: unblockSessionVersion) else { return }
             blockedUserIDs.remove(userID)
             showToast("已解除拉黑")
             await restoreVisibleContentAfterUnblock()
         } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: token,
+                    sessionVersion: unblockSessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return
+            }
+            guard isCurrentCloudSession(token: token, sessionVersion: unblockSessionVersion) else { return }
             showToast(error.localizedDescription)
         }
     }
@@ -1468,6 +1724,7 @@ final class MockAppStore: ObservableObject {
         comments.removeAll()
         threads.removeAll()
         reports.removeAll()
+        resetSafetyReportSessionState()
         moderationReviews.removeAll()
         reminders.removeAll()
         likedPostIDs.removeAll()
@@ -1649,6 +1906,7 @@ final class MockAppStore: ObservableObject {
         followingIDsByUserID[userID] = followedUserIDs
         likedPostIDs = []
         favoritePostIDs = []
+        resetSafetyReportSessionState()
         isLoggedIn = true
         isAuthPromptPresented = false
         authSessionVersion = UUID()

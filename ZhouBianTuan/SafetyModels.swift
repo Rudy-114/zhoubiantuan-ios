@@ -65,6 +65,66 @@ public struct SafetyReportDraft: Codable, Equatable, Sendable {
     }
 }
 
+public struct SafetyReportDraftState: Equatable, Sendable {
+    public let sourceType: SafetyTargetType
+    public let sourceID: String
+    public private(set) var clientRequestID: String
+
+    public init(
+        sourceType: SafetyTargetType,
+        sourceID: String,
+        clientRequestID: String = UUID().uuidString
+    ) {
+        self.sourceType = sourceType
+        self.sourceID = sourceID
+        self.clientRequestID = clientRequestID
+    }
+
+    public mutating func markFailed() {}
+
+    public mutating func markAccepted() {
+        clientRequestID = UUID().uuidString
+    }
+}
+
+public struct SafetyReportSubmissionState: Equatable, Sendable {
+    public private(set) var activeSubmissionID: UUID?
+
+    public init() {}
+
+    public var isSubmitting: Bool {
+        activeSubmissionID != nil
+    }
+
+    public mutating func begin() -> UUID? {
+        guard activeSubmissionID == nil else { return nil }
+        let submissionID = UUID()
+        activeSubmissionID = submissionID
+        return submissionID
+    }
+
+    public mutating func finish(_ submissionID: UUID) {
+        guard activeSubmissionID == submissionID else { return }
+        activeSubmissionID = nil
+    }
+
+    public mutating func reset() {
+        activeSubmissionID = nil
+    }
+}
+
+public struct SafetyEvidenceSupplement: Codable, Equatable, Sendable {
+    public let clientRequestID: String
+    public let detail: String
+    public let objectKeys: [String]
+
+    public init(clientRequestID: String, detail: String, objectKeys: [String]) {
+        self.clientRequestID = clientRequestID
+        self.detail = detail
+        self.objectKeys = objectKeys
+    }
+}
+
 public struct SafetyReport: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let caseID: String

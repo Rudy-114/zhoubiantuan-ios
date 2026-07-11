@@ -37,7 +37,18 @@
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
 		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
+		7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7D4E6ECB2C8A4A5100A10001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7D4E6E002C8A4A5100A10001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7D4E6E072C8A4A5100A10001;
+			remoteInfo = ZhouBianTuan;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		7D4E6E502C8A4A5100A10001 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -88,10 +99,19 @@
 		7D4E6E402C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png"; sourceTree = "<group>"; };
 		7D4E6E412C8A4A5100A10001 /* Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png"; sourceTree = "<group>"; };
 		7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingQualityTests.swift; sourceTree = "<group>"; };
+		7D4E6EC22C8A4A5100A10001 /* ZhouBianTuanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZhouBianTuanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		7D4E6E052C8A4A5100A10001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7D4E6EC42C8A4A5100A10001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -105,6 +125,7 @@
 			isa = PBXGroup;
 			children = (
 				7D4E6E0A2C8A4A5100A10001 /* ZhouBianTuan */,
+				7D4E6EC32C8A4A5100A10001 /* ZhouBianTuanTests */,
 				7D4E6E092C8A4A5100A10001 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -113,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */,
+				7D4E6EC22C8A4A5100A10001 /* ZhouBianTuanTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -187,6 +209,14 @@
 			name = "App Icons";
 			sourceTree = "<group>";
 		};
+		7D4E6EC32C8A4A5100A10001 /* ZhouBianTuanTests */ = {
+			isa = PBXGroup;
+			children = (
+				7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */,
+			);
+			path = ZhouBianTuanTests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -207,6 +237,24 @@
 			productReference = 7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7D4E6EC72C8A4A5100A10001 /* ZhouBianTuanTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7D4E6ECA2C8A4A5100A10001 /* Build configuration list for PBXNativeTarget "ZhouBianTuanTests" */;
+			buildPhases = (
+				7D4E6EC52C8A4A5100A10001 /* Sources */,
+				7D4E6EC42C8A4A5100A10001 /* Frameworks */,
+				7D4E6EC62C8A4A5100A10001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7D4E6ECC2C8A4A5100A10001 /* PBXTargetDependency */,
+			);
+			name = ZhouBianTuanTests;
+			productName = ZhouBianTuanTests;
+			productReference = 7D4E6EC22C8A4A5100A10001 /* ZhouBianTuanTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -219,6 +267,10 @@
 				TargetAttributes = {
 					7D4E6E072C8A4A5100A10001 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					7D4E6EC72C8A4A5100A10001 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 7D4E6E072C8A4A5100A10001;
 					};
 				};
 			};
@@ -237,6 +289,7 @@
 			projectRoot = "";
 			targets = (
 				7D4E6E072C8A4A5100A10001 /* ZhouBianTuan */,
+				7D4E6EC72C8A4A5100A10001 /* ZhouBianTuanTests */,
 			);
 		};
 /* End PBXProject section */
@@ -248,6 +301,13 @@
 			files = (
 				7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */,
 				7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7D4E6EC62C8A4A5100A10001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -289,7 +349,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7D4E6EC52C8A4A5100A10001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7D4E6ECC2C8A4A5100A10001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7D4E6E072C8A4A5100A10001 /* ZhouBianTuan */;
+			targetProxy = 7D4E6ECB2C8A4A5100A10001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		7D4E6E162C8A4A5100A10001 /* Debug */ = {
@@ -423,6 +499,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_TESTABILITY = YES;
+				"ENABLE_TESTABILITY[sdk=iphoneos*]" = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ZhouBianTuan/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -449,6 +527,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_TESTABILITY = YES;
+				"ENABLE_TESTABILITY[sdk=iphoneos*]" = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ZhouBianTuan/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -464,6 +544,44 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		7D4E6EC82C8A4A5100A10001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = L9XK3RU32U;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.panpanpan.zhoubiantuanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ZhouBianTuan.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ZhouBianTuan";
+			};
+			name = Debug;
+		};
+		7D4E6EC92C8A4A5100A10001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = L9XK3RU32U;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.panpanpan.zhoubiantuanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ZhouBianTuan.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ZhouBianTuan";
 			};
 			name = Release;
 		};
@@ -484,6 +602,15 @@
 			buildConfigurations = (
 				7D4E6E192C8A4A5100A10001 /* Debug */,
 				7D4E6E1A2C8A4A5100A10001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7D4E6ECA2C8A4A5100A10001 /* Build configuration list for PBXNativeTarget "ZhouBianTuanTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7D4E6EC82C8A4A5100A10001 /* Debug */,
+				7D4E6EC92C8A4A5100A10001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
