@@ -91,7 +91,12 @@ export const config = {
     autoActionsEnabled: String(process.env.SAFETY_AUTO_ACTIONS_ENABLED || "false").toLowerCase() === "true",
     reportAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_ACCOUNT_MAX_24H", 20),
     reportIpMax24h: positiveFiniteInteger("SAFETY_REPORT_IP_MAX_24H", 60),
-    reportBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_BURST_MAX_MINUTE", 5)
+    reportBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_BURST_MAX_MINUTE", 5),
+    reportUploadOutstandingMax: positiveFiniteInteger("SAFETY_REPORT_UPLOAD_OUTSTANDING_MAX", 24),
+    reportUploadAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H", 60),
+    reportSupplementAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H", 40),
+    reportSupplementIpMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H", 120),
+    reportSupplementBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE", 10)
   },
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",

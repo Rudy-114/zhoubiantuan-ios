@@ -182,6 +182,115 @@ test("safety migration rolls back to the usable legacy report schema", async () 
   });
 });
 
+test("report upload cleanup migration registers existing objects and adds bounded lookup indexes", async () => {
+  await withMigrationDatabase(async ({ pool: migrationPool, applyMigration, applyDownMigration }) => {
+    await applyMigration("013_safety_cases.sql");
+    await migrationPool.query(
+      `INSERT INTO users (id, nickname) VALUES ('user-upload-owner', 'Upload owner');
+       INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope)
+       VALUES ('case-upload-cleanup', 'user', 'user-upload-owner', 'other', 'user');
+       INSERT INTO safety_evidence (id, case_id, evidence_type, object_keys)
+       VALUES (
+         'evidence-upload-cleanup',
+         'case-upload-cleanup',
+         'report',
+         ARRAY['report/user-upload-owner/2026/07/attached.jpg']
+       );
+       INSERT INTO safety_jobs (job_type, unique_key, payload, status, completed_at)
+       VALUES
+         (
+           'cleanup_report_upload',
+           'cleanup-report-upload:report/user-upload-owner/2026/07/attached.jpg',
+           '{"objectKey":"report/user-upload-owner/2026/07/attached.jpg"}'::jsonb,
+           'pending',
+           NULL
+         ),
+         (
+           'cleanup_report_upload',
+           'cleanup-report-upload:report/user-upload-owner/2026/07/pending.jpg',
+           '{"objectKey":"report/user-upload-owner/2026/07/pending.jpg"}'::jsonb,
+           'pending',
+           NULL
+         ),
+         (
+           'cleanup_report_upload',
+           'cleanup-report-upload:report/user-upload-owner/2026/07/deleted.jpg',
+           '{"objectKey":"report/user-upload-owner/2026/07/deleted.jpg"}'::jsonb,
+           'completed',
+           now()
+         ),
+         (
+           'cleanup_report_upload',
+           'cleanup-report-upload:report/deleted-upload-owner/2026/07/orphaned-owner.jpg',
+           '{"objectKey":"report/deleted-upload-owner/2026/07/orphaned-owner.jpg"}'::jsonb,
+           'pending',
+           NULL
+         );`
+    );
+
+    await applyMigration("014_report_upload_cleanup.sql");
+
+    const uploads = await migrationPool.query(
+      `SELECT object_key, owner_user_id, state
+       FROM report_uploads
+       ORDER BY object_key`
+    );
+    assert.deepEqual(uploads.rows, [
+      {
+        object_key: "report/deleted-upload-owner/2026/07/orphaned-owner.jpg",
+        owner_user_id: "deleted-upload-owner",
+        state: "pending"
+      },
+      {
+        object_key: "report/user-upload-owner/2026/07/attached.jpg",
+        owner_user_id: "user-upload-owner",
+        state: "attached"
+      },
+      {
+        object_key: "report/user-upload-owner/2026/07/deleted.jpg",
+        owner_user_id: "user-upload-owner",
+        state: "deleted"
+      },
+      {
+        object_key: "report/user-upload-owner/2026/07/pending.jpg",
+        owner_user_id: "user-upload-owner",
+        state: "pending"
+      }
+    ]);
+
+    const indexes = await migrationPool.query(
+      `SELECT
+         to_regclass('public.report_uploads_owner_outstanding') AS outstanding,
+         to_regclass('public.report_uploads_owner_issued') AS issued,
+         to_regclass('public.report_uploads_cleanup_due') AS cleanup_due,
+         to_regclass('public.safety_evidence_object_keys_gin') AS evidence_keys,
+         to_regclass('public.safety_jobs_cleanup_retention') AS job_retention`
+    );
+    assert.deepEqual(indexes.rows[0], {
+      outstanding: "report_uploads_owner_outstanding",
+      issued: "report_uploads_owner_issued",
+      cleanup_due: "report_uploads_cleanup_due",
+      evidence_keys: "safety_evidence_object_keys_gin",
+      job_retention: "safety_jobs_cleanup_retention"
+    });
+
+    await applyDownMigration("014_report_upload_cleanup.sql");
+    const rollback = await migrationPool.query(
+      `SELECT
+         to_regclass('public.report_uploads') AS uploads,
+         to_regclass('public.safety_evidence_object_keys_gin') AS evidence_keys,
+         to_regclass('public.safety_jobs_cleanup_retention') AS job_retention,
+         to_regclass('public.safety_jobs') AS safety_jobs`
+    );
+    assert.deepEqual(rollback.rows[0], {
+      uploads: null,
+      evidence_keys: null,
+      job_retention: null,
+      safety_jobs: "safety_jobs"
+    });
+  });
+});
+
 async function seedLegacyReports(client) {
   await client.query(
     `INSERT INTO users (id, nickname)

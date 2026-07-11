@@ -1,21 +1,49 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createSafetyServerRuntime } from "../../src/server.js";
 
-test("feature-off runtime never starts a safety worker", async () => {
-  let workerStarts = 0;
+test("documents report upload and supplement abuse defaults with the final migration order", async () => {
+  const [environmentExample, deploymentPlan] = await Promise.all([
+    readFile(new URL("../../.env.example", import.meta.url), "utf8"),
+    readFile(new URL("../../../docs/superpowers/plans/2026-07-10-08-enforcement-deployment.md", import.meta.url), "utf8")
+  ]);
+  const defaults = [
+    "SAFETY_REPORT_UPLOAD_OUTSTANDING_MAX=24",
+    "SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H=60",
+    "SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H=40",
+    "SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H=120",
+    "SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE=10"
+  ];
+
+  for (const setting of defaults) {
+    assert.match(environmentExample, new RegExp(`^${setting}$`, "m"));
+    assert.ok(deploymentPlan.includes(setting));
+  }
+  assert.match(
+    deploymentPlan,
+    /013, core off, intake on\/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web\/root, 017 safety AI/
+  );
+});
+
+test("feature-off runtime starts only the report upload cleanup worker", async () => {
+  let workerOptions;
   const runtime = createRuntime({
     safety: { enabled: false, aiMode: "off" },
-    startSafetyWorker() {
-      workerStarts += 1;
+    startSafetyWorker(options) {
+      workerOptions = options;
       return { stop: async () => {} };
     }
   });
 
   await runtime.start({ port: 0, host: "127.0.0.1" });
-  assert.equal(workerStarts, 0);
-  await runtime.shutdown("test");
+  try {
+    assert.deepEqual(Object.keys(workerOptions?.handlers || {}), ["cleanup_report_upload"]);
+    assert.deepEqual(workerOptions?.deferredJobTypes, ["analyze_case", "review_revision", "case_received"]);
+  } finally {
+    await runtime.shutdown("test");
+  }
 });
 
 test("worker starts only after HTTP listen and AI-off case_received moves the case to manual review", async () => {
@@ -77,6 +105,42 @@ test("non-off case_received idempotently enqueues pending analyze_case without a
   assert.deepEqual(workerOptions.deferredJobTypes, ["analyze_case", "review_revision"]);
   assert.equal(workerOptions.handlers.analyze_case, undefined);
   await runtime.shutdown("test");
+});
+
+test("cleanup report upload worker deletes only unattached objects and retries deletion failures", async () => {
+  let workerOptions;
+  const attached = new Set(["report/u-reporter/2026-07-12/attached.jpg"]);
+  const deleted = [];
+  const runtime = createRuntime({
+    safety: { enabled: true, aiMode: "off" },
+    startSafetyWorker(options) {
+      workerOptions = options;
+      return { stop: async () => {} };
+    },
+    cleanupReportUpload: async (objectKey, { deleteObject }) => {
+      if (attached.has(objectKey)) return "preserve";
+      await deleteObject(objectKey);
+    },
+    deleteReportUpload: async (objectKey) => {
+      if (objectKey.endsWith("retry.jpg")) throw new Error("delete unavailable");
+      deleted.push(objectKey);
+    }
+  });
+
+  await runtime.start({ port: 0, host: "127.0.0.1" });
+  try {
+    const handler = workerOptions.handlers.cleanup_report_upload;
+    assert.equal(typeof handler, "function");
+    await handler({ payload: { objectKey: "report/u-reporter/2026-07-12/unattached.jpg" } });
+    await handler({ payload: { objectKey: "report/u-reporter/2026-07-12/attached.jpg" } });
+    await assert.rejects(
+      handler({ payload: { objectKey: "report/u-reporter/2026-07-12/retry.jpg" } }),
+      /delete unavailable/
+    );
+    assert.deepEqual(deleted, ["report/u-reporter/2026-07-12/unattached.jpg"]);
+  } finally {
+    await runtime.shutdown("test");
+  }
 });
 
 test("shutdown is ordered and repeated signals share cleanup while listeners stay active", async () => {

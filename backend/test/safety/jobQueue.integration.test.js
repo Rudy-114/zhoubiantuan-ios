@@ -117,6 +117,144 @@ test("applies thirty-second then two-minute retry delays before terminal failure
   assertDelay(secondRetry.run_at, 120);
 });
 
+test("terminal report cleanup is persistently reactivated only after a full cooldown", async () => {
+  await query("INSERT INTO users (id, nickname) VALUES ('cleanup-owner', 'Cleanup owner')");
+  const objectKey = "report/cleanup-owner/2026-07-12/long-outage.jpg";
+  await query(
+    `INSERT INTO report_uploads (object_key, owner_user_id, state, failure_count)
+     VALUES ($1, 'cleanup-owner', 'deleting', 5)`,
+    [objectKey]
+  );
+  const job = await enqueueSafetyJob({
+    type: "cleanup_report_upload",
+    uniqueKey: `cleanup_report_upload:${objectKey}`,
+    payload: { objectKey },
+    maxAttempts: 1
+  });
+  const [first] = await claimSafetyJobs({ limit: 1, workerId: "cleanup-first-cycle" });
+  const terminal = await failSafetyJob({
+    jobId: job.id,
+    workerId: "cleanup-first-cycle",
+    leaseAttempt: first.attempts,
+    error: new Error("long OSS outage")
+  });
+  assert.equal(terminal.status, "failed");
+
+  assert.deepEqual(await claimSafetyJobs({ limit: 1, workerId: "cleanup-too-soon" }), []);
+  await query("UPDATE safety_jobs SET updated_at = now() - interval '23 hours' WHERE id = $1", [job.id]);
+  assert.deepEqual(await claimSafetyJobs({ limit: 1, workerId: "cleanup-still-too-soon" }), []);
+  const before = await query(
+    "SELECT reactivation_count, last_reactivated_at FROM report_uploads WHERE object_key = $1",
+    [objectKey]
+  );
+  assert.deepEqual(before.rows[0], { reactivation_count: 0, last_reactivated_at: null });
+
+  await query("UPDATE safety_jobs SET updated_at = now() - interval '25 hours' WHERE id = $1", [job.id]);
+  const [reactivated] = await claimSafetyJobs({ limit: 1, workerId: "cleanup-second-cycle" });
+  assert.equal(reactivated.id, job.id);
+  assert.equal(reactivated.status, "running");
+  assert.equal(reactivated.attempts, 1);
+  const observed = await query(
+    `SELECT reactivation_count, last_reactivated_at IS NOT NULL AS has_reactivated_at
+     FROM report_uploads
+     WHERE object_key = $1`,
+    [objectKey]
+  );
+  assert.deepEqual(observed.rows[0], { reactivation_count: 1, has_reactivated_at: true });
+});
+
+test("report cleanup uses staged backoff without changing ordinary job retry delays", async () => {
+  const job = await enqueueSafetyJob({
+    type: "cleanup_report_upload",
+    uniqueKey: "cleanup_report_upload:report/retry-owner/2026-07-12/backoff.jpg",
+    payload: { objectKey: "report/retry-owner/2026-07-12/backoff.jpg" },
+    maxAttempts: 5
+  });
+  for (const [index, expectedDelay] of [300, 1_800, 7_200, 28_800].entries()) {
+    const [claimed] = await claimSafetyJobs({ limit: 1, workerId: "cleanup-backoff" });
+    assert.equal(claimed.id, job.id);
+    assert.equal(claimed.attempts, index + 1);
+    const retry = await failSafetyJob({
+      jobId: job.id,
+      workerId: "cleanup-backoff",
+      leaseAttempt: claimed.attempts,
+      error: new Error("untrusted provider outage")
+    });
+    assert.equal(retry.status, "pending");
+    assertDelay(retry.run_at, expectedDelay);
+    await query("UPDATE safety_jobs SET run_at = now() - interval '1 second' WHERE id = $1", [job.id]);
+  }
+});
+
+test("report cleanup retention prunes only old resolved jobs and preserves recoverable or recent work", async () => {
+  await query("INSERT INTO users (id, nickname) VALUES ('retention-owner', 'Retention owner')");
+  const fixtures = [
+    ["completed-old", "deleted", "completed", "31 days"],
+    ["failed-resolved-old", "attached", "failed", "31 days"],
+    ["failed-unresolved-old", "deleting", "failed", "31 days"],
+    ["completed-recent", "deleted", "completed", "2 days"]
+  ];
+  for (const [name, state, status, age] of fixtures) {
+    const objectKey = `report/retention-owner/2026-07-12/${name}.jpg`;
+    await query(
+      `INSERT INTO report_uploads (object_key, owner_user_id, state, deleted_at, attached_at, updated_at)
+       VALUES (
+         $1,
+         'retention-owner',
+         $2,
+         CASE WHEN $2 = 'deleted' THEN now() - ($3::text)::interval END,
+         CASE WHEN $2 = 'attached' THEN now() - ($3::text)::interval END,
+         now() - ($3::text)::interval
+       )`,
+      [objectKey, state, age]
+    );
+    await query(
+      `INSERT INTO safety_jobs (
+         job_type, unique_key, payload, status, attempts, max_attempts,
+         run_at, completed_at, error_code, error_summary, created_at, updated_at
+       ) VALUES (
+         'cleanup_report_upload',
+         $1,
+         jsonb_build_object('objectKey', $2::text),
+         $3,
+         CASE WHEN $3 = 'failed' THEN 5 ELSE 1 END,
+         5,
+         now() - ($4::text)::interval,
+         CASE WHEN $3 = 'completed' THEN now() - ($4::text)::interval END,
+         CASE WHEN $3 = 'failed' THEN 'SAFETY_JOB_FAILED' END,
+         CASE WHEN $3 = 'failed' THEN 'Safety job failed (SAFETY_JOB_FAILED).' END,
+         now() - ($4::text)::interval,
+         now() - ($4::text)::interval
+       )`,
+      [`cleanup_report_upload:${objectKey}`, objectKey, status, age]
+    );
+  }
+
+  await claimSafetyJobs({
+    limit: 1,
+    workerId: "cleanup-retention",
+    deferredJobTypes: ["cleanup_report_upload"]
+  });
+
+  const remaining = await query(
+    `SELECT replace(unique_key, 'cleanup_report_upload:report/retention-owner/2026-07-12/', '') AS name,
+            status, attempts
+     FROM safety_jobs
+     WHERE job_type = 'cleanup_report_upload'
+     ORDER BY name`
+  );
+  assert.deepEqual(remaining.rows, [
+    { name: "completed-recent.jpg", status: "completed", attempts: 1 },
+    { name: "failed-unresolved-old.jpg", status: "pending", attempts: 0 }
+  ]);
+  const unresolved = await query(
+    `SELECT reactivation_count, last_reactivated_at IS NOT NULL AS has_reactivated_at
+     FROM report_uploads
+     WHERE object_key LIKE '%/failed-unresolved-old.jpg'`
+  );
+  assert.deepEqual(unresolved.rows[0], { reactivation_count: 1, has_reactivated_at: true });
+});
+
 test("completes only for the current owner and clears its lock and error fields", async () => {
   const job = await enqueueSafetyJob({ type: "case_received", uniqueKey: "complete-1" });
   const [claimed] = await claimSafetyJobs({ limit: 1, workerId: "worker-current" });

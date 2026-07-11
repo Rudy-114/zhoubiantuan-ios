@@ -23,6 +23,14 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: MyReportsNavigationEntry.route) {
+                            SettingsRow(
+                                icon: MyReportsNavigationEntry.systemImage,
+                                title: MyReportsNavigationEntry.title
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
                         NavigationLink(destination: GeneralSettingsView()) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }

@@ -3,7 +3,11 @@ import test from "node:test";
 import { signToken } from "../../src/auth.js";
 import { createApp } from "../../src/app.js";
 import { config } from "../../src/config.js";
+import { withTransaction } from "../../src/db.js";
+import { enqueueSafetyJob } from "../../src/safety/jobQueue.js";
+import { createSafetyServerRuntime } from "../../src/server.js";
 import { safetyReportToClient } from "../../src/safety/reportMapper.js";
+import { cleanupRegisteredReportUpload, isReportUploadReferenced } from "../../src/safety/reportUploadCleanup.js";
 import { closeDatabase, pool, resetDatabase } from "../helpers/database.js";
 
 test.beforeEach(async () => {
@@ -72,6 +76,291 @@ test("maps case statuses and legacy rows to the strict public report shape", () 
     createdAt: "2026-07-10T00:00:00.000Z",
     updatedAt: "2026-07-10T00:00:00.000Z"
   });
+});
+
+test("report presign enqueues one delayed idempotent cleanup job", async () => {
+  await withServer(async (baseUrl) => {
+    const requestedAt = Date.now();
+    const presign = await request(baseUrl, "/api/uploads/presign", {
+      kind: "report",
+      filename: "supplement.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(presign.status, 200);
+    assert.match(presign.body.objectKey, /^report\/u-reporter\//);
+
+    const { rows } = await pool.query(
+      `SELECT job_type, unique_key, payload, run_at
+       FROM safety_jobs
+       WHERE job_type = 'cleanup_report_upload'`
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].unique_key, `cleanup_report_upload:${presign.body.objectKey}`);
+    assert.deepEqual(rows[0].payload, { objectKey: presign.body.objectKey });
+    assert.ok(new Date(rows[0].run_at).getTime() >= requestedAt + (23 * 60 * 60 * 1000));
+    assert.equal(await isReportUploadReferenced(presign.body.objectKey), false);
+    const pendingUpload = await pool.query("SELECT state FROM report_uploads WHERE object_key = $1", [presign.body.objectKey]);
+    assert.equal(pendingUpload.rows[0].state, "pending");
+
+    const attached = await request(baseUrl, "/api/reports", reportInput({
+      clientRequestID: "cleanup-attached-report",
+      objectKeys: [presign.body.objectKey]
+    }));
+    assert.equal(attached.status, 201);
+    assert.equal(await isReportUploadReferenced(presign.body.objectKey), true);
+    const attachedUpload = await pool.query("SELECT state FROM report_uploads WHERE object_key = $1", [presign.body.objectKey]);
+    assert.equal(attachedUpload.rows[0].state, "attached");
+    let deleteCalls = 0;
+    const cleanupDecision = await cleanupRegisteredReportUpload(presign.body.objectKey, {
+      transaction: withTransaction,
+      deleteObject: async () => { deleteCalls += 1; }
+    });
+    assert.equal(cleanupDecision, "preserve");
+    assert.equal(deleteCalls, 0);
+
+    const duplicateInput = {
+      type: "cleanup_report_upload",
+      uniqueKey: rows[0].unique_key,
+      payload: rows[0].payload,
+      runAt: rows[0].run_at
+    };
+    const firstDuplicate = await enqueueSafetyJob(duplicateInput);
+    const secondDuplicate = await enqueueSafetyJob(duplicateInput);
+    assert.equal(firstDuplicate.id, secondDuplicate.id);
+    assert.equal(
+      (await pool.query("SELECT count(*)::int AS count FROM safety_jobs WHERE unique_key = $1", [rows[0].unique_key])).rows[0].count,
+      1
+    );
+  });
+});
+
+test("report presign bounds random outstanding uploads without limiting ordinary uploads", async () => {
+  await withSafetyConfig({ reportUploadOutstandingMax: 3 }, () => withServer(async (baseUrl) => {
+    const reportPresigns = [];
+    for (let index = 0; index < 4; index += 1) {
+      reportPresigns.push(await request(baseUrl, "/api/uploads/presign", {
+        kind: "report",
+        filename: `flood-${index}.jpg`,
+        contentType: "image/jpeg"
+      }));
+    }
+
+    assert.deepEqual(reportPresigns.map((response) => response.status), [200, 200, 200, 429]);
+    assert.equal(reportPresigns[3].body.code, "report_upload_quota");
+    assert.equal(new Set(reportPresigns.slice(0, 3).map((response) => response.body.objectKey)).size, 3);
+    const bounded = await pool.query(
+      `SELECT
+         (SELECT count(*)::int FROM report_uploads WHERE owner_user_id = 'u-reporter') AS uploads,
+         (SELECT count(*)::int FROM safety_jobs WHERE job_type = 'cleanup_report_upload') AS jobs`
+    );
+    assert.deepEqual(bounded.rows[0], { uploads: 3, jobs: 3 });
+
+    const ordinary = await request(baseUrl, "/api/uploads/presign", {
+      kind: "post",
+      filename: "ordinary.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(ordinary.status, 200);
+    assert.match(ordinary.body.objectKey, /^post\/u-reporter\//);
+  }));
+});
+
+test("report presign daily issuance cap is not released when uploads become attached", async () => {
+  await withSafetyConfig({ reportUploadOutstandingMax: 1, reportUploadAccountMax24h: 2 }, () => withServer(async (baseUrl) => {
+    const report = await request(baseUrl, "/api/reports", reportInput({ clientRequestID: "issuance-root" }));
+    assert.equal(report.status, 201);
+    for (let index = 0; index < 2; index += 1) {
+      const presign = await request(baseUrl, "/api/uploads/presign", {
+        kind: "report",
+        filename: `issuance-${index}.jpg`,
+        contentType: "image/jpeg"
+      });
+      assert.equal(presign.status, 200);
+      const attached = await request(baseUrl, `/api/reports/${report.body.report.id}/evidence`, {
+        clientRequestID: `issuance-supplement-${index}`,
+        objectKeys: [presign.body.objectKey]
+      });
+      assert.equal(attached.status, 201);
+    }
+
+    const limited = await request(baseUrl, "/api/uploads/presign", {
+      kind: "report",
+      filename: "issuance-over-limit.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(limited.status, 429);
+    assert.equal(limited.body.code, "report_upload_rate_limited");
+    const issued = await pool.query(
+      "SELECT count(*)::int AS count FROM report_uploads WHERE owner_user_id = 'u-reporter'"
+    );
+    assert.equal(issued.rows[0].count, 2);
+
+    const ordinary = await request(baseUrl, "/api/uploads/presign", {
+      kind: "message",
+      filename: "ordinary-message.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(ordinary.status, 200);
+    assert.match(ordinary.body.objectKey, /^message\/u-reporter\//);
+  }));
+});
+
+test("cleanup winning the object race rejects a concurrent attachment before deleting", async () => {
+  await withServer(async (baseUrl) => {
+    const report = await request(baseUrl, "/api/reports", reportInput({ clientRequestID: "cleanup-race-root" }));
+    assert.equal(report.status, 201);
+    const presign = await request(baseUrl, "/api/uploads/presign", {
+      kind: "report",
+      filename: "cleanup-race.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(presign.status, 200);
+    await pool.query(
+      `INSERT INTO report_uploads (object_key, owner_user_id)
+       VALUES ($1, 'u-reporter')
+       ON CONFLICT (object_key) DO NOTHING`,
+      [presign.body.objectKey]
+    );
+
+    const deleteEntered = deferred();
+    const releaseDelete = deferred();
+    const deleted = [];
+    let workerOptions;
+    const cleanupRuntime = createCleanupRuntime({
+      startSafetyWorker(options) {
+        workerOptions = options;
+        return { stop: async () => {} };
+      },
+      async deleteReportUpload(objectKey) {
+        deleteEntered.resolve();
+        await releaseDelete.promise;
+        deleted.push(objectKey);
+      }
+    });
+    let cleanupPromise;
+    await cleanupRuntime.start({ port: 0, host: "127.0.0.1" });
+    try {
+      cleanupPromise = workerOptions.handlers.cleanup_report_upload({
+        payload: { objectKey: presign.body.objectKey }
+      });
+      await deleteEntered.promise;
+      let attachment;
+      try {
+        attachment = await request(baseUrl, `/api/reports/${report.body.report.id}/evidence`, {
+          clientRequestID: "cleanup-race-supplement",
+          detail: "This request must not attach a key that cleanup owns.",
+          objectKeys: [presign.body.objectKey]
+        });
+      } finally {
+        releaseDelete.resolve();
+        await cleanupPromise;
+      }
+
+      assert.equal(attachment.status, 409);
+      assert.equal(attachment.body.code, "report_upload_unavailable");
+      assert.deepEqual(deleted, [presign.body.objectKey]);
+      const state = await pool.query("SELECT state FROM report_uploads WHERE object_key = $1", [presign.body.objectKey]);
+      assert.equal(state.rows[0].state, "deleted");
+      const references = await pool.query(
+        "SELECT count(*)::int AS count FROM safety_evidence WHERE object_keys @> ARRAY[$1]::text[]",
+        [presign.body.objectKey]
+      );
+      assert.equal(references.rows[0].count, 0);
+    } finally {
+      releaseDelete.resolve();
+      await cleanupPromise?.catch(() => {});
+      await cleanupRuntime.shutdown("test");
+    }
+  });
+});
+
+test("cleanup keeps a failed deletion recoverable and marks deleted only after a later success", async () => {
+  await withServer(async (baseUrl) => {
+    const presign = await request(baseUrl, "/api/uploads/presign", {
+      kind: "report",
+      filename: "cleanup-retry.jpg",
+      contentType: "image/jpeg"
+    });
+    assert.equal(presign.status, 200);
+
+    await assert.rejects(
+      cleanupRegisteredReportUpload(presign.body.objectKey, {
+        transaction: withTransaction,
+        deleteObject: async () => { throw new Error("temporary delete outage"); }
+      }),
+      /temporary delete outage/
+    );
+    const failed = await pool.query(
+      `SELECT state, failure_count, deleted_at
+       FROM report_uploads
+       WHERE object_key = $1`,
+      [presign.body.objectKey]
+    );
+    assert.equal(failed.rows[0].state, "deleting");
+    assert.equal(failed.rows[0].failure_count, 1);
+    assert.equal(failed.rows[0].deleted_at, null);
+
+    await cleanupRegisteredReportUpload(presign.body.objectKey, {
+      transaction: withTransaction,
+      deleteObject: async () => ({ deleted: true, alreadyMissing: false })
+    });
+    const recovered = await pool.query(
+      `SELECT state, failure_count, deleted_at IS NOT NULL AS has_deleted_at
+       FROM report_uploads
+       WHERE object_key = $1`,
+      [presign.body.objectKey]
+    );
+    assert.deepEqual(recovered.rows[0], {
+      state: "deleted",
+      failure_count: 1,
+      has_deleted_at: true
+    });
+  });
+});
+
+test("rejects an owned-looking report object key that was never registered", async () => {
+  await withServer(async (baseUrl) => {
+    const report = await request(baseUrl, "/api/reports", reportInput({ clientRequestID: "unregistered-root" }));
+    assert.equal(report.status, 201);
+    const before = await pool.query("SELECT count(*)::int AS count FROM safety_evidence");
+
+    const supplement = await request(baseUrl, `/api/reports/${report.body.report.id}/evidence`, {
+      clientRequestID: "unregistered-supplement",
+      detail: "A path prefix alone must not prove that an upload exists.",
+      objectKeys: ["report/u-reporter/2026-07-12/never-presigned.jpg"]
+    });
+
+    assert.equal(supplement.status, 409);
+    assert.equal(supplement.body.code, "report_upload_unavailable");
+    const after = await pool.query("SELECT count(*)::int AS count FROM safety_evidence");
+    assert.equal(after.rows[0].count, before.rows[0].count);
+  });
+});
+
+test("evidence supplement has independent account abuse limits", async () => {
+  await withSafetyConfig({
+    reportSupplementAccountMax24h: 2,
+    reportSupplementIpMax24h: 20,
+    reportSupplementBurstMaxMinute: 20
+  }, () => withServer(async (baseUrl) => {
+    const report = await request(baseUrl, "/api/reports", reportInput({ clientRequestID: "supplement-limit-root" }));
+    assert.equal(report.status, 201);
+    const responses = [];
+    for (let index = 0; index < 3; index += 1) {
+      responses.push(await request(baseUrl, `/api/reports/${report.body.report.id}/evidence`, {
+        clientRequestID: `supplement-limit-${index}`,
+        detail: `Supplement ${index}`
+      }));
+    }
+
+    assert.deepEqual(responses.map((response) => response.status), [201, 201, 429]);
+    assert.equal(responses[2].body.code, "report_supplement_rate_limited");
+    const evidence = await pool.query(
+      "SELECT count(*)::int AS count FROM safety_evidence WHERE report_id = $1",
+      [report.body.report.id]
+    );
+    assert.equal(evidence.rows[0].count, 3);
+  }));
 });
 
 test("accepts a first safety report for every supported source type", async () => {
@@ -198,6 +487,10 @@ test("uses one forbidden response for invisible direct messages while preserving
 
 test("deduplicates an exact request and adds immutable evidence for a new pending request", async () => {
   await pool.query("UPDATE posts SET image_object_keys = ARRAY['post/u-owner/2026-07-10/source.png']::text[] WHERE id = 'post-1'");
+  await seedRegisteredReportUploads([
+    "report/u-reporter/2026-07-10/first.png",
+    "report/u-reporter/2026-07-10/supplement.png"
+  ]);
   await withServer(async (baseUrl) => {
     const first = await request(baseUrl, "/api/reports", reportInput({
       clientRequestID: "first-request",
@@ -447,6 +740,7 @@ test("waits for a locked case transition and never inserts a report into the ter
 });
 
 test("accepts one controlled evidence supplement and handles ownership, validation, terminal state, and exact retries", async () => {
+  await seedRegisteredReportUploads(["report/u-reporter/2026-07-10/support.png"]);
   await withServer(async (baseUrl) => {
     const created = await request(baseUrl, "/api/reports", reportInput({ clientRequestID: "evidence-root" }));
     const reportID = created.body.report.id;
@@ -640,6 +934,26 @@ async function withServer(callback) {
   }
 }
 
+function createCleanupRuntime(overrides = {}) {
+  return createSafetyServerRuntime({
+    app: (_request, response) => response.end(),
+    runtimeConfig: { port: 0, safety: { enabled: false, aiMode: "off" } },
+    attachRealtime: () => ({ close: async () => {} }),
+    startRateLimitEventPruner: () => null,
+    startSyncEventPruner: () => null,
+    clearInterval() {},
+    pool: { end: async () => {} },
+    logger: { info() {}, error() {} },
+    ...overrides
+  });
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((fulfill) => { resolve = fulfill; });
+  return { promise, resolve };
+}
+
 async function request(baseUrl, path, body, { userID = "u-reporter", ip = null } = {}) {
   const headers = {
     authorization: `Bearer ${signToken({ id: userID, email: `${userID}@example.test` })}`,
@@ -755,4 +1069,14 @@ async function seedReportTargets() {
     `INSERT INTO direct_messages (id, thread_id, sender_id, body)
      VALUES ('message-1', 'thread-1', 'u-dm-sender', 'Report direct message')`
   );
+}
+
+async function seedRegisteredReportUploads(objectKeys, ownerUserID = "u-reporter") {
+  for (const objectKey of objectKeys) {
+    await pool.query(
+      `INSERT INTO report_uploads (object_key, owner_user_id)
+       VALUES ($1, $2)`,
+      [objectKey, ownerUserID]
+    );
+  }
 }

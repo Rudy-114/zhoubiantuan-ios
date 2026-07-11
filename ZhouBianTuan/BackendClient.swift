@@ -797,30 +797,48 @@ final class AliyunBackendClient {
         try await uploadImages(token: token, images: images, kind: "report", filenamePrefix: "report-evidence")
     }
 
+    func uploadReportImage(token: String, data: Data, index: Int) async throws -> String {
+        try await uploadImage(
+            token: token,
+            data: data,
+            kind: "report",
+            filename: "report-evidence-\(index).jpg"
+        )
+    }
+
     private func uploadImages(token: String, images: [Data], kind: String, filenamePrefix: String) async throws -> [String] {
         var keys: [String] = []
         for (index, data) in images.enumerated() {
-            let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
-                "kind": kind,
-                "filename": "\(filenamePrefix)-\(index).jpg",
-                "contentType": "image/jpeg"
-            ])
-            guard let uploadURL = URL(string: target.uploadUrl) else {
-                throw NSError(domain: "AliyunBackendClient", code: -1000, userInfo: [NSLocalizedDescriptionKey: "上传地址无效"])
-            }
-            var request = URLRequest(url: uploadURL)
-            request.httpMethod = "PUT"
-            request.timeoutInterval = 45
-            request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-            do {
-                let (_, response) = try await session.upload(for: request, from: data)
-                try validate(response: response, data: Data())
-            } catch let error as URLError where error.code == .timedOut {
-                throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "图片上传超时，请换个网络或稍后重试"])
-            }
-            keys.append(target.objectKey)
+            keys.append(try await uploadImage(
+                token: token,
+                data: data,
+                kind: kind,
+                filename: "\(filenamePrefix)-\(index).jpg"
+            ))
         }
         return keys
+    }
+
+    private func uploadImage(token: String, data: Data, kind: String, filename: String) async throws -> String {
+        let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
+            "kind": kind,
+            "filename": filename,
+            "contentType": "image/jpeg"
+        ])
+        guard let uploadURL = URL(string: target.uploadUrl) else {
+            throw NSError(domain: "AliyunBackendClient", code: -1000, userInfo: [NSLocalizedDescriptionKey: "上传地址无效"])
+        }
+        var request = URLRequest(url: uploadURL)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 45
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        do {
+            let (_, response) = try await session.upload(for: request, from: data)
+            try validate(response: response, data: Data())
+        } catch let error as URLError where error.code == .timedOut {
+            throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "图片上传超时，请换个网络或稍后重试"])
+        }
+        return target.objectKey
     }
 
     private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {

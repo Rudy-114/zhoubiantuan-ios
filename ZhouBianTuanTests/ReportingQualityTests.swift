@@ -370,6 +370,1048 @@ final class ReportingQualityTests: XCTestCase {
     }
 
     @MainActor
+    func testMyReportsLoadsEmptyRefreshesAndRetainsRowsAfterRefreshFailure() async throws {
+        let firstRequestStarted = expectation(description: "initial my reports request started")
+        let releaseFirstRequest = DispatchSemaphore(value: 0)
+        let reportCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            XCTAssertEqual(request.url?.path, "/api/me/reports")
+            switch reportCalls.next() {
+            case 1:
+                firstRequestStarted.fulfill()
+                _ = releaseFirstRequest.wait(timeout: .now() + 5)
+                return .json(#"{"reports":[]}"#)
+            case 2:
+                return .json(
+                    """
+                    {
+                      "reports": [
+                        {
+                          "id": "rp-refresh",
+                          "caseID": "case-private",
+                          "sourceType": "post",
+                          "sourceID": "post-private",
+                          "subjectType": "post",
+                          "subjectID": "post-private",
+                          "reasonCode": "other",
+                          "reportedField": "content",
+                          "detail": "details",
+                          "status": "received",
+                          "createdAt": "2026-07-11T01:00:00.000Z",
+                          "updatedAt": "2026-07-11T02:00:00.000Z"
+                        }
+                      ]
+                    }
+                    """
+                )
+            case 3:
+                return .json(
+                    statusCode: 500,
+                    #"{"error":"举报列表暂时不可用","code":"reports_unavailable"}"#
+                )
+            default:
+                return .json(
+                    """
+                    {
+                      "reports": [
+                        {
+                          "id": "rp-refresh",
+                          "caseID": "case-private",
+                          "sourceType": "post",
+                          "sourceID": "post-private",
+                          "subjectType": "post",
+                          "subjectID": "post-private",
+                          "reasonCode": "other",
+                          "reportedField": "content",
+                          "detail": "details",
+                          "status": "reviewing",
+                          "createdAt": "2026-07-11T01:00:00.000Z",
+                          "updatedAt": "2026-07-11T03:00:00.000Z"
+                        }
+                      ]
+                    }
+                    """
+                )
+            }
+        }
+        let store = makeStore()
+
+        let initialLoad = Task { @MainActor in
+            await store.refreshMyReports()
+        }
+        await fulfillment(of: [firstRequestStarted], timeout: 2)
+        XCTAssertTrue(store.isLoadingMyReports)
+        releaseFirstRequest.signal()
+
+        let initialLoadSucceeded = await initialLoad.value
+        XCTAssertTrue(initialLoadSucceeded)
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        XCTAssertNil(store.myReportsErrorMessage)
+        XCTAssertEqual(MyReportsPresentation.emptyText, "还没有提交过举报")
+
+        let refreshSucceeded = await store.refreshMyReports()
+        XCTAssertTrue(refreshSucceeded)
+        XCTAssertEqual(store.safetyReports.map(\.id), ["rp-refresh"])
+        let retainedReports = store.safetyReports
+
+        let failedRefreshSucceeded = await store.refreshMyReports()
+        XCTAssertFalse(failedRefreshSucceeded)
+        XCTAssertEqual(store.safetyReports, retainedReports)
+        XCTAssertEqual(store.myReportsErrorMessage, "举报列表暂时不可用")
+
+        let retrySucceeded = await store.refreshMyReports()
+        XCTAssertTrue(retrySucceeded)
+        XCTAssertEqual(store.safetyReports.map(\.status), [.reviewing])
+        XCTAssertNil(store.myReportsErrorMessage)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/me/reports" }.count,
+            4
+        )
+    }
+
+    @MainActor
+    func testAuthoritativeMyReportsRefreshAcceptsEqualTimestampStatusChangesWithoutAllowingOlderConservativePayloads() async throws {
+        let updatedAt = "2026-07-11T02:00:00.000Z"
+        let responseCount = LockedCounter()
+        func reportsEnvelope(_ statuses: [(id: String, status: String)]) throws -> String {
+            let reports = statuses.map { item in
+                [
+                    "id": item.id,
+                    "caseID": "case-private",
+                    "sourceType": "post",
+                    "sourceID": "post-private",
+                    "subjectType": "post",
+                    "subjectID": "post-private",
+                    "reasonCode": "other",
+                    "reportedField": "content",
+                    "detail": "details",
+                    "status": item.status,
+                    "createdAt": "2026-07-11T01:00:00.000Z",
+                    "updatedAt": updatedAt
+                ]
+            }
+            let data = try JSONSerialization.data(withJSONObject: ["reports": reports])
+            return String(decoding: data, as: UTF8.self)
+        }
+        let firstRefresh = try reportsEnvelope([
+            ("rp-reviewing", "reviewing"),
+            ("rp-handled", "handled"),
+            ("rp-no-violation", "no_violation")
+        ])
+        let reopenedRefresh = try reportsEnvelope([
+            ("rp-reviewing", "reviewing"),
+            ("rp-handled", "reviewing"),
+            ("rp-no-violation", "no_violation")
+        ])
+        URLProtocolStub.setHandler { request in
+            XCTAssertEqual(request.url?.path, "/api/me/reports")
+            return .json(responseCount.next() == 1 ? firstRefresh : reopenedRefresh)
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(id: "rp-reviewing", status: .received, updatedAt: updatedAt),
+            makeReport(id: "rp-handled", status: .received, updatedAt: updatedAt),
+            makeReport(id: "rp-no-violation", status: .received, updatedAt: updatedAt)
+        ])
+
+        let firstRefreshSucceeded = await store.refreshMyReports()
+        XCTAssertTrue(firstRefreshSucceeded)
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: store.safetyReports.map { ($0.id, $0.status) }),
+            [
+                "rp-reviewing": .reviewing,
+                "rp-handled": .handled,
+                "rp-no-violation": .noViolation
+            ]
+        )
+        XCTAssertTrue(MyReportsPresentation.canSupplementEvidence(status: store.safetyReports.first { $0.id == "rp-reviewing" }!.status))
+        XCTAssertFalse(MyReportsPresentation.canSupplementEvidence(status: store.safetyReports.first { $0.id == "rp-handled" }!.status))
+        XCTAssertFalse(MyReportsPresentation.canSupplementEvidence(status: store.safetyReports.first { $0.id == "rp-no-violation" }!.status))
+
+        store.mergeSafetyReports([
+            makeReport(id: "rp-reviewing", status: .handled, updatedAt: "2026-07-11T01:30:00.000Z"),
+            makeReport(id: "rp-handled", status: .reviewing, updatedAt: "2026-07-11T01:30:00.000Z"),
+            makeReport(id: "rp-no-violation", status: .received, updatedAt: "2026-07-11T01:30:00.000Z")
+        ])
+        XCTAssertEqual(store.safetyReports.first { $0.id == "rp-reviewing" }?.status, .reviewing)
+        XCTAssertEqual(store.safetyReports.first { $0.id == "rp-handled" }?.status, .handled)
+        XCTAssertEqual(store.safetyReports.first { $0.id == "rp-no-violation" }?.status, .noViolation)
+
+        let reopenedRefreshSucceeded = await store.refreshMyReports()
+        XCTAssertTrue(reopenedRefreshSucceeded)
+        XCTAssertEqual(store.safetyReports.first { $0.id == "rp-handled" }?.status, .reviewing)
+        XCTAssertTrue(MyReportsPresentation.canSupplementEvidence(status: store.safetyReports.first { $0.id == "rp-handled" }!.status))
+    }
+
+    @MainActor
+    func testLaterAuthoritativeMyReportsSuccessPreventsDelayedEarlierSuccessFromRegressingStatus() async {
+        let firstReportsRequestStarted = expectation(description: "first reports request started")
+        let releaseFirstReportsRequest = DispatchSemaphore(value: 0)
+        let reportsCallCount = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/sync":
+                return .json(Self.safetySyncPayload)
+            case "/api/me/reports":
+                if reportsCallCount.next() == 1 {
+                    firstReportsRequestStarted.fulfill()
+                    _ = releaseFirstReportsRequest.wait(timeout: .now() + 5)
+                    return .json(Self.myReportsEnvelope(status: .received))
+                }
+                return .json(Self.myReportsEnvelope(status: .handled))
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        SyncCursorStore.set("cursor-before", for: store.currentUserID)
+
+        let delayedRefresh = Task { @MainActor in
+            await store.refreshMyReports()
+        }
+        await fulfillment(of: [firstReportsRequestStarted], timeout: 2)
+
+        let syncSucceeded = await store.syncFromBackend(reason: "quality-test.concurrent-reports")
+        XCTAssertTrue(syncSucceeded)
+        XCTAssertEqual(store.safetyReports.first?.status, .handled)
+        XCTAssertFalse(
+            MyReportsPresentation.canSupplementEvidence(
+                status: store.safetyReports.first?.status ?? .received
+            )
+        )
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+
+        releaseFirstReportsRequest.signal()
+        let delayedRefreshSucceeded = await delayedRefresh.value
+
+        XCTAssertTrue(delayedRefreshSucceeded)
+        XCTAssertEqual(store.safetyReports.map(\.id), ["rp-concurrent"])
+        XCTAssertEqual(store.safetyReports.first?.status, .handled)
+        XCTAssertFalse(
+            MyReportsPresentation.canSupplementEvidence(
+                status: store.safetyReports.first?.status ?? .received
+            )
+        )
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+    }
+
+    @MainActor
+    func testWinningSyncReleasesOlderPageLoadingWithoutLettingOldDeferClearNewOwner() async {
+        let firstRequestStarted = expectation(description: "old page refresh started")
+        let thirdRequestStarted = expectation(description: "new page refresh started")
+        let releaseFirstRequest = DispatchSemaphore(value: 0)
+        let releaseThirdRequest = DispatchSemaphore(value: 0)
+        let reportCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/sync":
+                return .json(Self.safetySyncPayload)
+            case "/api/me/reports":
+                switch reportCalls.next() {
+                case 1:
+                    firstRequestStarted.fulfill()
+                    _ = releaseFirstRequest.wait(timeout: .now() + 5)
+                    return .json(Self.myReportsEnvelope(status: .received))
+                case 2:
+                    return .json(Self.myReportsEnvelope(status: .handled))
+                default:
+                    thirdRequestStarted.fulfill()
+                    _ = releaseThirdRequest.wait(timeout: .now() + 5)
+                    return .json(Self.myReportsEnvelope(status: .reviewing))
+                }
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        SyncCursorStore.set("cursor-before", for: store.currentUserID)
+
+        let oldRefresh = Task { @MainActor in await store.refreshMyReports() }
+        await fulfillment(of: [firstRequestStarted], timeout: 2)
+        XCTAssertTrue(store.isLoadingMyReports)
+
+        let syncSucceeded = await store.syncFromBackend(reason: "quality-test.loading-owner")
+        XCTAssertTrue(syncSucceeded)
+        XCTAssertEqual(store.safetyReports.first?.status, .handled)
+        XCTAssertFalse(store.isLoadingMyReports)
+
+        let newRefresh = Task { @MainActor in await store.refreshMyReports() }
+        await fulfillment(of: [thirdRequestStarted], timeout: 1)
+        XCTAssertTrue(store.isLoadingMyReports)
+
+        releaseFirstRequest.signal()
+        let oldRefreshSucceeded = await oldRefresh.value
+        XCTAssertTrue(oldRefreshSucceeded)
+        XCTAssertTrue(store.isLoadingMyReports)
+
+        releaseThirdRequest.signal()
+        let newRefreshSucceeded = await newRefresh.value
+        XCTAssertTrue(newRefreshSucceeded)
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertEqual(store.safetyReports.first?.status, .reviewing)
+    }
+
+    @MainActor
+    func testCancelledMyReportsLoadShowsNoErrorAndDoesNotBlockImmediateReentry() async {
+        let reportCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            XCTAssertEqual(request.url?.path, "/api/me/reports")
+            if reportCalls.next() == 1 {
+                throw URLError(.cancelled)
+            }
+            return .json(#"{"reports":[]}"#)
+        }
+        let store = makeStore()
+
+        let cancelledSucceeded = await store.refreshMyReports()
+
+        XCTAssertFalse(cancelledSucceeded)
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertFalse(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+
+        let reentrySucceeded = await store.refreshMyReports()
+
+        XCTAssertTrue(reentrySucceeded)
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/me/reports" }.count,
+            2
+        )
+    }
+
+    @MainActor
+    func testCancelledPageRequestCanBeSupersededBeforeOldDeferRuns() async {
+        let firstRequestStarted = expectation(description: "old page request started")
+        let secondRequestStarted = expectation(description: "replacement page request started")
+        let releaseFirstRequest = DispatchSemaphore(value: 0)
+        let reportCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            XCTAssertEqual(request.url?.path, "/api/me/reports")
+            if reportCalls.next() == 1 {
+                firstRequestStarted.fulfill()
+                _ = releaseFirstRequest.wait(timeout: .now() + 5)
+                return .json(Self.myReportsEnvelope(status: .received))
+            }
+            secondRequestStarted.fulfill()
+            return .json(Self.myReportsEnvelope(status: .handled))
+        }
+        let store = makeStore()
+
+        let oldTask = Task { @MainActor in await store.refreshMyReports() }
+        await fulfillment(of: [firstRequestStarted], timeout: 2)
+        XCTAssertTrue(store.isLoadingMyReports)
+        oldTask.cancel()
+
+        let replacementTask = Task { @MainActor in await store.refreshMyReports() }
+        await fulfillment(of: [secondRequestStarted], timeout: 1)
+        let replacementSucceeded = await replacementTask.value
+        XCTAssertTrue(replacementSucceeded)
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertEqual(store.safetyReports.first?.status, .handled)
+
+        releaseFirstRequest.signal()
+        _ = await oldTask.value
+        XCTAssertFalse(store.isLoadingMyReports)
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertEqual(store.safetyReports.first?.status, .handled)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/me/reports" }.count,
+            2
+        )
+    }
+
+    @MainActor
+    func testDelayedEarlierMyReportsFailureDoesNotOverwriteLaterAuthoritativeSuccess() async {
+        let firstReportsRequestStarted = expectation(description: "first reports request started")
+        let releaseFirstReportsRequest = DispatchSemaphore(value: 0)
+        let reportsCallCount = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/sync":
+                return .json(Self.safetySyncPayload)
+            case "/api/me/reports":
+                if reportsCallCount.next() == 1 {
+                    firstReportsRequestStarted.fulfill()
+                    _ = releaseFirstReportsRequest.wait(timeout: .now() + 5)
+                    return .json(
+                        statusCode: 500,
+                        #"{"error":"旧请求失败","code":"stale_reports_failure"}"#
+                    )
+                }
+                return .json(#"{"reports":[]}"#)
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        SyncCursorStore.set("cursor-before", for: store.currentUserID)
+
+        let delayedRefresh = Task { @MainActor in
+            await store.refreshMyReports()
+        }
+        await fulfillment(of: [firstReportsRequestStarted], timeout: 2)
+
+        let syncSucceeded = await store.syncFromBackend(reason: "quality-test.concurrent-reports")
+        XCTAssertTrue(syncSucceeded)
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+
+        releaseFirstReportsRequest.signal()
+        let delayedRefreshSucceeded = await delayedRefresh.value
+
+        XCTAssertFalse(delayedRefreshSucceeded)
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+    }
+
+    @MainActor
+    func testEarlierAuthoritativeMyReportsSuccessStillCommitsWhenLaterRequestFails() async {
+        let firstReportsRequestStarted = expectation(description: "first reports request started")
+        let releaseFirstReportsRequest = DispatchSemaphore(value: 0)
+        let reportsCallCount = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/sync":
+                return .json(Self.safetySyncPayload)
+            case "/api/me/reports":
+                if reportsCallCount.next() == 1 {
+                    firstReportsRequestStarted.fulfill()
+                    _ = releaseFirstReportsRequest.wait(timeout: .now() + 5)
+                    return .json(Self.myReportsEnvelope(status: .reviewing))
+                }
+                return .json(
+                    statusCode: 500,
+                    #"{"error":"新请求失败","code":"newer_reports_failure"}"#
+                )
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        SyncCursorStore.set("cursor-before", for: store.currentUserID)
+
+        let delayedRefresh = Task { @MainActor in
+            await store.refreshMyReports()
+        }
+        await fulfillment(of: [firstReportsRequestStarted], timeout: 2)
+
+        let syncSucceeded = await store.syncFromBackend(reason: "quality-test.concurrent-reports")
+        XCTAssertFalse(syncSucceeded)
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        XCTAssertFalse(store.hasFinishedMyReportsLoad)
+
+        releaseFirstReportsRequest.signal()
+        let delayedRefreshSucceeded = await delayedRefresh.value
+
+        XCTAssertTrue(delayedRefreshSucceeded)
+        XCTAssertEqual(store.safetyReports.map(\.id), ["rp-concurrent"])
+        XCTAssertEqual(store.safetyReports.first?.status, .reviewing)
+        XCTAssertTrue(
+            MyReportsPresentation.canSupplementEvidence(
+                status: store.safetyReports.first?.status ?? .handled
+            )
+        )
+        XCTAssertTrue(store.hasFinishedMyReportsLoad)
+        XCTAssertNil(store.myReportsErrorMessage)
+    }
+
+    @MainActor
+    func testSupplementTimeoutRetryKeepsOriginalPayloadForSameRequestID() async throws {
+        let presignCalls = LockedCounter()
+        let appendCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                let ordinal = presignCalls.next()
+                return .json(
+                    """
+                    {"objectKey":"report/u-me/2026-07-12/evidence-\(ordinal).jpg","uploadUrl":"https://upload.invalid/evidence-\(ordinal).jpg"}
+                    """
+                )
+            case let path? where path.hasPrefix("/evidence-"):
+                return URLProtocolStub.StubResponse(
+                    statusCode: 200,
+                    headers: ["ETag": "uploaded"],
+                    body: Data()
+                )
+            case "/api/reports/rp-existing/evidence":
+                if appendCalls.next() == 1 {
+                    throw URLError(.timedOut)
+                }
+                return .json(
+                    """
+                    {
+                      "report": {
+                        "id": "rp-existing",
+                        "caseID": "case-private",
+                        "sourceType": "post",
+                        "sourceID": "post-private",
+                        "subjectType": "post",
+                        "subjectID": "post-private",
+                        "reasonCode": "other",
+                        "reportedField": "content",
+                        "detail": "details",
+                        "status": "reviewing",
+                        "createdAt": "2026-07-11T01:00:00.000Z",
+                        "updatedAt": "2026-07-11T03:00:00.000Z"
+                      },
+                      "duplicate": true
+                    }
+                    """
+                )
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let firstSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-timeout-fixed",
+            detail: "  original detail  ",
+            imageData: [Data([0x01, 0x02]), Data([0x03, 0x04])]
+        )
+        let retrySucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-timeout-fixed",
+            detail: "changed detail",
+            imageData: [Data([0x09])]
+        )
+
+        XCTAssertFalse(firstSucceeded)
+        XCTAssertTrue(retrySucceeded)
+        let appendBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(appendBodies.count, 2)
+        XCTAssertEqual(appendBodies[0]["clientRequestID"] as? String, "supplement-timeout-fixed")
+        XCTAssertEqual(appendBodies[1]["clientRequestID"] as? String, "supplement-timeout-fixed")
+        XCTAssertEqual(appendBodies[0]["detail"] as? String, "original detail")
+        XCTAssertEqual(appendBodies[1]["detail"] as? String, "original detail")
+        XCTAssertEqual(
+            appendBodies[0]["objectKeys"] as? [String],
+            [
+                "report/u-me/2026-07-12/evidence-1.jpg",
+                "report/u-me/2026-07-12/evidence-2.jpg"
+            ]
+        )
+        XCTAssertEqual(
+            appendBodies[1]["objectKeys"] as? [String],
+            [
+                "report/u-me/2026-07-12/evidence-1.jpg",
+                "report/u-me/2026-07-12/evidence-2.jpg"
+            ]
+        )
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            2
+        )
+        let uploadBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body in request.httpMethod == "PUT" ? body : nil
+        }
+        XCTAssertEqual(uploadBodies, [Data([0x01, 0x02]), Data([0x03, 0x04])])
+        XCTAssertEqual(store.safetyReports.map(\.status), [.reviewing])
+    }
+
+    @MainActor
+    func testUnavailableReportUploadReuploadsFrozenImagesWithTheSameRequestID() async throws {
+        let presignCalls = LockedCounter()
+        let appendCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                let name = presignCalls.next() == 1 ? "stale" : "fresh"
+                return .json(
+                    """
+                    {"objectKey":"report/u-me/2026-07-12/\(name).jpg","uploadUrl":"https://upload.invalid/\(name).jpg"}
+                    """
+                )
+            case "/stale.jpg", "/fresh.jpg":
+                return URLProtocolStub.StubResponse(
+                    statusCode: 200,
+                    headers: ["ETag": "uploaded"],
+                    body: Data()
+                )
+            case "/api/reports/rp-existing/evidence":
+                if appendCalls.next() == 1 {
+                    return .json(
+                        statusCode: 409,
+                        #"{"error":"上传证据已失效，请重新上传","code":"report_upload_unavailable"}"#
+                    )
+                }
+                return .json(Self.reportEnvelope(reportID: "rp-existing"))
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let firstSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-cleanup-race",
+            detail: "  frozen detail  ",
+            imageData: [Data([0x01, 0x02])]
+        )
+        let retrySucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-cleanup-race",
+            detail: "changed detail",
+            imageData: [Data([0x09])]
+        )
+
+        XCTAssertFalse(firstSucceeded)
+        XCTAssertTrue(retrySucceeded)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            2
+        )
+        let uploadBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body in request.httpMethod == "PUT" ? body : nil
+        }
+        XCTAssertEqual(uploadBodies, [Data([0x01, 0x02]), Data([0x01, 0x02])])
+        let appendBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(appendBodies.count, 2)
+        XCTAssertEqual(appendBodies[0]["clientRequestID"] as? String, "supplement-cleanup-race")
+        XCTAssertEqual(appendBodies[1]["clientRequestID"] as? String, "supplement-cleanup-race")
+        XCTAssertEqual(appendBodies[0]["detail"] as? String, "frozen detail")
+        XCTAssertEqual(appendBodies[1]["detail"] as? String, "frozen detail")
+        XCTAssertEqual(
+            appendBodies.compactMap { $0["objectKeys"] as? [String] },
+            [
+                ["report/u-me/2026-07-12/stale.jpg"],
+                ["report/u-me/2026-07-12/fresh.jpg"]
+            ]
+        )
+    }
+
+    @MainActor
+    func testDiscardedSupplementAttemptReleasesFrozenPayloadBeforeNewDraft() async throws {
+        let presignCalls = LockedCounter()
+        let appendCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                let ordinal = presignCalls.next()
+                return .json(
+                    """
+                    {"objectKey":"report/u-me/2026-07-12/discard-\(ordinal).jpg","uploadUrl":"https://upload.invalid/discard-\(ordinal).jpg"}
+                    """
+                )
+            case let path? where path.hasPrefix("/discard-"):
+                return URLProtocolStub.StubResponse(
+                    statusCode: 200,
+                    headers: ["ETag": "uploaded"],
+                    body: Data()
+                )
+            case "/api/reports/rp-existing/evidence":
+                if appendCalls.next() == 1 {
+                    throw URLError(.timedOut)
+                }
+                return .json(Self.reportEnvelope(reportID: "rp-existing"))
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let firstSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-discarded",
+            detail: "old detail",
+            imageData: [Data([0x01])]
+        )
+        store.discardSafetyReportEvidenceAttempt(clientRequestID: "supplement-discarded")
+        let newDraftSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-discarded",
+            detail: "new detail",
+            imageData: [Data([0x09])]
+        )
+
+        XCTAssertFalse(firstSucceeded)
+        XCTAssertTrue(newDraftSucceeded)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            2
+        )
+        let uploadBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body in request.httpMethod == "PUT" ? body : nil
+        }
+        XCTAssertEqual(uploadBodies, [Data([0x01]), Data([0x09])])
+        let appendBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(appendBodies.count, 2)
+        XCTAssertEqual(appendBodies[1]["detail"] as? String, "new detail")
+        XCTAssertEqual(
+            appendBodies[1]["objectKeys"] as? [String],
+            ["report/u-me/2026-07-12/discard-2.jpg"]
+        )
+    }
+
+    @MainActor
+    func testDiscardDuringInFlightUploadTombstonesOldAttemptBeforeAppend() async throws {
+        let oldUploadStarted = expectation(description: "old supplement upload started")
+        let releaseOldUpload = DispatchSemaphore(value: 0)
+        let presignCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                let name = presignCalls.next() == 1 ? "old-flight" : "new-flight"
+                return .json(
+                    """
+                    {"objectKey":"report/u-me/2026-07-12/\(name).jpg","uploadUrl":"https://upload.invalid/\(name).jpg"}
+                    """
+                )
+            case "/old-flight.jpg":
+                oldUploadStarted.fulfill()
+                _ = releaseOldUpload.wait(timeout: .now() + 5)
+                return URLProtocolStub.StubResponse(statusCode: 200, headers: [:], body: Data())
+            case "/new-flight.jpg":
+                return URLProtocolStub.StubResponse(statusCode: 200, headers: [:], body: Data())
+            case "/api/reports/rp-existing/evidence":
+                return .json(Self.reportEnvelope(reportID: "rp-existing"))
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let oldTask = Task { @MainActor in
+            await store.appendSafetyReportEvidence(
+                reportID: "rp-existing",
+                clientRequestID: "supplement-in-flight-discard",
+                detail: "old detail",
+                imageData: [Data([0x01])]
+            )
+        }
+        await fulfillment(of: [oldUploadStarted], timeout: 2)
+        store.discardSafetyReportEvidenceAttempt(clientRequestID: "supplement-in-flight-discard")
+        releaseOldUpload.signal()
+        let oldSucceeded = await oldTask.value
+
+        let newSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-in-flight-discard",
+            detail: "new detail",
+            imageData: [Data([0x09])]
+        )
+
+        XCTAssertFalse(oldSucceeded)
+        XCTAssertTrue(newSucceeded)
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            2
+        )
+        let uploadBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body in request.httpMethod == "PUT" ? body : nil
+        }
+        XCTAssertEqual(uploadBodies, [Data([0x01]), Data([0x09])])
+        let appendBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(appendBodies.count, 1)
+        XCTAssertEqual(appendBodies[0]["detail"] as? String, "new detail")
+        XCTAssertEqual(
+            appendBodies[0]["objectKeys"] as? [String],
+            ["report/u-me/2026-07-12/new-flight.jpg"]
+        )
+    }
+
+    @MainActor
+    func testSupplementPartialUploadRetryResumesAtFirstMissingImage() async throws {
+        let presignCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                switch presignCalls.next() {
+                case 1:
+                    return .json(
+                        #"{"objectKey":"report/u-me/2026-07-12/first-success.jpg","uploadUrl":"https://upload.invalid/first-success.jpg"}"#
+                    )
+                case 2:
+                    return .json(
+                        statusCode: 500,
+                        #"{"error":"presign temporarily unavailable"}"#
+                    )
+                case 3:
+                    return .json(
+                        #"{"objectKey":"report/u-me/2026-07-12/second-success.jpg","uploadUrl":"https://upload.invalid/second-success.jpg"}"#
+                    )
+                default:
+                    XCTFail("Retry restarted an already uploaded image")
+                    return .json(statusCode: 500, #"{"error":"unexpected presign"}"#)
+                }
+            case "/first-success.jpg", "/second-success.jpg":
+                return URLProtocolStub.StubResponse(
+                    statusCode: 200,
+                    headers: ["ETag": "uploaded"],
+                    body: Data()
+                )
+            case "/api/reports/rp-existing/evidence":
+                return .json(
+                    """
+                    {
+                      "report": {
+                        "id": "rp-existing",
+                        "caseID": "case-private",
+                        "sourceType": "post",
+                        "sourceID": "post-private",
+                        "subjectType": "post",
+                        "subjectID": "post-private",
+                        "reasonCode": "other",
+                        "reportedField": "content",
+                        "detail": "details",
+                        "status": "reviewing",
+                        "createdAt": "2026-07-11T01:00:00.000Z",
+                        "updatedAt": "2026-07-11T03:00:00.000Z"
+                      },
+                      "duplicate": false
+                    }
+                    """
+                )
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let firstSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-partial-fixed",
+            detail: "partial upload",
+            imageData: [Data([0x01]), Data([0x02])]
+        )
+        let retrySucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "supplement-partial-fixed",
+            detail: "changed but frozen",
+            imageData: [Data([0x09])]
+        )
+
+        XCTAssertFalse(firstSucceeded)
+        XCTAssertTrue(retrySucceeded)
+        let uploadBodies = zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body in request.httpMethod == "PUT" ? body : nil
+        }
+        XCTAssertEqual(uploadBodies, [Data([0x01]), Data([0x02])])
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            3
+        )
+        let appendBody = try XCTUnwrap(zip(URLProtocolStub.requests, URLProtocolStub.requestBodies).compactMap {
+            request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }.first)
+        XCTAssertEqual(
+            appendBody["objectKeys"] as? [String],
+            [
+                "report/u-me/2026-07-12/first-success.jpg",
+                "report/u-me/2026-07-12/second-success.jpg"
+            ]
+        )
+        XCTAssertEqual(appendBody["detail"] as? String, "partial upload")
+    }
+
+    @MainActor
+    func testSupplementRetryReusesRequestIDCapsImagesAndUpdatesExistingReport() async throws {
+        let evidenceCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                return .json(
+                    #"{"objectKey":"report/u-me/2026-07-12/evidence.jpg","uploadUrl":"https://upload.invalid/evidence.jpg"}"#
+                )
+            case "/evidence.jpg":
+                return URLProtocolStub.StubResponse(
+                    statusCode: 200,
+                    headers: ["ETag": "uploaded"],
+                    body: Data()
+                )
+            case "/api/reports/rp-existing/evidence":
+                if evidenceCalls.next() == 1 {
+                    return .json(
+                        statusCode: 500,
+                        #"{"error":"补证暂时不可用","code":"supplement_unavailable"}"#
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "report": {
+                        "id": "rp-existing",
+                        "caseID": "case-private",
+                        "sourceType": "post",
+                        "sourceID": "post-private",
+                        "subjectType": "post",
+                        "subjectID": "post-private",
+                        "reasonCode": "other",
+                        "reportedField": "content",
+                        "detail": "details",
+                        "status": "reviewing",
+                        "createdAt": "2026-07-11T01:00:00.000Z",
+                        "updatedAt": "2026-07-11T03:00:00.000Z"
+                      },
+                      "duplicate": false
+                    }
+                    """
+                )
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .received,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+        var draftState = SafetyEvidenceSupplementDraftState(
+            clientRequestID: "supplement-request-fixed"
+        )
+
+        let tooManyImagesSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: draftState.clientRequestID,
+            detail: "new context",
+            imageData: Array(repeating: Data([0x01]), count: 7)
+        )
+
+        XCTAssertFalse(tooManyImagesSucceeded)
+        XCTAssertEqual(store.myReportsSupplementErrorMessage, "最多上传 6 张证据图片")
+        XCTAssertTrue(URLProtocolStub.requests.isEmpty)
+
+        let firstAttemptSucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: draftState.clientRequestID,
+            detail: "new context",
+            imageData: [Data([0x01, 0x02])]
+        )
+
+        XCTAssertFalse(firstAttemptSucceeded)
+        draftState.markFailed()
+        XCTAssertEqual(draftState.clientRequestID, "supplement-request-fixed")
+        XCTAssertEqual(store.safetyReports.map(\.status), [.received])
+
+        let retrySucceeded = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: draftState.clientRequestID,
+            detail: "new context",
+            imageData: [Data([0x01, 0x02])]
+        )
+
+        XCTAssertTrue(retrySucceeded)
+        XCTAssertNil(store.myReportsSupplementErrorMessage)
+        XCTAssertEqual(store.safetyReports.map(\.id), ["rp-existing"])
+        XCTAssertEqual(store.safetyReports.map(\.status), [.reviewing])
+        draftState.markAccepted()
+        XCTAssertNotEqual(draftState.clientRequestID, "supplement-request-fixed")
+
+        let capturedRequests = URLProtocolStub.requests
+        let capturedBodies = URLProtocolStub.requestBodies
+        let evidenceBodies = zip(capturedRequests, capturedBodies).compactMap { request, body -> [String: Any]? in
+            guard request.url?.path == "/api/reports/rp-existing/evidence",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(evidenceBodies.count, 2)
+        XCTAssertEqual(
+            evidenceBodies.compactMap { $0["clientRequestID"] as? String },
+            ["supplement-request-fixed", "supplement-request-fixed"]
+        )
+        XCTAssertEqual(
+            evidenceBodies.compactMap { $0["objectKeys"] as? [String] },
+            [
+                ["report/u-me/2026-07-12/evidence.jpg"],
+                ["report/u-me/2026-07-12/evidence.jpg"]
+            ]
+        )
+        let presignBodies = zip(capturedRequests, capturedBodies).compactMap { request, body -> [String: Any]? in
+            guard request.url?.path == "/api/uploads/presign",
+                  let body else { return nil }
+            return try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        }
+        XCTAssertEqual(presignBodies.count, 1)
+        XCTAssertTrue(presignBodies.allSatisfy { $0["kind"] as? String == "report" })
+        XCTAssertFalse(
+            capturedRequests.contains {
+                $0.httpMethod == "POST" && $0.url?.path == "/api/reports"
+            }
+        )
+    }
+
+    @MainActor
     func testSubmitSafetyReportRejectsConcurrentDuplicateSubmission() async throws {
         let started = expectation(description: "first report started")
         let release = DispatchSemaphore(value: 0)
@@ -958,6 +2000,115 @@ final class ReportingQualityTests: XCTestCase {
     }
 
     @MainActor
+    func testCurrentMyReportsList401BypassesBlockMutationSuppression() async {
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/users/peer-user/block":
+                return .json(statusCode: 500, #"{"error":"拉黑失败","code":"block_failed"}"#)
+            case "/api/me/reports":
+                return .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+            default:
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+
+        await store.blockUser("peer-user")
+        store.toastMessage = nil
+        store.isAuthPromptPresented = false
+        let result = await store.refreshMyReports()
+
+        XCTAssertFalse(result)
+        XCTAssertFalse(store.isLoggedIn)
+        XCTAssertNil(store.backendToken)
+        XCTAssertTrue(store.isAuthPromptPresented)
+        XCTAssertEqual(store.toastMessage, "登录已失效，请重新注册或登录")
+    }
+
+    @MainActor
+    func testCurrentMyReportsSupplement401BypassesBlockMutationSuppression() async {
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/users/peer-user/block":
+                return .json(statusCode: 500, #"{"error":"拉黑失败","code":"block_failed"}"#)
+            case "/api/reports/rp-existing/evidence":
+                return .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+            default:
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .reviewing,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        await store.blockUser("peer-user")
+        store.toastMessage = nil
+        store.isAuthPromptPresented = false
+        let result = await store.appendSafetyReportEvidence(
+            reportID: "rp-existing",
+            clientRequestID: "suppression-supplement",
+            detail: "New evidence",
+            imageData: []
+        )
+
+        XCTAssertFalse(result)
+        XCTAssertFalse(store.isLoggedIn)
+        XCTAssertNil(store.backendToken)
+        XCTAssertTrue(store.isAuthPromptPresented)
+        XCTAssertEqual(store.toastMessage, "登录已失效，请重新注册或登录")
+    }
+
+    @MainActor
+    func testOldMyReportsSupplement401DoesNotExpireNewSession() async {
+        let appendStarted = expectation(description: "old supplement started")
+        let release = DispatchSemaphore(value: 0)
+        URLProtocolStub.setHandler { request in
+            if request.url?.path == "/api/reports/rp-existing/evidence" {
+                appendStarted.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+                return .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+            }
+            return .json(#"{}"#)
+        }
+        let store = makeStore()
+        store.mergeSafetyReports([
+            makeReport(
+                id: "rp-existing",
+                status: .reviewing,
+                updatedAt: "2026-07-11T02:00:00.000Z"
+            )
+        ])
+
+        let task = Task { @MainActor in
+            await store.appendSafetyReportEvidence(
+                reportID: "rp-existing",
+                clientRequestID: "old-session-supplement",
+                detail: "Old session evidence",
+                imageData: []
+            )
+        }
+        await fulfillment(of: [appendStarted], timeout: 2)
+        store.logOut()
+        store.isLoggedIn = true
+        store.backendToken = "new-session-value"
+        store.toastMessage = nil
+        store.isAuthPromptPresented = false
+        release.signal()
+
+        let result = await task.value
+        XCTAssertFalse(result)
+        XCTAssertTrue(store.isLoggedIn)
+        XCTAssertEqual(store.backendToken, "new-session-value")
+        XCTAssertFalse(store.isAuthPromptPresented)
+        XCTAssertNil(store.toastMessage)
+    }
+
+    @MainActor
     func testSafetyReportUpdatedRetryKeepsCursorUntilRefreshSucceeds() async {
         let syncQueries = LockedArray<String>()
         let reportCalls = LockedCounter()
@@ -1203,6 +2354,29 @@ final class ReportingQualityTests: XCTestCase {
             "updatedAt": "2026-07-11T01:00:00.000Z"
           },
           "duplicate": false
+        }
+        """
+    }
+
+    private static func myReportsEnvelope(status: SafetyReportStatus) -> String {
+        """
+        {
+          "reports": [
+            {
+              "id": "rp-concurrent",
+              "caseID": "case-private",
+              "sourceType": "post",
+              "sourceID": "post-private",
+              "subjectType": "post",
+              "subjectID": "post-private",
+              "reasonCode": "other",
+              "reportedField": "content",
+              "detail": "details",
+              "status": "\(status.rawValue)",
+              "createdAt": "2026-07-11T01:00:00.000Z",
+              "updatedAt": "2026-07-11T02:00:00.000Z"
+            }
+          ]
         }
         """
     }

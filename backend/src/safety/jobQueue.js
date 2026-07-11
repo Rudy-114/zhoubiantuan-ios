@@ -1,6 +1,8 @@
 import { query, withTransaction } from "../db.js";
 
 const STALE_LOCK_INTERVAL = "5 minutes";
+const REPORT_UPLOAD_REACTIVATION_INTERVAL = "24 hours";
+const REPORT_UPLOAD_JOB_RETENTION_INTERVAL = "30 days";
 const ERROR_CODE = "SAFETY_JOB_FAILED";
 const ERROR_SUMMARY = "Safety job failed (SAFETY_JOB_FAILED).";
 
@@ -38,6 +40,8 @@ export async function claimSafetyJobs({ limit = 1, workerId, deferredJobTypes = 
          AND locked_at < now() - ($1::text)::interval`,
       [STALE_LOCK_INTERVAL, ERROR_CODE, ERROR_SUMMARY]
     );
+    await reactivateFailedReportUploadCleanups(client);
+    await pruneResolvedReportUploadCleanupJobs(client);
     const { rows } = await client.query(
       `WITH candidates AS (
          SELECT id FROM safety_jobs
@@ -55,6 +59,60 @@ export async function claimSafetyJobs({ limit = 1, workerId, deferredJobTypes = 
     );
     return rows;
   });
+}
+
+async function reactivateFailedReportUploadCleanups(client) {
+  await client.query(
+    `WITH eligible AS MATERIALIZED (
+       SELECT j.id, u.object_key
+       FROM report_uploads u
+       JOIN safety_jobs j ON j.unique_key = 'cleanup_report_upload:' || u.object_key
+       WHERE u.state IN ('pending', 'deleting')
+         AND j.job_type = 'cleanup_report_upload'
+         AND j.status = 'failed'
+         AND j.updated_at < now() - ($1::text)::interval
+       ORDER BY j.updated_at, j.id
+       FOR UPDATE OF j, u SKIP LOCKED
+       LIMIT 100
+     ), reactivated AS (
+       UPDATE safety_jobs j
+       SET status = 'pending', attempts = 0, run_at = now(),
+           locked_at = NULL, locked_by = NULL, completed_at = NULL,
+           error_code = NULL, error_summary = NULL, updated_at = now()
+       FROM eligible e
+       WHERE j.id = e.id
+       RETURNING e.object_key
+     )
+     UPDATE report_uploads u
+     SET reactivation_count = reactivation_count + 1,
+         last_reactivated_at = now(), updated_at = now()
+     FROM reactivated r
+     WHERE u.object_key = r.object_key`,
+    [REPORT_UPLOAD_REACTIVATION_INTERVAL]
+  );
+}
+
+async function pruneResolvedReportUploadCleanupJobs(client) {
+  await client.query(
+    `WITH expired AS MATERIALIZED (
+       SELECT j.id
+       FROM safety_jobs j
+       JOIN report_uploads u ON j.unique_key = 'cleanup_report_upload:' || u.object_key
+       WHERE j.job_type = 'cleanup_report_upload'
+         AND u.state IN ('attached', 'deleted')
+         AND (
+           (j.status = 'completed' AND j.completed_at < now() - ($1::text)::interval)
+           OR (j.status = 'failed' AND j.updated_at < now() - ($1::text)::interval)
+         )
+       ORDER BY COALESCE(j.completed_at, j.updated_at), j.id
+       FOR UPDATE OF j SKIP LOCKED
+       LIMIT 500
+     )
+     DELETE FROM safety_jobs j
+     USING expired e
+     WHERE j.id = e.id`,
+    [REPORT_UPLOAD_JOB_RETENTION_INTERVAL]
+  );
 }
 
 export async function completeSafetyJob({ jobId, workerId, leaseAttempt } = {}) {
@@ -82,6 +140,10 @@ export async function failSafetyJob({ jobId, workerId, leaseAttempt, error } = {
      SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
          run_at = CASE
            WHEN attempts >= max_attempts THEN run_at
+           WHEN job_type = 'cleanup_report_upload' AND attempts = 1 THEN now() + interval '5 minutes'
+           WHEN job_type = 'cleanup_report_upload' AND attempts = 2 THEN now() + interval '30 minutes'
+           WHEN job_type = 'cleanup_report_upload' AND attempts = 3 THEN now() + interval '2 hours'
+           WHEN job_type = 'cleanup_report_upload' THEN now() + interval '8 hours'
            WHEN attempts = 1 THEN now() + interval '30 seconds'
            ELSE now() + interval '120 seconds'
          END,

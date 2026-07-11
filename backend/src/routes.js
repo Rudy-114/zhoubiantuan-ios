@@ -16,6 +16,7 @@ import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSafetyReportRouter } from "./safety/reportRoutes.js";
+import { registerReportUpload } from "./safety/reportUploadCleanup.js";
 import { COLLECTION_PUBLIC_VISIBILITY_PREDICATE, COMMENT_PUBLIC_VISIBILITY_PREDICATE, POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
@@ -25,6 +26,7 @@ const MAX_SIGNED_ASSET_URL_CACHE_SIZE = 1000;
 const signedAssetUrlCache = new Map();
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_UPLOAD_KINDS = new Set(["post", "avatar", "background", "message", "report"]);
+const REPORT_UPLOAD_CLEANUP_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export function createRouter() {
   const router = express.Router();
@@ -1140,7 +1142,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/uploads/presign", requireAuth, (req, res, next) => {
+  router.post("/uploads/presign", requireAuth, async (req, res, next) => {
     try {
       const contentType = String(req.body.contentType || "").split(";")[0].trim().toLowerCase();
       if (!ALLOWED_IMAGE_CONTENT_TYPES.has(contentType)) {
@@ -1154,6 +1156,15 @@ export function createRouter() {
         filename: req.body.filename,
         contentType
       });
+      if (kind === "report") {
+        await withTransaction((client) => registerReportUpload(client, {
+          ownerUserID: req.user.id,
+          objectKey: target.objectKey,
+          runAt: new Date(Date.now() + REPORT_UPLOAD_CLEANUP_GRACE_MS),
+          maxOutstanding: config.safety.reportUploadOutstandingMax,
+          maxIssued24h: config.safety.reportUploadAccountMax24h
+        }));
+      }
       res.json(target);
     } catch (error) {
       next(error);

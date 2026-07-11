@@ -70,7 +70,7 @@ export async function deleteObjects(objectKeys = []) {
   let deleted = 0;
   for (const key of keys) {
     try {
-      await client.delete(key);
+      await deleteObject(key);
       deleted += 1;
     } catch {
       // Best-effort cleanup: orphaned objects can be swept later. Never let OSS
@@ -78,6 +78,22 @@ export async function deleteObjects(objectKeys = []) {
     }
   }
   return { deleted };
+}
+
+export async function deleteObject(objectKey) {
+  try {
+    await client.delete(objectKey);
+    return { deleted: true, alreadyMissing: false };
+  } catch (error) {
+    if (isMissingObjectError(error)) return { deleted: false, alreadyMissing: true };
+    const mapped = new Error("OSS object deletion failed");
+    mapped.code = "OSS_DELETE_FAILED";
+    throw mapped;
+  }
+}
+
+function isMissingObjectError(error) {
+  return Number(error?.status || error?.statusCode) === 404 || ["NoSuchKey", "NoSuchObject"].includes(error?.code);
 }
 
 function extensionFor(filename, contentType) {

@@ -26,8 +26,8 @@
 ### Task 1: Add Revision and Appeal Tables
 
 **Files:**
-- Create: `backend/sql/014_content_revisions.sql`
-- Create: `backend/sql/down/014_content_revisions.sql`
+- Create: `backend/sql/015_content_revisions.sql`
+- Create: `backend/sql/down/015_content_revisions.sql`
 - Create: `backend/test/safety/revisionMigration.integration.test.js`
 
 **Interfaces:**
@@ -107,7 +107,7 @@ Drop appeals before revisions. The down migration removes no report/case tables.
 
 ```bash
 npm --prefix backend run test:db
-git add backend/sql/014_content_revisions.sql backend/sql/down/014_content_revisions.sql backend/test/safety/revisionMigration.integration.test.js
+git add backend/sql/015_content_revisions.sql backend/sql/down/015_content_revisions.sql backend/test/safety/revisionMigration.integration.test.js
 git commit -m "Add content revision and appeal schema"
 ```
 

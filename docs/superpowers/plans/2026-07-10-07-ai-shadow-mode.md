@@ -33,8 +33,8 @@
 ### Task 1: Add AI Run, Usage, and Evaluation Tables
 
 **Files:**
-- Create: `backend/sql/016_safety_ai.sql`
-- Create: `backend/sql/down/016_safety_ai.sql`
+- Create: `backend/sql/017_safety_ai.sql`
+- Create: `backend/sql/down/017_safety_ai.sql`
 - Create: `backend/test/safety/aiMigration.integration.test.js`
 
 **Interfaces:**
@@ -109,7 +109,7 @@ CREATE INDEX safety_ai_usage_month_status ON safety_ai_usage (month_key, status)
 
 ```bash
 npm --prefix backend run test:db
-git add backend/sql/016_safety_ai.sql backend/sql/down/016_safety_ai.sql backend/test/safety/aiMigration.integration.test.js
+git add backend/sql/017_safety_ai.sql backend/sql/down/017_safety_ai.sql backend/test/safety/aiMigration.integration.test.js
 git commit -m "Add safety AI audit schema"
 ```
 
@@ -507,7 +507,7 @@ SAFETY_AUTO_ACTIONS_ENABLED=false
 SAFETY_AI_MONTHLY_BUDGET_CNY=0
 ```
 
-Deploy migration 016 and code, restart, submit a test report, and verify it reaches human review with `budget_blocked` and no outbound Qwen call.
+Deploy migration 017 and code, restart, submit a test report, and verify it reaches human review with `budget_blocked` and no outbound Qwen call.
 
 - [ ] **Step 3: Present the exact paid-call checkpoint to Rudy**
 

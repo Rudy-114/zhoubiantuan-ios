@@ -3,6 +3,7 @@ import { assertOwnedObjectKeys } from "../moderation/index.js";
 import { createSyncEvent } from "../sync.js";
 import { badRequest } from "../validators.js";
 import { captureSourceEvidence } from "./evidenceService.js";
+import { claimReportUploadsForAttachment } from "./reportUploadCleanup.js";
 import { normalizeReportInput } from "./reportValidation.js";
 import { resolveReportSubject } from "./subjectResolver.js";
 
@@ -27,10 +28,9 @@ export async function submitSafetyReport(client, { reporterId, body } = {}) {
     sourceType: input.sourceType,
     sourceId: input.sourceId
   });
-  const objectKeys = mergeObjectKeys(
-    sourceEvidence.objectKeys,
-    assertOwnedObjectKeys(reporterID, input.objectKeys, ["report"])
-  );
+  const reportObjectKeys = assertOwnedObjectKeys(reporterID, input.objectKeys, ["report"]);
+  await claimReportUploadsForAttachment(client, { ownerUserID: reporterID, objectKeys: reportObjectKeys });
+  const objectKeys = mergeObjectKeys(sourceEvidence.objectKeys, reportObjectKeys);
   let safetyCase = await findOrCreateOpenCase(client, subject, input.reasonCode);
   await closeTerminalPendingReports(client, reporterID, subject, input.reasonCode);
   safetyCase = await lockOpenCaseByID(client, safetyCase.id);
@@ -138,6 +138,7 @@ export async function supplementSafetyReport(client, { reportId, reporterId, bod
   }
 
   const objectKeys = assertOwnedObjectKeys(reporterID, input.objectKeys, ["report"]);
+  await claimReportUploadsForAttachment(client, { ownerUserID: reporterID, objectKeys });
   const inserted = await insertEvidence(client, {
     caseID: report.case_id,
     reportID: report.id,

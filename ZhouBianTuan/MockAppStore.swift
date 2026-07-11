@@ -8,6 +8,25 @@ final class MockAppStore: ObservableObject {
         case preview
     }
 
+    enum SafetyReportMergePolicy {
+        case conservative
+        case serverAuthoritative
+    }
+
+    private struct AuthoritativeMyReportsRequest: Equatable {
+        let epoch: UUID
+        let sessionVersion: UUID
+        let generation: Int
+    }
+
+    private struct SafetyEvidenceSupplementAttempt {
+        let generation: UUID
+        let reportID: String
+        let detail: String
+        let imageData: [Data]
+        var objectKeys: [String?]
+    }
+
     // MARK: - Published State
     @Published var users: [User]
     @Published var posts: [GroupBuyPost]
@@ -23,6 +42,11 @@ final class MockAppStore: ObservableObject {
     @Published var reports: [Report]
     @Published var safetyReports: [SafetyReport] = []
     @Published var isSubmittingSafetyReport = false
+    @Published private(set) var isLoadingMyReports = false
+    @Published private(set) var hasFinishedMyReportsLoad = false
+    @Published private(set) var myReportsErrorMessage: String?
+    @Published private(set) var isSubmittingMyReportsSupplement = false
+    @Published private(set) var myReportsSupplementErrorMessage: String?
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
@@ -99,6 +123,11 @@ final class MockAppStore: ObservableObject {
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
     private var safetyReportSubmissionState = SafetyReportSubmissionState()
+    private var authoritativeMyReportsEpoch = UUID()
+    private var nextAuthoritativeMyReportsGeneration = 0
+    private var committedAuthoritativeMyReportsGeneration = 0
+    private var myReportsLoadingOwner: AuthoritativeMyReportsRequest?
+    private var safetyEvidenceSupplementAttempts: [String: SafetyEvidenceSupplementAttempt] = [:]
     private let realtimeFallbackPolicy = RealtimeFallbackPolicy()
     private var realtimeFallbackState = RealtimeFallbackState()
     private var authExpirySuppressedUntil = Date.distantPast
@@ -546,6 +575,18 @@ final class MockAppStore: ObservableObject {
         return nsError.domain == "AliyunBackendClient" && nsError.code == 401
     }
 
+    private func hasBackendErrorCode(_ code: String, error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "AliyunBackendClient"
+            && nsError.userInfo[AliyunBackendClient.errorCodeUserInfoKey] as? String == code
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
     private func isCurrentCloudSession(token: String, sessionVersion: UUID) -> Bool {
         authSessionVersion == sessionVersion && backendToken == token
     }
@@ -804,7 +845,10 @@ final class MockAppStore: ObservableObject {
         comments = order.compactMap { commentsByID[$0] }
     }
 
-    func mergeSafetyReports(_ incomingReports: [SafetyReport]) {
+    func mergeSafetyReports(
+        _ incomingReports: [SafetyReport],
+        policy: SafetyReportMergePolicy = .conservative
+    ) {
         guard !incomingReports.isEmpty else { return }
         var reportsByID = Dictionary(uniqueKeysWithValues: safetyReports.map { ($0.id, $0) })
         var stableOrder = Dictionary(uniqueKeysWithValues: safetyReports.enumerated().map { ($0.element.id, $0.offset) })
@@ -821,7 +865,9 @@ final class MockAppStore: ObservableObject {
                 switch (existingUpdatedAt, incomingUpdatedAt) {
                 case (_, nil):
                     continue
-                case let (.some(existingDate), .some(incomingDate)) where incomingDate <= existingDate:
+                case let (.some(existingDate), .some(incomingDate))
+                    where incomingDate < existingDate
+                        || (incomingDate == existingDate && policy == .conservative):
                     continue
                 default:
                     break
@@ -842,9 +888,57 @@ final class MockAppStore: ObservableObject {
     }
 
     private func refreshSafetyReports(token: String, sessionVersion: UUID) async throws {
+        let request = beginAuthoritativeMyReportsRequest(sessionVersion: sessionVersion)
         let reports = try await backendClient.myReports(token: token)
-        guard isCurrentCloudSession(token: token, sessionVersion: sessionVersion) else { return }
-        mergeSafetyReports(reports)
+        commitAuthoritativeMyReports(reports, request: request, token: token)
+    }
+
+    @discardableResult
+    func refreshMyReports() async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            myReportsErrorMessage = "请先登录再查看举报"
+            hasFinishedMyReportsLoad = true
+            return false
+        }
+        let sessionVersion = authSessionVersion
+        let request = beginAuthoritativeMyReportsRequest(sessionVersion: sessionVersion)
+        myReportsLoadingOwner = request
+        isLoadingMyReports = true
+        myReportsErrorMessage = nil
+        defer {
+            finishMyReportsLoading(ifOwnedBy: request)
+        }
+
+        do {
+            let reports = try await backendClient.myReports(token: backendToken)
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            commitAuthoritativeMyReports(reports, request: request, token: backendToken)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            if isCancellationError(error) {
+                return false
+            }
+            guard canApplyAuthoritativeMyReportsFailure(
+                request: request,
+                token: backendToken
+            ) else {
+                return false
+            }
+            hasFinishedMyReportsLoad = true
+            myReportsErrorMessage = error.localizedDescription
+            return false
+        }
     }
 
     private func beginSafetyReportSubmission() -> UUID? {
@@ -858,10 +952,74 @@ final class MockAppStore: ObservableObject {
         isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
     }
 
+    private func beginAuthoritativeMyReportsRequest(
+        sessionVersion: UUID
+    ) -> AuthoritativeMyReportsRequest {
+        nextAuthoritativeMyReportsGeneration += 1
+        return AuthoritativeMyReportsRequest(
+            epoch: authoritativeMyReportsEpoch,
+            sessionVersion: sessionVersion,
+            generation: nextAuthoritativeMyReportsGeneration
+        )
+    }
+
+    private func commitAuthoritativeMyReports(
+        _ reports: [SafetyReport],
+        request: AuthoritativeMyReportsRequest,
+        token: String
+    ) {
+        guard request.epoch == authoritativeMyReportsEpoch,
+              isCurrentCloudSession(token: token, sessionVersion: request.sessionVersion),
+              request.generation > committedAuthoritativeMyReportsGeneration else {
+            return
+        }
+        committedAuthoritativeMyReportsGeneration = request.generation
+        mergeSafetyReports(reports, policy: .serverAuthoritative)
+        hasFinishedMyReportsLoad = true
+        myReportsErrorMessage = nil
+        releaseMyReportsLoadingOwner(supersededBy: request)
+    }
+
+    private func finishMyReportsLoading(ifOwnedBy request: AuthoritativeMyReportsRequest) {
+        guard myReportsLoadingOwner == request else { return }
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+    }
+
+    private func releaseMyReportsLoadingOwner(supersededBy request: AuthoritativeMyReportsRequest) {
+        guard let owner = myReportsLoadingOwner,
+              owner.epoch == request.epoch,
+              owner.sessionVersion == request.sessionVersion,
+              owner.generation <= request.generation else {
+            return
+        }
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+    }
+
+    private func canApplyAuthoritativeMyReportsFailure(
+        request: AuthoritativeMyReportsRequest,
+        token: String
+    ) -> Bool {
+        request.epoch == authoritativeMyReportsEpoch
+            && isCurrentCloudSession(token: token, sessionVersion: request.sessionVersion)
+            && request.generation > committedAuthoritativeMyReportsGeneration
+    }
+
     private func resetSafetyReportSessionState() {
         safetyReports.removeAll()
         safetyReportSubmissionState.reset()
         isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+        hasFinishedMyReportsLoad = false
+        myReportsErrorMessage = nil
+        authoritativeMyReportsEpoch = UUID()
+        nextAuthoritativeMyReportsGeneration = 0
+        committedAuthoritativeMyReportsGeneration = 0
+        isSubmittingMyReportsSupplement = false
+        myReportsSupplementErrorMessage = nil
+        safetyEvidenceSupplementAttempts.removeAll()
     }
 
     private func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
@@ -1480,6 +1638,184 @@ final class MockAppStore: ObservableObject {
             showToast(error.localizedDescription)
             return false
         }
+    }
+
+    @discardableResult
+    func appendSafetyReportEvidence(
+        reportID: String,
+        clientRequestID: String,
+        detail: String,
+        imageData: [Data]
+    ) async -> Bool {
+        myReportsSupplementErrorMessage = nil
+        guard requireLogin(prompt: "登录后才能补充证据") else {
+            myReportsSupplementErrorMessage = "请先登录再补充证据"
+            return false
+        }
+        let existingAttempt = safetyEvidenceSupplementAttempts[clientRequestID]
+        guard existingAttempt == nil || existingAttempt?.reportID == reportID else {
+            myReportsSupplementErrorMessage = "补证请求与举报记录不匹配"
+            return false
+        }
+        if existingAttempt == nil {
+            guard imageData.count <= SafetyReportFormLogic.maxEvidenceCount else {
+                myReportsSupplementErrorMessage = "最多上传 \(SafetyReportFormLogic.maxEvidenceCount) 张证据图片"
+                return false
+            }
+            guard SafetyReportFormLogic.codePointCount(in: detail) <= SafetyReportFormLogic.detailLimit else {
+                myReportsSupplementErrorMessage = "补充说明最多填写 \(SafetyReportFormLogic.detailLimit) 字"
+                return false
+            }
+            guard !detail.trimmed.isEmpty || !imageData.isEmpty else {
+                myReportsSupplementErrorMessage = "请填写补充说明或上传证据"
+                return false
+            }
+        }
+        guard let report = safetyReports.first(where: { $0.id == reportID }) else {
+            myReportsSupplementErrorMessage = "举报记录不存在"
+            return false
+        }
+        guard report.status == .received || report.status == .reviewing else {
+            myReportsSupplementErrorMessage = "举报已经结束，不能补充证据"
+            return false
+        }
+        guard isBackendEnabled else {
+            myReportsSupplementErrorMessage = "当前模式不支持补充证据"
+            return false
+        }
+        guard let backendToken else {
+            myReportsSupplementErrorMessage = "云端登录状态异常，请重新登录"
+            invalidateCloudSessionForMissingToken(
+                prompt: true,
+                toast: myReportsSupplementErrorMessage
+            )
+            return false
+        }
+        guard !isSubmittingMyReportsSupplement else { return false }
+
+        var attempt = existingAttempt ?? SafetyEvidenceSupplementAttempt(
+            generation: UUID(),
+            reportID: reportID,
+            detail: detail.trimmed,
+            imageData: imageData,
+            objectKeys: Array(repeating: nil, count: imageData.count)
+        )
+        safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+
+        let sessionVersion = authSessionVersion
+        isSubmittingMyReportsSupplement = true
+        defer {
+            if isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) {
+                isSubmittingMyReportsSupplement = false
+            }
+        }
+
+        do {
+            for (index, image) in attempt.imageData.enumerated()
+            where attempt.objectKeys[index] == nil {
+                let objectKey = try await backendClient.uploadReportImage(
+                    token: backendToken,
+                    data: image,
+                    index: index
+                )
+                guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                    return false
+                }
+                guard isCurrentSafetyEvidenceSupplementAttempt(
+                    attempt,
+                    clientRequestID: clientRequestID
+                ) else {
+                    return false
+                }
+                attempt.objectKeys[index] = objectKey
+                safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+            }
+            let objectKeys = attempt.objectKeys.compactMap { $0 }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            let response = try await backendClient.appendReportEvidence(
+                token: backendToken,
+                reportID: reportID,
+                clientRequestID: clientRequestID,
+                objectKeys: objectKeys,
+                detail: attempt.detail
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            guard response.report.id == reportID else {
+                myReportsSupplementErrorMessage = "举报记录返回异常"
+                return false
+            }
+            safetyEvidenceSupplementAttempts.removeValue(forKey: clientRequestID)
+            mergeSafetyReports([response.report])
+            hasFinishedMyReportsLoad = true
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            if hasBackendErrorCode("report_upload_unavailable", error: error) {
+                guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                    return false
+                }
+                guard isCurrentSafetyEvidenceSupplementAttempt(
+                    attempt,
+                    clientRequestID: clientRequestID
+                ) else {
+                    return false
+                }
+                attempt.objectKeys = Array(repeating: nil, count: attempt.imageData.count)
+                safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+                myReportsSupplementErrorMessage = "上传证据已失效，请重试"
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            myReportsSupplementErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func clearMyReportsSupplementError() {
+        myReportsSupplementErrorMessage = nil
+    }
+
+    func discardSafetyReportEvidenceAttempt(clientRequestID: String) {
+        safetyEvidenceSupplementAttempts.removeValue(forKey: clientRequestID)
+    }
+
+    private func isCurrentSafetyEvidenceSupplementAttempt(
+        _ attempt: SafetyEvidenceSupplementAttempt,
+        clientRequestID: String
+    ) -> Bool {
+        safetyEvidenceSupplementAttempts[clientRequestID]?.generation == attempt.generation
     }
 
     func handleReport(reportID: String, status: ReportStatus) {

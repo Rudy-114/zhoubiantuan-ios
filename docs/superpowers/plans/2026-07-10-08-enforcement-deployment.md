@@ -239,6 +239,11 @@ SAFETY_AUTO_ACTIONS_ENABLED=false
 SAFETY_AI_MONTHLY_BUDGET_CNY=0
 SAFETY_QWEN_INPUT_CNY_PER_MILLION=0
 SAFETY_QWEN_OUTPUT_CNY_PER_MILLION=0
+SAFETY_REPORT_UPLOAD_OUTSTANDING_MAX=24
+SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H=60
+SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H=40
+SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H=120
+SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE=10
 ADMIN_WEB_ENABLED=false
 ```
 
@@ -246,7 +251,7 @@ Refer operators to mode-600 environment files; never include keys, passwords, re
 
 - [ ] **Step 3: Document exact rollout and rollback**
 
-Rollout order: P0, 013, core off, intake on/AI off, iOS, 014, 015, admin web/root, 016, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
+Rollout order: P0, 013, core off, intake on/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web/root, 017 safety AI, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
 
 - [ ] **Step 4: Document incident procedures**
 

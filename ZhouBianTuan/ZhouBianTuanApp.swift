@@ -104,6 +104,7 @@ enum Route: Hashable {
     case browsingHistory
     case settings
     case accountSecuritySettings
+    case myReports
     case generalSettings
     case notificationSettings
     case admin
@@ -388,6 +389,8 @@ extension View {
                 SettingsView()
             case .accountSecuritySettings:
                 AccountSecuritySettingsView()
+            case .myReports:
+                MyReportsView()
             case .generalSettings:
                 GeneralSettingsView()
             case .notificationSettings:

@@ -87,6 +87,26 @@ public struct SafetyReportDraftState: Equatable, Sendable {
     }
 }
 
+public struct SafetyEvidenceSupplementDraftState: Equatable, Sendable {
+    public private(set) var clientRequestID: String
+    public private(set) var hasStarted = false
+
+    public init(clientRequestID: String = UUID().uuidString) {
+        self.clientRequestID = clientRequestID
+    }
+
+    public mutating func markAttemptStarted() {
+        hasStarted = true
+    }
+
+    public mutating func markFailed() {}
+
+    public mutating func markAccepted() {
+        clientRequestID = UUID().uuidString
+        hasStarted = false
+    }
+}
+
 public struct SafetyReportSubmissionState: Equatable, Sendable {
     public private(set) var activeSubmissionID: UUID?
 
@@ -165,6 +185,22 @@ public struct SafetyReport: Codable, Identifiable, Equatable, Sendable {
         self.status = status
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+public struct SafetyReportSummary: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let reasonCode: SafetyReasonCode
+    public let targetType: SafetyTargetType
+    public let status: SafetyReportStatus
+    public let updatedAt: String
+
+    public init(report: SafetyReport) {
+        id = report.id
+        reasonCode = report.reasonCode
+        targetType = report.sourceType
+        status = report.status
+        updatedAt = report.updatedAt
     }
 }
 

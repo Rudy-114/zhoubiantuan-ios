@@ -32,6 +32,32 @@ export function createSafetyReportRouter() {
     max: config.safety.reportBurstMaxMinute,
     keyGenerator: (req) => req.user.id
   });
+  const supplementLimiterOptions = {
+    store,
+    apiCode: "report_supplement_rate_limited",
+    message: "补充证据操作太频繁，请稍后再试"
+  };
+  const supplementIpDailyLimiter = createRateLimiter({
+    ...supplementLimiterOptions,
+    name: "report_supplement_ip_daily",
+    windowMs: 24 * 60 * 60 * 1000,
+    max: config.safety.reportSupplementIpMax24h,
+    keyGenerator: (req) => req.ip
+  });
+  const supplementAccountDailyLimiter = createRateLimiter({
+    ...supplementLimiterOptions,
+    name: "report_supplement_account_daily",
+    windowMs: 24 * 60 * 60 * 1000,
+    max: config.safety.reportSupplementAccountMax24h,
+    keyGenerator: (req) => req.user.id
+  });
+  const supplementAccountBurstLimiter = createRateLimiter({
+    ...supplementLimiterOptions,
+    name: "report_supplement_account_burst",
+    windowMs: 60 * 1000,
+    max: config.safety.reportSupplementBurstMaxMinute,
+    keyGenerator: (req) => req.user.id
+  });
 
   router.post("/reports", ipDailyLimiter, requireAuth, accountDailyLimiter, accountBurstLimiter, async (req, res, next) => {
     try {
@@ -66,19 +92,26 @@ export function createSafetyReportRouter() {
     }
   });
 
-  router.post("/reports/:id/evidence", requireAuth, async (req, res, next) => {
-    try {
-      const result = await withTransaction((client) => supplementSafetyReport(client, {
-        reportId: req.params.id,
-        reporterId: req.user.id,
-        body: req.body
-      }));
-      if (result.syncEvents.length) notifySyncEvents(result.syncEvents);
-      res.status(result.supplemented ? 201 : 200).json({ report: safetyReportToClient(result.report), duplicate: result.duplicate });
-    } catch (error) {
-      next(error);
+  router.post(
+    "/reports/:id/evidence",
+    supplementIpDailyLimiter,
+    requireAuth,
+    supplementAccountDailyLimiter,
+    supplementAccountBurstLimiter,
+    async (req, res, next) => {
+      try {
+        const result = await withTransaction((client) => supplementSafetyReport(client, {
+          reportId: req.params.id,
+          reporterId: req.user.id,
+          body: req.body
+        }));
+        if (result.syncEvents.length) notifySyncEvents(result.syncEvents);
+        res.status(result.supplemented ? 201 : 200).json({ report: safetyReportToClient(result.report), duplicate: result.duplicate });
+      } catch (error) {
+        next(error);
+      }
     }
-  });
+  );
 
   return router;
 }

@@ -5,10 +5,12 @@ import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { pool, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
+import { deleteObject } from "./oss.js";
 import { startRateLimitEventPruner } from "./rateLimit.js";
 import { attachRealtime } from "./realtime.js";
 import { enqueueSafetyJob } from "./safety/jobQueue.js";
 import { startSafetyWorker } from "./safety/jobWorker.js";
+import { cleanupRegisteredReportUpload, reportUploadKeyFromJob } from "./safety/reportUploadCleanup.js";
 import { startSyncEventPruner } from "./sync.js";
 
 const DEFERRED_SAFETY_JOB_TYPES = ["analyze_case", "review_revision"];
@@ -23,6 +25,8 @@ export function createSafetyServerRuntime({
   startSafetyWorker: startWorker = startSafetyWorker,
   withTransaction: transaction = withTransaction,
   enqueueSafetyJob: enqueueJob = enqueueSafetyJob,
+  cleanupReportUpload: cleanupUpload = cleanupRegisteredReportUpload,
+  deleteReportUpload: deleteUpload = deleteObject,
   pool: databasePool = pool,
   logger: eventLogger = logger,
   clearInterval: clearPruner = clearInterval,
@@ -63,12 +67,14 @@ export function createSafetyServerRuntime({
         await listen(port, host);
         if (lifecycle !== "starting") throw new Error("Server runtime is stopping");
         eventLogger.info("server.started", { port });
+        const handlers = { cleanup_report_upload: handleCleanupReportUpload };
+        const deferredJobTypes = [...DEFERRED_SAFETY_JOB_TYPES];
         if (runtimeConfig.safety.enabled) {
-          safetyWorker = startWorker({
-            handlers: { case_received: handleCaseReceived },
-            deferredJobTypes: DEFERRED_SAFETY_JOB_TYPES
-          });
+          handlers.case_received = handleCaseReceived;
+        } else {
+          deferredJobTypes.push("case_received");
         }
+        safetyWorker = startWorker({ handlers, deferredJobTypes });
         lifecycle = "running";
         return server;
       } catch (error) {
@@ -149,6 +155,11 @@ export function createSafetyServerRuntime({
         payload: {}
       });
     });
+  }
+
+  async function handleCleanupReportUpload(job) {
+    const objectKey = reportUploadKeyFromJob(job);
+    await cleanupUpload(objectKey, { transaction, deleteObject: deleteUpload });
   }
 
   function listen(port, host) {
