@@ -3,6 +3,11 @@ import UIKit
 
 @MainActor
 final class MockAppStore: ObservableObject {
+    enum PersistenceMode {
+        case persistent
+        case preview
+    }
+
     // MARK: - Published State
     @Published var users: [User]
     @Published var posts: [GroupBuyPost]
@@ -27,11 +32,13 @@ final class MockAppStore: ObservableObject {
     @Published var blockedByUserIDs: Set<String> = []
     @Published var browsingHistoryIDs: [String] {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
         }
     }
     @Published var searchHistory: [String] {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(searchHistory, forKey: Self.searchHistoryDefaultsKey)
         }
     }
@@ -39,6 +46,7 @@ final class MockAppStore: ObservableObject {
     @Published var isAuthPromptPresented = false
     @Published var isLoggedIn: Bool {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(isLoggedIn, forKey: Self.loginDefaultsKey)
         }
     }
@@ -47,16 +55,19 @@ final class MockAppStore: ObservableObject {
     @Published private(set) var isLoadingInitialFeed = false
     @Published var isDarkModeEnabled: Bool {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
         }
     }
     @Published var limitsUnrepliedMessages: Bool {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(limitsUnrepliedMessages, forKey: Self.messageLimitDefaultsKey)
         }
     }
     @Published var isBackendEnabled: Bool {
         didSet {
+            guard usesPersistentStorage else { return }
             UserDefaults.standard.set(isBackendEnabled, forKey: Self.backendEnabledDefaultsKey)
         }
     }
@@ -78,6 +89,7 @@ final class MockAppStore: ObservableObject {
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
     let backendClient: AliyunBackendClient
+    private let persistenceMode: PersistenceMode
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
     private var backendRefreshTask: Task<Void, Never>?
@@ -89,8 +101,14 @@ final class MockAppStore: ObservableObject {
     private let realtimeFallbackPolicy = RealtimeFallbackPolicy()
     private var realtimeFallbackState = RealtimeFallbackState()
     private var authExpirySuppressedUntil = Date.distantPast
+    private var usesPersistentStorage: Bool {
+        persistenceMode == .persistent
+    }
     var backendToken: String? {
         get {
+            guard usesPersistentStorage else {
+                return cachedBackendToken
+            }
             if let cachedBackendToken {
                 return cachedBackendToken
             }
@@ -104,6 +122,10 @@ final class MockAppStore: ObservableObject {
             #endif
         }
         set {
+            guard usesPersistentStorage else {
+                cachedBackendToken = newValue
+                return
+            }
             if let newValue, !newValue.isEmpty {
                 if KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey) {
                     cachedBackendToken = newValue
@@ -215,6 +237,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func persistThreads() {
+        guard usesPersistentStorage else { return }
         guard !isRestoringThreads,
               let data = try? JSONEncoder().encode(threads) else { return }
         guard let storageURL = Self.messageThreadsStorageURL else {
@@ -226,6 +249,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func restorePersistedThreads() {
+        guard usesPersistentStorage else { return }
         let fileData = Self.messageThreadsStorageURL.flatMap { try? Data(contentsOf: $0) }
         guard let data = fileData ?? UserDefaults.standard.data(forKey: Self.messageThreadsDefaultsKey),
               let restoredThreads = try? JSONDecoder().decode([MessageThread].self, from: data) else { return }
@@ -242,17 +266,33 @@ final class MockAppStore: ObservableObject {
 
     // MARK: - Initialization
 
-    init(backendClient: AliyunBackendClient = AliyunBackendClient()) {
+    init(
+        backendClient: AliyunBackendClient = AliyunBackendClient(),
+        persistenceMode: PersistenceMode = .persistent
+    ) {
+        self.persistenceMode = persistenceMode
         self.backendClient = backendClient
-        Self.resetLocalDataForEmptyBetaIfNeeded()
-        Self.migrateBackendTokenToKeychain()
-        Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
-        cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
-        let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
+        if persistenceMode == .persistent {
+            Self.resetLocalDataForEmptyBetaIfNeeded()
+            Self.migrateBackendTokenToKeychain()
+            Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
+            cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
+        } else {
+            cachedBackendToken = nil
+        }
+        let startsLoggedIn = persistenceMode == .persistent
+            ? (UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false)
+            : false
         isLoggedIn = startsLoggedIn
-        isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
-        limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
-        UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
+        isDarkModeEnabled = persistenceMode == .persistent
+            ? (UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true)
+            : true
+        limitsUnrepliedMessages = persistenceMode == .persistent
+            ? (UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true)
+            : true
+        if persistenceMode == .persistent {
+            UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
+        }
         isBackendEnabled = true
         let blankUser = Self.blankUser
         users = [blankUser]
@@ -269,12 +309,22 @@ final class MockAppStore: ObservableObject {
         favoritePostIDs = []
         followedUserIDs = []
         followingIDsByUserID = [blankUser.id: []]
-        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
-        searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
-        restorePersistedThreads()
-        if isBackendEnabled, backendToken == nil {
+        browsingHistoryIDs = persistenceMode == .persistent
+            ? (UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? [])
+            : []
+        searchHistory = persistenceMode == .persistent
+            ? (UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? [])
+            : []
+        if persistenceMode == .persistent {
+            restorePersistedThreads()
+        }
+        if persistenceMode == .persistent, isBackendEnabled, backendToken == nil {
             invalidateCloudSessionForMissingToken(prompt: false)
         }
+    }
+
+    static func previewStore() -> MockAppStore {
+        MockAppStore(persistenceMode: .preview)
     }
 
     // MARK: - Session and Backend Sync

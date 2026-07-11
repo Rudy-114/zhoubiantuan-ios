@@ -38,6 +38,8 @@
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
 		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
 		7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */; };
+		7D9F01012D21000100A10001 /* ReportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01002D21000100A10001 /* ReportViews.swift */; };
+		7D9F01032D21000100A10001 /* ReportFormLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -101,6 +103,8 @@
 		7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingQualityTests.swift; sourceTree = "<group>"; };
 		7D4E6EC22C8A4A5100A10001 /* ZhouBianTuanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZhouBianTuanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7D9F01002D21000100A10001 /* ReportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportViews.swift; sourceTree = "<group>"; };
+		7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFormLogicTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -170,6 +174,7 @@
 				7D4E6E952C8A4A5100A10001 /* ModerationAPI.swift */,
 				7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */,
 				7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */,
+				7D9F01002D21000100A10001 /* ReportViews.swift */,
 				7D4E6E382C8A4A5100A10001 /* Info.plist */,
 				7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */,
 				7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */,
@@ -213,6 +218,7 @@
 			isa = PBXGroup;
 			children = (
 				7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */,
+				7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */,
 			);
 			path = ZhouBianTuanTests;
 			sourceTree = "<group>";
@@ -345,6 +351,7 @@
 				7D4E6EA52C8A4A5100A10001 /* ModerationAPI.swift in Sources */,
 				7D4E6EA62C8A4A5100A10001 /* ModerationStore.swift in Sources */,
 				7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */,
+				7D9F01012D21000100A10001 /* ReportViews.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -353,6 +360,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D9F01032D21000100A10001 /* ReportFormLogicTests.swift in Sources */,
 				7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
