@@ -540,6 +540,218 @@ final class ReportingQualityTests: XCTestCase {
     }
 
     @MainActor
+    func testSubmit401PreservesSnapshotForSameUserLogin() async {
+        URLProtocolStub.setHandler { _ in
+            .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+        }
+        let store = makeStore()
+        let snapshot = makeSnapshot(reporterUserID: store.currentUserID)
+        store.saveSafetyReportFormSnapshot(snapshot)
+
+        let result = await store.submitSafetyReport(draft: makeDraft(), imageData: [], blockUserID: nil)
+
+        XCTAssertFalse(result)
+        XCTAssertFalse(store.isLoggedIn)
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: snapshot.reporterUserID), snapshot)
+
+        store.isLoggedIn = true
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: store.currentUserID), snapshot)
+    }
+
+    @MainActor
+    func testDifferentBackendUserLoginPurgesExpiredReporterSnapshotPermanently() async {
+        let loginCounter = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            if request.url?.path == "/api/reports" {
+                return .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+            }
+            let loginUserID = loginCounter.next() == 1 ? "user-b" : "u-me"
+            return .json(Self.loginPayload(userID: loginUserID))
+        }
+        let store = makeStore()
+        let reporterAID = store.currentUserID
+        let snapshot = makeSnapshot(reporterUserID: reporterAID)
+        store.saveSafetyReportFormSnapshot(snapshot)
+
+        let submitResult = await store.submitSafetyReport(draft: makeDraft(), imageData: [], blockUserID: nil)
+        XCTAssertFalse(submitResult)
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: reporterAID), snapshot)
+
+        let userBLoginResult = await store.loginWithEmail(email: "b@example.com", password: "password-b")
+        XCTAssertTrue(userBLoginResult)
+        XCTAssertEqual(store.currentUserID, "user-b")
+        XCTAssertFalse(store.hasSafetyReportFormSnapshot)
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: reporterAID))
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: "user-b"))
+
+        let userALoginResult = await store.loginWithEmail(email: "a@example.com", password: "password-a")
+        XCTAssertTrue(userALoginResult)
+        XCTAssertEqual(store.currentUserID, reporterAID)
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: reporterAID))
+        store.stopBackendAutoRefresh()
+    }
+
+    @MainActor
+    func testIncrementalEvidenceCommitSurvives401AndMidBatchCancellation() async {
+        URLProtocolStub.setHandler { _ in
+            .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
+        }
+        let firstCommitted = expectation(description: "first normalized image committed")
+        let secondStarted = expectation(description: "second image load started")
+        let store = makeStore()
+        let initialSnapshot = makeSnapshot(reporterUserID: store.currentUserID)
+        var buffer = SafetyReportEvidenceBuffer()
+        let generation = buffer.beginLoading()
+        store.saveSafetyReportFormSnapshot(
+            snapshot(initialSnapshot, replacingEvidence: buffer)
+        )
+
+        let batchTask = Task { @MainActor in
+            await SafetyReportEvidenceBatchLoader.load(
+                items: [1, 2],
+                load: { index in
+                    if index == 1 {
+                        return Data([0xAA, 0xBB])
+                    }
+                    secondStarted.fulfill()
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    return Data([0xCC])
+                },
+                didLoad: { data in
+                    let isCurrentGeneration = buffer.commitLoadedData(data, generation: generation)
+                    guard isCurrentGeneration else { return false }
+                    store.saveSafetyReportFormSnapshot(
+                        self.snapshot(initialSnapshot, replacingEvidence: buffer)
+                    )
+                    firstCommitted.fulfill()
+                    return true
+                },
+                didFinish: { selectedCount, failedCount in
+                    _ = buffer.finishIncrementalLoading(
+                        generation: generation,
+                        selectedCount: selectedCount,
+                        failedCount: failedCount
+                    )
+                    store.saveSafetyReportFormSnapshot(
+                        self.snapshot(initialSnapshot, replacingEvidence: buffer)
+                    )
+                }
+            )
+        }
+
+        await fulfillment(of: [firstCommitted, secondStarted], timeout: 2)
+        let submitResult = await store.submitSafetyReport(
+            draft: makeDraft(clientRequestID: initialSnapshot.clientRequestID),
+            imageData: [],
+            blockUserID: nil
+        )
+
+        XCTAssertFalse(submitResult)
+        XCTAssertFalse(store.isLoggedIn)
+        let resumed = store.resumableSafetyReportFormSnapshot(for: initialSnapshot.reporterUserID)
+        XCTAssertEqual(resumed?.source, initialSnapshot.source)
+        XCTAssertEqual(resumed?.reason, initialSnapshot.reason)
+        XCTAssertEqual(resumed?.reportedField, initialSnapshot.reportedField)
+        XCTAssertEqual(resumed?.detail, initialSnapshot.detail)
+        XCTAssertEqual(resumed?.blockReportedUser, initialSnapshot.blockReportedUser)
+        XCTAssertEqual(resumed?.clientRequestID, initialSnapshot.clientRequestID)
+        XCTAssertEqual(resumed?.evidence.items.map(\.data), [Data([0xAA, 0xBB])])
+
+        batchTask.cancel()
+        await batchTask.value
+        XCTAssertEqual(
+            store.resumableSafetyReportFormSnapshot(for: initialSnapshot.reporterUserID)?.evidence.items.map(\.data),
+            [Data([0xAA, 0xBB])]
+        )
+    }
+
+    @MainActor
+    func testManualLogoutClearsSavedSafetyReportSnapshot() {
+        let store = makeStore()
+        store.saveSafetyReportFormSnapshot(makeSnapshot(reporterUserID: store.currentUserID))
+
+        store.logOut()
+
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: "u-me"))
+    }
+
+    @MainActor
+    func testAcceptedSubmissionClearsSavedSafetyReportSnapshot() async {
+        URLProtocolStub.setHandler { _ in
+            .json(Self.reportEnvelope(reportID: "rp-accepted"))
+        }
+        let store = makeStore()
+        store.saveSafetyReportFormSnapshot(makeSnapshot(reporterUserID: store.currentUserID))
+
+        let result = await store.submitSafetyReport(draft: makeDraft(), imageData: [], blockUserID: nil)
+
+        XCTAssertTrue(result)
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: "u-me"))
+    }
+
+    func testReportResumeDecisionWaitsForAuthenticationCoverToClose() {
+        let snapshot = makeSnapshot(reporterUserID: "u-me")
+        let cases: [(loggedIn: Bool, userID: String, authCover: Bool, reportPresented: Bool, expected: Bool)] = [
+            (false, "u-me", false, false, false),
+            (true, "different-user", false, false, false),
+            (true, "u-me", true, false, false),
+            (true, "u-me", false, true, false),
+            (true, "u-me", false, false, true)
+        ]
+
+        for testCase in cases {
+            XCTAssertEqual(
+                SafetyReportResumeDecision.shouldPresent(
+                    snapshot: snapshot,
+                    isLoggedIn: testCase.loggedIn,
+                    currentUserID: testCase.userID,
+                    isAuthPromptPresented: testCase.authCover,
+                    isReportPresented: testCase.reportPresented
+                ),
+                testCase.expected
+            )
+        }
+    }
+
+    func testReportResumeActionDiscardsPendingStateForAuthenticatedIdentityMismatch() {
+        let snapshot = makeSnapshot(reporterUserID: "user-a")
+
+        XCTAssertEqual(
+            SafetyReportResumeDecision.action(
+                isPending: true,
+                snapshot: snapshot,
+                isLoggedIn: true,
+                currentUserID: "user-b",
+                isAuthPromptPresented: false,
+                isReportPresented: false
+            ),
+            .discard
+        )
+        XCTAssertEqual(
+            SafetyReportResumeDecision.action(
+                isPending: true,
+                snapshot: nil,
+                isLoggedIn: true,
+                currentUserID: "user-b",
+                isAuthPromptPresented: false,
+                isReportPresented: false
+            ),
+            .discard
+        )
+        XCTAssertEqual(
+            SafetyReportResumeDecision.action(
+                isPending: true,
+                snapshot: snapshot,
+                isLoggedIn: true,
+                currentUserID: "user-a",
+                isAuthPromptPresented: false,
+                isReportPresented: false
+            ),
+            .present(snapshot)
+        )
+    }
+
+    @MainActor
     func testCurrentPresign401ExpiresSession() async {
         URLProtocolStub.setHandler { _ in
             .json(statusCode: 401, #"{"error":"登录状态已失效","code":"auth_expired"}"#)
@@ -910,6 +1122,42 @@ final class ReportingQualityTests: XCTestCase {
         )
     }
 
+    private func makeSnapshot(reporterUserID: String) -> SafetyReportFormSnapshot {
+        SafetyReportFormSnapshot(
+            reporterUserID: reporterUserID,
+            source: SafetyReportSource(
+                type: .post,
+                id: "post-1",
+                title: "需要恢复的举报",
+                ownerUserID: "peer-user",
+                collectionID: nil,
+                peerUserID: nil
+            ),
+            reason: .other,
+            reportedField: .content,
+            detail: "已编辑详情",
+            evidence: SafetyReportEvidenceBuffer(items: [SafetyReportEvidenceItem(data: Data([0x01, 0x02, 0x03]))]),
+            blockReportedUser: false,
+            clientRequestID: "request-resume-quality"
+        )
+    }
+
+    private func snapshot(
+        _ snapshot: SafetyReportFormSnapshot,
+        replacingEvidence evidence: SafetyReportEvidenceBuffer
+    ) -> SafetyReportFormSnapshot {
+        SafetyReportFormSnapshot(
+            reporterUserID: snapshot.reporterUserID,
+            source: snapshot.source,
+            reason: snapshot.reason,
+            reportedField: snapshot.reportedField,
+            detail: snapshot.detail,
+            evidence: evidence,
+            blockReportedUser: snapshot.blockReportedUser,
+            clientRequestID: snapshot.clientRequestID
+        )
+    }
+
     private func makeReport(
         id: String,
         status: SafetyReportStatus,
@@ -955,6 +1203,32 @@ final class ReportingQualityTests: XCTestCase {
             "updatedAt": "2026-07-11T01:00:00.000Z"
           },
           "duplicate": false
+        }
+        """
+    }
+
+    private static func loginPayload(userID: String) -> String {
+        """
+        {
+          "token": "token-\(userID)",
+          "currentUser": {
+            "id": "\(userID)",
+            "email": "\(userID)@example.com",
+            "nickname": "\(userID)",
+            "bio": "",
+            "followingCount": 0,
+            "followersCount": 0,
+            "postCount": 0,
+            "isRestricted": false,
+            "canShowContact": true,
+            "avatarSymbol": "person.circle.fill",
+            "avatarTint": "rose",
+            "redBookID": "",
+            "gender": "未设置",
+            "birthday": "选择生日",
+            "region": "未设置",
+            "backgroundImageName": "merch_magazine"
+          }
         }
         """
     }

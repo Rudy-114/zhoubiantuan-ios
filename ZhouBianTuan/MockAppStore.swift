@@ -52,6 +52,7 @@ final class MockAppStore: ObservableObject {
     }
     @Published var currentUserID = "u-me"
     @Published var authSessionVersion = UUID()
+    private var safetyReportFormSnapshot: SafetyReportFormSnapshot?
     @Published private(set) var isLoadingInitialFeed = false
     @Published var isDarkModeEnabled: Bool {
         didSet {
@@ -333,6 +334,30 @@ final class MockAppStore: ObservableObject {
         users.first(where: { $0.id == currentUserID }) ?? users.first ?? Self.blankUser
     }
 
+    func saveSafetyReportFormSnapshot(_ snapshot: SafetyReportFormSnapshot) {
+        safetyReportFormSnapshot = snapshot
+    }
+
+    var hasSafetyReportFormSnapshot: Bool {
+        safetyReportFormSnapshot != nil
+    }
+
+    func clearSafetyReportFormSnapshot() {
+        safetyReportFormSnapshot = nil
+    }
+
+    func resumableSafetyReportFormSnapshot(for userID: String) -> SafetyReportFormSnapshot? {
+        guard safetyReportFormSnapshot?.reporterUserID == userID else { return nil }
+        return safetyReportFormSnapshot
+    }
+
+    private func prepareForAuthenticatedIdentity(_ userID: String) {
+        guard let snapshot = safetyReportFormSnapshot else { return }
+        if userID != currentUserID || snapshot.reporterUserID != userID {
+            clearSafetyReportFormSnapshot()
+        }
+    }
+
     func loadBackendIfNeeded() async {
         guard isBackendEnabled else { return }
         await refreshFromBackend(silent: true)
@@ -591,6 +616,9 @@ final class MockAppStore: ObservableObject {
     private func applyBackendPayload(_ payload: BackendPayload) {
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
+        if let incomingUserID = payload.currentUser?.id {
+            prepareForAuthenticatedIdentity(incomingUserID)
+        }
         if let incomingUserID = payload.currentUser?.id, incomingUserID != currentUserID {
             resetSafetyReportSessionState()
         }
@@ -1402,6 +1430,7 @@ final class MockAppStore: ObservableObject {
                 return true
             }
             mergeSafetyReports([response.report])
+            clearSafetyReportFormSnapshot()
 
             let acceptedMessage = response.duplicate ? "该问题已在处理中" : "举报已提交"
             showToast(acceptedMessage)
@@ -1763,6 +1792,7 @@ final class MockAppStore: ObservableObject {
     func logOut() {
         stopBackendAutoRefresh()
         SyncCursorStore.remove(for: currentUserID)
+        clearSafetyReportFormSnapshot()
         isLoggedIn = false
         isAuthPromptPresented = false
         backendToken = nil
@@ -1949,6 +1979,7 @@ final class MockAppStore: ObservableObject {
 
     private func switchCurrentUser(to userID: String) {
         guard users.contains(where: { $0.id == userID }) else { return }
+        prepareForAuthenticatedIdentity(userID)
         UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
         currentUserID = userID
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: userID)) ?? []

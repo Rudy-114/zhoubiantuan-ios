@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ZhouBianTuan
 
@@ -388,6 +389,65 @@ final class ReportFormLogicTests: XCTestCase {
         XCTAssertNil(buffer.statusMessage)
     }
 
+    func testEvidenceBufferCommitsIncrementallyWhilePreservingGenerationAndCapacityRules() {
+        let existingItems = makeEvidenceItems(count: 5)
+        var buffer = SafetyReportEvidenceBuffer(items: existingItems)
+        let staleGeneration = buffer.beginLoading()
+        let currentGeneration = buffer.beginLoading()
+
+        XCTAssertFalse(buffer.commitLoadedData(Data("stale".utf8), generation: staleGeneration))
+        XCTAssertEqual(buffer.items, existingItems)
+
+        buffer.remove(existingItems[0].id)
+        buffer.remove(existingItems[1].id)
+        XCTAssertTrue(buffer.commitLoadedData(Data("fresh-1".utf8), generation: currentGeneration))
+        XCTAssertTrue(buffer.commitLoadedData(Data("fresh-2".utf8), generation: currentGeneration))
+        XCTAssertTrue(buffer.commitLoadedData(Data("fresh-3".utf8), generation: currentGeneration))
+        XCTAssertTrue(buffer.commitLoadedData(Data("fresh-4".utf8), generation: currentGeneration))
+
+        XCTAssertEqual(buffer.items.count, 6)
+        XCTAssertEqual(
+            buffer.items.suffix(3).map(\.data),
+            [Data("fresh-1".utf8), Data("fresh-2".utf8), Data("fresh-3".utf8)]
+        )
+        XCTAssertTrue(
+            buffer.finishIncrementalLoading(
+                generation: currentGeneration,
+                selectedCount: 4,
+                failedCount: 0
+            )
+        )
+        XCTAssertEqual(buffer.statusMessage, "最多上传 6 张证据图片")
+        XCTAssertFalse(buffer.isLoading)
+    }
+
+    func testCancelLoadingRejectsLateCommitAndFinishFromCancelledGeneration() {
+        var buffer = SafetyReportEvidenceBuffer()
+        let cancelledGeneration = buffer.beginLoading()
+        XCTAssertTrue(buffer.commitLoadedData(Data("committed-before-cancel".utf8), generation: cancelledGeneration))
+        let itemsAtCancellation = buffer.items
+
+        buffer.cancelLoading()
+
+        XCTAssertFalse(buffer.isLoading)
+        XCTAssertFalse(
+            buffer.commitLoadedData(
+                Data("late-after-cancel".utf8),
+                generation: cancelledGeneration
+            )
+        )
+        XCTAssertEqual(buffer.items, itemsAtCancellation)
+        XCTAssertFalse(
+            buffer.finishIncrementalLoading(
+                generation: cancelledGeneration,
+                selectedCount: 2,
+                failedCount: 0
+            )
+        )
+        XCTAssertEqual(buffer.items, itemsAtCancellation)
+        XCTAssertFalse(buffer.isLoading)
+    }
+
     func testBlockCandidateUserIDRequiresSupportedSourceNonBlankValueAndNonSelf() {
         XCTAssertNil(
             SafetyReportFormLogic.blockCandidateUserID(
@@ -556,6 +616,167 @@ final class ReportFormLogicTests: XCTestCase {
         XCTAssertEqual(draft.sourceID, source.objectID)
     }
 
+    func testSafetyReportFormSnapshotRoundTripsEveryFieldIncludingEvidenceAndRequestID() {
+        let source = makePostSource(collectionID: "collection-1")
+        let evidence = SafetyReportEvidenceBuffer(
+            items: [
+                SafetyReportEvidenceItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, data: Data([0x01, 0x02])),
+                SafetyReportEvidenceItem(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, data: Data([0x03, 0x04]))
+            ],
+            activeGeneration: 7
+        )
+        let snapshot = SafetyReportFormSnapshot(
+            reporterUserID: "user-reporter",
+            source: source,
+            reason: .invalidContact,
+            reportedField: .contactQQ,
+            detail: "QQ 号已失效",
+            evidence: evidence,
+            blockReportedUser: true,
+            clientRequestID: "request-stable-42"
+        )
+
+        XCTAssertEqual(snapshot.reporterUserID, "user-reporter")
+        XCTAssertEqual(snapshot.source, source)
+        XCTAssertEqual(snapshot.reason, .invalidContact)
+        XCTAssertEqual(snapshot.reportedField, .contactQQ)
+        XCTAssertEqual(snapshot.detail, "QQ 号已失效")
+        XCTAssertEqual(snapshot.evidence, evidence)
+        XCTAssertEqual(snapshot.evidence.items.map(\.data), [Data([0x01, 0x02]), Data([0x03, 0x04])])
+        XCTAssertTrue(snapshot.blockReportedUser)
+        XCTAssertEqual(snapshot.clientRequestID, "request-stable-42")
+        XCTAssertEqual(snapshot.id, "request-stable-42")
+    }
+
+    @MainActor
+    func testSafetyReportSnapshotRestoresOnlyForSameUserAndPreservesEvidenceAndRequestID() {
+        let store = MockAppStore(persistenceMode: .preview)
+        let snapshot = SafetyReportFormSnapshot(
+            reporterUserID: "u-me",
+            source: makeDirectMessageSource(),
+            reason: .directMessageRisk,
+            reportedField: .content,
+            detail: "需要恢复的内容",
+            evidence: SafetyReportEvidenceBuffer(items: [SafetyReportEvidenceItem(data: Data([0xCA, 0xFE]))]),
+            blockReportedUser: false,
+            clientRequestID: "request-resume-1"
+        )
+
+        store.saveSafetyReportFormSnapshot(snapshot)
+
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: "u-me"), snapshot)
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: "different-user"))
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: "u-me")?.evidence.items.first?.data, Data([0xCA, 0xFE]))
+        XCTAssertEqual(store.resumableSafetyReportFormSnapshot(for: "u-me")?.clientRequestID, "request-resume-1")
+
+        store.clearSafetyReportFormSnapshot()
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: "u-me"))
+    }
+
+    @MainActor
+    func testSavingSafetyReportSnapshotDoesNotPublishAppWideStoreChanges() {
+        let store = MockAppStore(persistenceMode: .preview)
+        let snapshot = SafetyReportFormSnapshot(
+            reporterUserID: "u-me",
+            source: makePostSource(collectionID: nil),
+            reason: .other,
+            reportedField: .content,
+            detail: "正在编辑",
+            evidence: SafetyReportEvidenceBuffer(items: [SafetyReportEvidenceItem(data: Data([0x01]))]),
+            blockReportedUser: false,
+            clientRequestID: "request-no-global-publish"
+        )
+        var publishCount = 0
+        let subscription = store.objectWillChange.sink {
+            publishCount += 1
+        }
+
+        store.saveSafetyReportFormSnapshot(snapshot)
+
+        XCTAssertEqual(publishCount, 0)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    func testDiscardedPresentationPersistenceGateCannotRecreateClearedSnapshot() {
+        let store = MockAppStore(persistenceMode: .preview)
+        let original = makeSnapshot(
+            evidence: SafetyReportEvidenceBuffer(items: [SafetyReportEvidenceItem(data: Data([0x01]))]),
+            clientRequestID: "request-discarded"
+        )
+        store.saveSafetyReportFormSnapshot(original)
+        store.clearSafetyReportFormSnapshot()
+        let lateCallbackSnapshot = makeSnapshot(
+            evidence: SafetyReportEvidenceBuffer(items: [
+                SafetyReportEvidenceItem(data: Data([0x01])),
+                SafetyReportEvidenceItem(data: Data([0x02]))
+            ]),
+            clientRequestID: original.clientRequestID
+        )
+
+        let didPersist = SafetyReportSnapshotPersistencePolicy.persistIfEligible(
+            lateCallbackSnapshot,
+            in: store,
+            presentationFinished: true
+        )
+
+        XCTAssertFalse(didPersist)
+        XCTAssertFalse(store.hasSafetyReportFormSnapshot)
+        XCTAssertNil(store.resumableSafetyReportFormSnapshot(for: original.reporterUserID))
+    }
+
+    func testSnapshotPersistencePolicyAllowsAuthExpiryRetentionButRejectsManualClearAndIdentityMismatch() {
+        let candidate = makeSnapshot(
+            evidence: SafetyReportEvidenceBuffer(items: [SafetyReportEvidenceItem(data: Data([0x01]))]),
+            clientRequestID: "request-policy"
+        )
+        let differentRequest = makeSnapshot(
+            evidence: candidate.evidence,
+            clientRequestID: "request-newer-form"
+        )
+
+        XCTAssertTrue(
+            SafetyReportSnapshotPersistencePolicy.canPersist(
+                candidate: candidate,
+                retainedSnapshot: candidate,
+                presentationFinished: false,
+                currentUserID: candidate.reporterUserID
+            )
+        )
+        XCTAssertFalse(
+            SafetyReportSnapshotPersistencePolicy.canPersist(
+                candidate: candidate,
+                retainedSnapshot: nil,
+                presentationFinished: false,
+                currentUserID: candidate.reporterUserID
+            )
+        )
+        XCTAssertFalse(
+            SafetyReportSnapshotPersistencePolicy.canPersist(
+                candidate: candidate,
+                retainedSnapshot: candidate,
+                presentationFinished: false,
+                currentUserID: "different-user"
+            )
+        )
+        XCTAssertFalse(
+            SafetyReportSnapshotPersistencePolicy.canPersist(
+                candidate: candidate,
+                retainedSnapshot: candidate,
+                presentationFinished: true,
+                currentUserID: candidate.reporterUserID
+            )
+        )
+        XCTAssertFalse(
+            SafetyReportSnapshotPersistencePolicy.canPersist(
+                candidate: candidate,
+                retainedSnapshot: differentRequest,
+                presentationFinished: false,
+                currentUserID: candidate.reporterUserID
+            )
+        )
+    }
+
     private func makePostSource(collectionID: String?) -> SafetyReportSource {
         SafetyReportSource(
             type: .post,
@@ -564,6 +785,22 @@ final class ReportFormLogicTests: XCTestCase {
             ownerUserID: "user-owner",
             collectionID: collectionID,
             peerUserID: nil
+        )
+    }
+
+    private func makeSnapshot(
+        evidence: SafetyReportEvidenceBuffer,
+        clientRequestID: String
+    ) -> SafetyReportFormSnapshot {
+        SafetyReportFormSnapshot(
+            reporterUserID: "u-me",
+            source: makePostSource(collectionID: nil),
+            reason: .other,
+            reportedField: .content,
+            detail: "继续编辑",
+            evidence: evidence,
+            blockReportedUser: false,
+            clientRequestID: clientRequestID
         )
     }
 

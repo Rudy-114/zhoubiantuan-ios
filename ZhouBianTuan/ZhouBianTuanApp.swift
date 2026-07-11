@@ -109,11 +109,57 @@ enum Route: Hashable {
     case admin
 }
 
+enum SafetyReportResumeDecision {
+    enum Action: Equatable {
+        case wait
+        case discard
+        case present(SafetyReportFormSnapshot)
+    }
+
+    static func shouldPresent(
+        snapshot: SafetyReportFormSnapshot,
+        isLoggedIn: Bool,
+        currentUserID: String,
+        isAuthPromptPresented: Bool,
+        isReportPresented: Bool
+    ) -> Bool {
+        isLoggedIn &&
+        snapshot.reporterUserID == currentUserID &&
+        !isAuthPromptPresented &&
+        !isReportPresented
+    }
+
+    static func action(
+        isPending: Bool,
+        snapshot: SafetyReportFormSnapshot?,
+        isLoggedIn: Bool,
+        currentUserID: String,
+        isAuthPromptPresented: Bool,
+        isReportPresented: Bool
+    ) -> Action {
+        guard isPending, isLoggedIn else { return .wait }
+        guard let snapshot, snapshot.reporterUserID == currentUserID else { return .discard }
+        guard shouldPresent(
+            snapshot: snapshot,
+            isLoggedIn: isLoggedIn,
+            currentUserID: currentUserID,
+            isAuthPromptPresented: isAuthPromptPresented,
+            isReportPresented: isReportPresented
+        ) else {
+            return .wait
+        }
+        return .present(snapshot)
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var store: MockAppStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
     @State private var showsLaunchSplash = true
+    @State private var shouldResumeSafetyReport = false
+    @State private var resumedSafetyReport: SafetyReportFormSnapshot?
+    @State private var isAuthCoverPresented = false
 
     private var isAuthenticated: Bool {
         store.isLoggedIn
@@ -176,18 +222,6 @@ struct RootView: View {
             .overlay(alignment: .top) {
                 ToastHost()
             }
-            .fullScreenCover(isPresented: $store.isAuthPromptPresented) {
-                GuestAuthView(onClose: {
-                    store.isAuthPromptPresented = false
-                })
-                .environmentObject(store)
-                .preferredColorScheme(.dark)
-            }
-            .onChange(of: store.isLoggedIn) {
-                if store.isLoggedIn {
-                    store.isAuthPromptPresented = false
-                }
-            }
             .task {
                 Task { await store.loadPublicFeedIfNeeded() }
                 await store.loadBackendIfNeeded()
@@ -212,6 +246,69 @@ struct RootView: View {
                             showsLaunchSplash = false
                         }
                     }
+            }
+        }
+        .fullScreenCover(isPresented: $isAuthCoverPresented, onDismiss: {
+            presentResumableSafetyReportWhenReady()
+        }) {
+            GuestAuthView(onClose: {
+                store.isAuthPromptPresented = false
+                isAuthCoverPresented = false
+            })
+            .environmentObject(store)
+            .preferredColorScheme(.dark)
+        }
+        .sheet(item: $resumedSafetyReport) { snapshot in
+            ReportSheet(source: snapshot.source, initialSnapshot: snapshot) {}
+                .environmentObject(store)
+        }
+        .onChange(of: store.isLoggedIn) {
+            if store.isLoggedIn {
+                store.isAuthPromptPresented = false
+                presentResumableSafetyReportWhenReady()
+            } else if store.hasSafetyReportFormSnapshot {
+                shouldResumeSafetyReport = true
+                resumedSafetyReport = nil
+            }
+        }
+        .onChange(of: store.currentUserID) {
+            if store.isLoggedIn {
+                presentResumableSafetyReportWhenReady()
+            }
+        }
+        .onChange(of: store.isAuthPromptPresented) {
+            if store.isAuthPromptPresented {
+                DispatchQueue.main.async {
+                    if store.isAuthPromptPresented {
+                        isAuthCoverPresented = true
+                    }
+                }
+            } else {
+                isAuthCoverPresented = false
+            }
+        }
+    }
+
+    private func presentResumableSafetyReportWhenReady() {
+        guard shouldResumeSafetyReport else { return }
+        DispatchQueue.main.async {
+            let action = SafetyReportResumeDecision.action(
+                isPending: shouldResumeSafetyReport,
+                snapshot: store.resumableSafetyReportFormSnapshot(for: store.currentUserID),
+                isLoggedIn: store.isLoggedIn,
+                currentUserID: store.currentUserID,
+                isAuthPromptPresented: store.isAuthPromptPresented || isAuthCoverPresented,
+                isReportPresented: resumedSafetyReport != nil
+            )
+            switch action {
+            case .wait:
+                break
+            case .discard:
+                shouldResumeSafetyReport = false
+                resumedSafetyReport = nil
+            case .present(let snapshot):
+                shouldResumeSafetyReport = false
+                resumedSafetyReport = snapshot
             }
         }
     }

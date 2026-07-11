@@ -48,6 +48,139 @@ struct SafetyReportSource: Identifiable, Equatable, Sendable {
     }
 }
 
+enum SafetyReportEntryPolicy {
+    static let hiddenMessagePlaceholder = "消息因安全审核暂不可见"
+    static let hiddenContactPlaceholder = "联系方式因安全审核暂不可见"
+
+    static func canReportPost(_ post: GroupBuyPost, currentUserID: String) -> Bool {
+        normalized(post.authorID) != normalized(currentUserID)
+    }
+
+    static func canReportComment(_ comment: Comment, currentUserID: String) -> Bool {
+        normalized(comment.authorID) != normalized(currentUserID)
+    }
+
+    static func canReportUser(userID: String, currentUserID: String) -> Bool {
+        normalized(userID) != normalized(currentUserID)
+    }
+
+    static func canReportMessage(_ message: DirectMessage, currentUserID: String) -> Bool {
+        normalized(message.senderID) != normalized(currentUserID) &&
+        !message.isRevoked &&
+        !message.isDeletedForMe &&
+        !message.isSafetyHidden
+    }
+
+    static func canReportCollection(_ collection: GroupCollection, currentUserID: String) -> Bool {
+        normalized(collection.ownerID) != normalized(currentUserID)
+    }
+
+    static func effectiveContactVisibility(post: GroupBuyPost, collection: GroupCollection?) -> String {
+        let value = collection?.contactVisibility ?? post.contactVisibility
+        let normalizedValue = normalized(value)
+        return normalizedValue.isEmpty ? "active" : normalizedValue
+    }
+
+    static func isContactHidden(post: GroupBuyPost, collection: GroupCollection?) -> Bool {
+        effectiveContactVisibility(post: post, collection: collection) == "hidden"
+    }
+
+    static func isContactHidden(collection: GroupCollection) -> Bool {
+        let normalizedValue = normalized(collection.contactVisibility)
+        return (normalizedValue.isEmpty ? "active" : normalizedValue) == "hidden"
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmed
+    }
+}
+
+enum SafetyReportSourceFactory {
+    static func post(_ post: GroupBuyPost) -> SafetyReportSource {
+        SafetyReportSource(
+            type: .post,
+            id: post.id,
+            title: compactTitle(post.title, fallback: "帖子"),
+            ownerUserID: post.authorID,
+            collectionID: post.collectionID,
+            peerUserID: nil
+        )
+    }
+
+    static func comment(_ comment: Comment) -> SafetyReportSource {
+        SafetyReportSource(
+            type: .comment,
+            id: comment.id,
+            title: compactTitle(comment.body, fallback: "评论"),
+            ownerUserID: comment.authorID,
+            collectionID: nil,
+            peerUserID: nil
+        )
+    }
+
+    static func user(_ user: User) -> SafetyReportSource {
+        let title = compactTitle(user.nickname, fallback: "用户")
+        return SafetyReportSource(
+            type: .user,
+            id: user.id,
+            title: title,
+            ownerUserID: user.id,
+            collectionID: nil,
+            peerUserID: user.id
+        )
+    }
+
+    static func directMessage(_ message: DirectMessage, peerUserID: String) -> SafetyReportSource {
+        SafetyReportSource(
+            type: .directMessage,
+            id: message.id,
+            title: directMessageTitle(message),
+            ownerUserID: message.senderID,
+            collectionID: nil,
+            peerUserID: peerUserID
+        )
+    }
+
+    static func collection(_ collection: GroupCollection) -> SafetyReportSource {
+        SafetyReportSource(
+            type: .collection,
+            id: collection.id,
+            title: compactTitle(collection.name, fallback: "合集"),
+            ownerUserID: collection.ownerID,
+            collectionID: collection.id,
+            peerUserID: nil
+        )
+    }
+
+    private static func directMessageTitle(_ message: DirectMessage) -> String {
+        if message.imageData != nil || !message.remoteImageURL.isEmpty || message.body == "[图片]" {
+            return "[图片]"
+        }
+        if message.sharedPostID != nil {
+            return "分享的帖子"
+        }
+        if message.sharedProfileUserID != nil {
+            return "分享的主页"
+        }
+        return compactTitle(message.body, fallback: "私信")
+    }
+
+    private static func compactTitle(_ rawValue: String, fallback: String) -> String {
+        let collapsed = rawValue
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmed
+        guard !collapsed.isEmpty else {
+            return fallback
+        }
+        if collapsed.count > 48 {
+            let endIndex = collapsed.index(collapsed.startIndex, offsetBy: 48)
+            return String(collapsed[..<endIndex]) + "…"
+        }
+        return collapsed
+    }
+}
+
 struct SafetyReportFormValidation: Equatable {
     let reasonMessage: String?
     let fieldMessage: String?
@@ -257,17 +390,23 @@ struct SafetyReportEvidenceBuffer: Equatable {
     private(set) var statusMessage: String?
     private(set) var isLoading: Bool
     private var activeGeneration: Int
+    private var activeCommittedItemIDs: Set<UUID>
+    private var activeCapacityOverflowCount: Int
 
     init(
         items: [SafetyReportEvidenceItem] = [],
         statusMessage: String? = nil,
         isLoading: Bool = false,
-        activeGeneration: Int = 0
+        activeGeneration: Int = 0,
+        activeCommittedItemIDs: Set<UUID> = [],
+        activeCapacityOverflowCount: Int = 0
     ) {
         self.items = items
         self.statusMessage = statusMessage
         self.isLoading = isLoading
         self.activeGeneration = activeGeneration
+        self.activeCommittedItemIDs = activeCommittedItemIDs
+        self.activeCapacityOverflowCount = activeCapacityOverflowCount
     }
 
     @discardableResult
@@ -275,7 +414,51 @@ struct SafetyReportEvidenceBuffer: Equatable {
         activeGeneration &+= 1
         isLoading = true
         statusMessage = nil
+        activeCommittedItemIDs.removeAll()
+        activeCapacityOverflowCount = 0
         return activeGeneration
+    }
+
+    @discardableResult
+    mutating func commitLoadedData(_ data: Data, generation: Int) -> Bool {
+        guard isLoading, generation == activeGeneration else {
+            return false
+        }
+        guard items.count < SafetyReportFormLogic.maxEvidenceCount else {
+            activeCapacityOverflowCount += 1
+            return true
+        }
+
+        let item = SafetyReportEvidenceItem(data: data)
+        items.append(item)
+        activeCommittedItemIDs.insert(item.id)
+        return true
+    }
+
+    @discardableResult
+    mutating func finishIncrementalLoading(
+        generation: Int,
+        selectedCount: Int,
+        failedCount: Int
+    ) -> Bool {
+        guard isLoading, generation == activeGeneration else {
+            return false
+        }
+
+        let nonBatchItemCount = max(0, items.count - activeCommittedItemIDs.count)
+        let availableCapacity = max(0, SafetyReportFormLogic.maxEvidenceCount - nonBatchItemCount)
+        isLoading = false
+
+        if activeCapacityOverflowCount > 0 || selectedCount > availableCapacity {
+            statusMessage = "最多上传 \(SafetyReportFormLogic.maxEvidenceCount) 张证据图片"
+        } else if failedCount > 0 {
+            statusMessage = "有 \(failedCount) 张图片处理失败，请重试或换一张"
+        } else {
+            statusMessage = nil
+        }
+        activeCommittedItemIDs.removeAll()
+        activeCapacityOverflowCount = 0
+        return true
     }
 
     @discardableResult
@@ -285,38 +468,113 @@ struct SafetyReportEvidenceBuffer: Equatable {
         selectedCount: Int,
         failedCount: Int
     ) -> Bool {
-        guard generation == activeGeneration else {
+        guard isLoading, generation == activeGeneration else {
             return false
         }
 
-        let remainingCapacity = max(0, SafetyReportFormLogic.maxEvidenceCount - items.count)
-        let appendedItems = loadedData
-            .prefix(remainingCapacity)
-            .map { SafetyReportEvidenceItem(data: $0) }
-        items.append(contentsOf: appendedItems)
-        isLoading = false
-
-        if selectedCount > remainingCapacity {
-            statusMessage = "最多上传 \(SafetyReportFormLogic.maxEvidenceCount) 张证据图片"
-        } else if failedCount > 0 {
-            statusMessage = "有 \(failedCount) 张图片处理失败，请重试或换一张"
-        } else {
-            statusMessage = nil
+        for data in loadedData {
+            _ = commitLoadedData(data, generation: generation)
         }
-
-        return true
+        return finishIncrementalLoading(
+            generation: generation,
+            selectedCount: selectedCount,
+            failedCount: failedCount
+        )
     }
 
     mutating func cancelLoading() {
+        guard isLoading else { return }
+        activeGeneration &+= 1
         isLoading = false
+        activeCommittedItemIDs.removeAll()
+        activeCapacityOverflowCount = 0
     }
 
     mutating func remove(_ itemID: UUID) {
         items.removeAll { $0.id == itemID }
+        activeCommittedItemIDs.remove(itemID)
         if items.count < SafetyReportFormLogic.maxEvidenceCount,
            statusMessage == "最多上传 \(SafetyReportFormLogic.maxEvidenceCount) 张证据图片" {
             statusMessage = nil
         }
+    }
+}
+
+enum SafetyReportEvidenceBatchLoader {
+    static func load<Item>(
+        items: [Item],
+        load: @escaping (Item) async throws -> Data?,
+        didLoad: @escaping @MainActor (Data) -> Bool,
+        didFinish: @escaping @MainActor (_ selectedCount: Int, _ failedCount: Int) -> Void
+    ) async {
+        var failedCount = 0
+
+        for item in items {
+            guard !Task.isCancelled else { return }
+            do {
+                guard let data = try await load(item) else {
+                    failedCount += 1
+                    continue
+                }
+                guard !Task.isCancelled else { return }
+                guard await didLoad(data) else { return }
+            } catch {
+                guard !Task.isCancelled else { return }
+                failedCount += 1
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        await didFinish(items.count, failedCount)
+    }
+}
+
+struct SafetyReportFormSnapshot: Identifiable, Equatable {
+    let reporterUserID: String
+    let source: SafetyReportSource
+    let reason: SafetyReasonCode
+    let reportedField: SafetyReportedField
+    let detail: String
+    let evidence: SafetyReportEvidenceBuffer
+    let blockReportedUser: Bool
+    let clientRequestID: String
+
+    var id: String { clientRequestID }
+}
+
+enum SafetyReportSnapshotPersistencePolicy {
+    static func canPersist(
+        candidate: SafetyReportFormSnapshot,
+        retainedSnapshot: SafetyReportFormSnapshot?,
+        presentationFinished: Bool,
+        currentUserID: String
+    ) -> Bool {
+        guard !presentationFinished,
+              candidate.reporterUserID == currentUserID,
+              let retainedSnapshot else {
+            return false
+        }
+        return retainedSnapshot.reporterUserID == candidate.reporterUserID &&
+            retainedSnapshot.clientRequestID == candidate.clientRequestID
+    }
+
+    @MainActor
+    @discardableResult
+    static func persistIfEligible(
+        _ snapshot: SafetyReportFormSnapshot,
+        in store: MockAppStore,
+        presentationFinished: Bool
+    ) -> Bool {
+        guard canPersist(
+            candidate: snapshot,
+            retainedSnapshot: store.resumableSafetyReportFormSnapshot(for: snapshot.reporterUserID),
+            presentationFinished: presentationFinished,
+            currentUserID: store.currentUserID
+        ) else {
+            return false
+        }
+        store.saveSafetyReportFormSnapshot(snapshot)
+        return true
     }
 }
 
@@ -328,12 +586,14 @@ struct ReportSheet: View {
     let source: SafetyReportSource
     let onAccepted: () -> Void
 
+    private let initialSnapshot: SafetyReportFormSnapshot?
+
     @State private var reason: SafetyReasonCode
     @State private var reportedField: SafetyReportedField
-    @State private var detail = ""
+    @State private var detail: String
     @State private var blockUser: Bool
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var evidenceBuffer = SafetyReportEvidenceBuffer()
+    @State private var evidenceBuffer: SafetyReportEvidenceBuffer
     @State private var evidenceLoadTask: Task<Void, Never>?
     @State private var hasAttemptedSubmit = false
     @State private var hasConfirmedCollectionScope = false
@@ -341,15 +601,49 @@ struct ReportSheet: View {
     @State private var isSubmitting = false
     @State private var submitTask: Task<Void, Never>?
     @State private var draftState: SafetyReportDraftState
+    @State private var reporterUserID: String?
+    @State private var didFinishPresentation = false
 
-    init(source: SafetyReportSource, onAccepted: @escaping () -> Void) {
+    init(
+        source: SafetyReportSource,
+        initialSnapshot: SafetyReportFormSnapshot? = nil,
+        onAccepted: @escaping () -> Void
+    ) {
         self.source = source
+        self.initialSnapshot = initialSnapshot
         self.onAccepted = onAccepted
-        let initialReason = source.allowedReasons.first ?? .other
+        let initialReason = initialSnapshot?.reason ?? source.allowedReasons.first ?? .other
         _reason = State(initialValue: initialReason)
-        _reportedField = State(initialValue: SafetyReportFormLogic.allowedFields(for: source, reason: initialReason).first ?? .content)
-        _blockUser = State(initialValue: source.canOfferBlock)
-        _draftState = State(initialValue: SafetyReportDraftState(sourceType: source.type, sourceID: source.objectID))
+        _reportedField = State(
+            initialValue: initialSnapshot?.reportedField ?? SafetyReportFormLogic.allowedFields(
+                for: source,
+                reason: initialReason
+            ).first ?? .content
+        )
+        _detail = State(initialValue: initialSnapshot?.detail ?? "")
+        _blockUser = State(initialValue: initialSnapshot?.blockReportedUser ?? source.canOfferBlock)
+        _evidenceBuffer = State(initialValue: initialSnapshot?.evidence ?? SafetyReportEvidenceBuffer())
+        _draftState = State(
+            initialValue: SafetyReportDraftState(
+                sourceType: source.type,
+                sourceID: source.objectID,
+                clientRequestID: initialSnapshot?.clientRequestID ?? UUID().uuidString
+            )
+        )
+        _reporterUserID = State(initialValue: initialSnapshot?.reporterUserID)
+    }
+
+    private var formSnapshot: SafetyReportFormSnapshot {
+        SafetyReportFormSnapshot(
+            reporterUserID: reporterUserID ?? store.currentUserID,
+            source: source,
+            reason: reason,
+            reportedField: reportedField,
+            detail: detail,
+            evidence: evidenceBuffer,
+            blockReportedUser: blockUser,
+            clientRequestID: draftState.clientRequestID
+        )
     }
 
     private var availableFields: [SafetyReportedField] {
@@ -497,6 +791,19 @@ struct ReportSheet: View {
                 blockUser = false
             }
         }
+        .onChange(of: formSnapshot) { _, snapshot in
+            SafetyReportSnapshotPersistencePolicy.persistIfEligible(
+                snapshot,
+                in: store,
+                presentationFinished: didFinishPresentation
+            )
+        }
+        .onAppear {
+            if reporterUserID == nil {
+                reporterUserID = store.currentUserID
+            }
+            store.saveSafetyReportFormSnapshot(formSnapshot)
+        }
         .onDisappear {
             evidenceLoadTask?.cancel()
             evidenceLoadTask = nil
@@ -504,6 +811,17 @@ struct ReportSheet: View {
             submitTask?.cancel()
             submitTask = nil
             isSubmitting = false
+            if !didFinishPresentation {
+                if store.isLoggedIn {
+                    store.clearSafetyReportFormSnapshot()
+                } else {
+                    SafetyReportSnapshotPersistencePolicy.persistIfEligible(
+                        formSnapshot,
+                        in: store,
+                        presentationFinished: didFinishPresentation
+                    )
+                }
+            }
         }
     }
 
@@ -886,7 +1204,9 @@ struct ReportSheet: View {
 
         if accepted {
             await MainActor.run {
+                didFinishPresentation = true
                 draftState.markAccepted()
+                store.clearSafetyReportFormSnapshot()
                 onAccepted()
                 dismiss()
             }
@@ -900,6 +1220,11 @@ struct ReportSheet: View {
     private func cancel() {
         isDetailFocused = false
         hideKeyboard()
+        evidenceLoadTask?.cancel()
+        evidenceLoadTask = nil
+        evidenceBuffer.cancelLoading()
+        didFinishPresentation = true
+        store.clearSafetyReportFormSnapshot()
         dismiss()
     }
 
@@ -914,12 +1239,9 @@ struct ReportSheet: View {
     }
 
     private func loadEvidence(from items: [PhotosPickerItem], generation: Int) async {
-        var loadedData: [Data] = []
-        var failedCount = 0
-
-        for item in items {
-            guard !Task.isCancelled else { return }
-            do {
+        await SafetyReportEvidenceBatchLoader.load(
+            items: items,
+            load: { item in
                 if let data = try await item.loadTransferable(type: Data.self) {
                     guard let image = UIImage(data: data),
                           let normalized = ImageDataNormalizer.jpegData(
@@ -927,34 +1249,69 @@ struct ReportSheet: View {
                             maxSide: 1600,
                             compressionQuality: 0.78
                           ) else {
-                        failedCount += 1
-                        continue
+                        return nil
                     }
-                    loadedData.append(normalized)
-                } else {
-                    failedCount += 1
+                    return normalized
                 }
-            } catch {
-                failedCount += 1
+                return nil
+            },
+            didLoad: { data in
+                let snapshotBeforeCommit = formSnapshot
+                guard SafetyReportSnapshotPersistencePolicy.canPersist(
+                    candidate: snapshotBeforeCommit,
+                    retainedSnapshot: store.resumableSafetyReportFormSnapshot(
+                        for: snapshotBeforeCommit.reporterUserID
+                    ),
+                    presentationFinished: didFinishPresentation,
+                    currentUserID: store.currentUserID
+                ) else {
+                    return false
+                }
+                var isCurrentGeneration = false
+                withAnimation(AppMotion.quick) {
+                    isCurrentGeneration = evidenceBuffer.commitLoadedData(data, generation: generation)
+                }
+                if isCurrentGeneration {
+                    return SafetyReportSnapshotPersistencePolicy.persistIfEligible(
+                        formSnapshot,
+                        in: store,
+                        presentationFinished: didFinishPresentation
+                    )
+                }
+                return false
+            },
+            didFinish: { selectedCount, failedCount in
+                let snapshotBeforeFinish = formSnapshot
+                guard SafetyReportSnapshotPersistencePolicy.canPersist(
+                    candidate: snapshotBeforeFinish,
+                    retainedSnapshot: store.resumableSafetyReportFormSnapshot(
+                        for: snapshotBeforeFinish.reporterUserID
+                    ),
+                    presentationFinished: didFinishPresentation,
+                    currentUserID: store.currentUserID
+                ) else {
+                    return
+                }
+                var didFinish = false
+                withAnimation(AppMotion.quick) {
+                    didFinish = evidenceBuffer.finishIncrementalLoading(
+                        generation: generation,
+                        selectedCount: selectedCount,
+                        failedCount: failedCount
+                    )
+                }
+                guard didFinish else { return }
+                guard SafetyReportSnapshotPersistencePolicy.persistIfEligible(
+                    formSnapshot,
+                    in: store,
+                    presentationFinished: didFinishPresentation
+                ) else {
+                    return
+                }
+                selectedPhotoItems = []
+                evidenceLoadTask = nil
             }
-        }
-
-        guard !Task.isCancelled else { return }
-
-        await MainActor.run {
-            var didFinish = false
-            withAnimation(AppMotion.quick) {
-                didFinish = evidenceBuffer.finishLoading(
-                    generation: generation,
-                    loadedData: loadedData,
-                    selectedCount: items.count,
-                    failedCount: failedCount
-                )
-            }
-            guard didFinish else { return }
-            selectedPhotoItems = []
-            evidenceLoadTask = nil
-        }
+        )
     }
 
     private func removeEvidence(_ item: SafetyReportEvidenceItem) {

@@ -8,6 +8,7 @@ struct PostDetailView: View {
     @State private var replyTargetCommentID: String?
     @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
+    @State private var reportSource: SafetyReportSource?
     @State private var isAuthorProfilePresented = false
     @State private var authorProfileUserID: String?
     @State private var selectedImageIndex = 0
@@ -29,7 +30,14 @@ struct PostDetailView: View {
             let imageCount = max(1, max(post.remoteImageURLs.count, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count))
             let detailImageHeight = imageHeight(for: post, index: 0)
             VStack(spacing: 0) {
-                DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
+                DetailTopBar(
+                    post: post,
+                    author: author,
+                    isShareSheetPresented: $isShareSheetPresented,
+                    onReportRequested: {
+                        presentPostReport(post)
+                    }
+                )
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         TabView(selection: $selectedImageIndex) {
@@ -124,10 +132,16 @@ struct PostDetailView: View {
                             withAnimation(.easeInOut(duration: 0.18)) {
                                 actionCommentID = nil
                             }
-                        }
+                        },
+                        onReport: SafetyReportEntryPolicy.canReportComment(actionComment, currentUserID: store.currentUserID) ? {
+                            presentCommentReport(actionComment)
+                        } : nil
                     )
                     .transition(.opacity)
                 }
+            }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
             }
             .sheet(isPresented: $isShareSheetPresented) {
                 ShareSheetView(post: post)
@@ -148,6 +162,31 @@ struct PostDetailView: View {
         } else {
             ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
                 .background(Theme.background)
+        }
+    }
+
+    private func presentPostReport(_ post: GroupBuyPost) {
+        guard SafetyReportEntryPolicy.canReportPost(post, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.post(post)
+    }
+
+    private func presentCommentReport(_ comment: Comment) {
+        guard SafetyReportEntryPolicy.canReportComment(comment, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            actionCommentID = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            reportSource = SafetyReportSourceFactory.comment(comment)
         }
     }
 
@@ -272,8 +311,10 @@ struct DetailTopBar: View {
     let post: GroupBuyPost
     let author: User
     @Binding var isShareSheetPresented: Bool
+    let onReportRequested: () -> Void
 
     var body: some View {
+        let canReportPost = SafetyReportEntryPolicy.canReportPost(post, currentUserID: store.currentUserID)
         HStack(spacing: 12) {
             Button {
                 dismiss()
@@ -310,17 +351,30 @@ struct DetailTopBar: View {
             }
             .buttonStyle(.plain)
 
-            Button {
-                if store.requireLogin(prompt: "登录后才能分享") {
-                    isShareSheetPresented = true
+            Menu {
+                Button {
+                    if store.requireLogin(prompt: "登录后才能分享") {
+                        isShareSheetPresented = true
+                    }
+                } label: {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+
+                if canReportPost {
+                    Button(role: .destructive) {
+                        onReportRequested()
+                    } label: {
+                        Label("举报", systemImage: "exclamationmark.bubble")
+                    }
                 }
             } label: {
-                Image(systemName: "square.and.arrow.up")
+                Image(systemName: "ellipsis.circle")
                     .font(.system(size: 24, weight: .semibold))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.text)
+            .accessibilityLabel("更多操作")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -990,6 +1044,7 @@ struct ContactCard: View {
         let qq = collection?.contactQQ ?? post.qq
         let groupNumber = collection?.contactGroupNumber ?? post.groupNumber
         let groupInfo = collection?.groupInfo ?? post.groupInfo
+        let isContactHidden = SafetyReportEntryPolicy.isContactHidden(post: post, collection: collection)
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("联系团长", systemImage: "person.crop.circle.badge.questionmark")
@@ -1007,15 +1062,15 @@ struct ContactCard: View {
 
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
-                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !wechat.trimmed.isEmpty) {
+                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !isContactHidden && !wechat.trimmed.isEmpty) {
                         store.copyToPasteboard(wechat, label: "微信")
                     }
-                    ContactButton(title: "复制 QQ", icon: "number", isEnabled: !qq.trimmed.isEmpty) {
+                    ContactButton(title: "复制 QQ", icon: "number", isEnabled: !isContactHidden && !qq.trimmed.isEmpty) {
                         store.copyToPasteboard(qq, label: "QQ")
                     }
                 }
                 HStack(spacing: 10) {
-                    ContactButton(title: "加入群聊", icon: "person.3.fill", isEnabled: !groupNumber.trimmed.isEmpty) {
+                    ContactButton(title: "加入群聊", icon: "person.3.fill", isEnabled: !isContactHidden && !groupNumber.trimmed.isEmpty) {
                         store.copyToPasteboard(groupNumber, label: "QQ群号")
                     }
                     ContactButton(title: "私信咨询", icon: "bubble.left.and.text.bubble.right.fill") {
@@ -1023,7 +1078,13 @@ struct ContactCard: View {
                     }
                 }
             }
-            if !groupInfo.trimmed.isEmpty {
+            if isContactHidden {
+                Text(SafetyReportEntryPolicy.hiddenContactPlaceholder)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineSpacing(3)
+                    .foregroundStyle(Theme.subtext)
+                    .padding(.top, 2)
+            } else if !groupInfo.trimmed.isEmpty {
                 Text(groupInfo)
                     .font(.system(size: 13, weight: .medium))
                     .lineSpacing(3)
@@ -1153,6 +1214,7 @@ struct CommentActionOverlay: View {
     let onReply: () -> Void
     let onCopy: () -> Void
     let onDelete: () -> Void
+    let onReport: (() -> Void)?
 
     var body: some View {
         let author = store.user(id: comment.authorID)
@@ -1176,6 +1238,10 @@ struct CommentActionOverlay: View {
                     CommentActionRow(title: "回复", systemImage: "bubble.left", action: onReply)
                     CommentActionDivider()
                     CommentActionRow(title: "复制", systemImage: "doc.on.doc", action: onCopy)
+                    if let onReport {
+                        CommentActionDivider()
+                        CommentActionRow(title: "举报", systemImage: "exclamationmark.bubble", isDestructive: true, action: onReport)
+                    }
                 }
                 .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 

@@ -1053,6 +1053,7 @@ struct CreateCollectionSheet: View {
 struct CollectionDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isEditingCollection = false
+    @State private var reportSource: SafetyReportSource?
     let collectionID: String
 
     var body: some View {
@@ -1104,15 +1105,47 @@ struct CollectionDetailView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if !canManage {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button(role: .destructive) {
+                                presentCollectionReport(collection)
+                            } label: {
+                                Label("举报", systemImage: "exclamationmark.bubble")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("更多操作")
+                    }
+                }
+            }
             .sheet(isPresented: $isEditingCollection) {
                 CreateCollectionSheet(editingCollection: collection)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
+            }
         } else {
             ContentUnavailableView("合集不存在", systemImage: "rectangle.stack.badge.minus")
                 .background(Theme.background)
         }
+    }
+
+    private func presentCollectionReport(_ collection: GroupCollection) {
+        guard SafetyReportEntryPolicy.canReportCollection(collection, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.collection(collection)
     }
 }
 
@@ -1178,15 +1211,21 @@ struct CollectionSharedInfoCard: View {
     let collection: GroupCollection
 
     var body: some View {
+        let isContactHidden = SafetyReportEntryPolicy.isContactHidden(collection: collection)
         VStack(alignment: .leading, spacing: 12) {
             Label("合集共享信息", systemImage: "link.circle.fill")
                 .font(.system(size: 17, weight: .black))
                 .foregroundStyle(Theme.text)
             InfoRow(title: "拼团名称", value: collection.name)
             InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
-            InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
-            InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
-            InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            if isContactHidden {
+                InfoRow(title: "联系方式", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+                InfoRow(title: "拉群说明", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+            } else {
+                InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
+                InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
+                InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            }
             InfoRow(title: "默认说明", value: collection.defaultNote)
         }
         .padding(14)
@@ -2058,6 +2097,7 @@ struct UserProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var selectedTab = "制品"
     @State private var pendingBlockConfirmation: BlockConfirmation?
+    @State private var reportSource: SafetyReportSource?
     let userID: String
 
     private let tabs = ["制品", "拼团合集"]
@@ -2101,6 +2141,37 @@ struct UserProfileView: View {
                                 .buttonStyle(.plain)
 
                                 Spacer()
+
+                                if user.id != store.currentUserID {
+                                    Menu {
+                                        Button(role: .destructive) {
+                                            presentUserReport(user)
+                                        } label: {
+                                            Label("举报用户", systemImage: "exclamationmark.bubble")
+                                        }
+
+                                        Button(role: store.isBlocked(user.id) ? nil : .destructive) {
+                                            pendingBlockConfirmation = BlockConfirmation(
+                                                userID: user.id,
+                                                nickname: user.nickname,
+                                                isUnblock: store.isBlocked(user.id)
+                                            )
+                                        } label: {
+                                            Label(
+                                                store.isBlocked(user.id) ? "解除拉黑" : "拉黑该用户",
+                                                systemImage: store.isBlocked(user.id) ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark"
+                                            )
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                            .font(.system(size: 24, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .frame(width: 48, height: 48)
+                                            .background(.black.opacity(0.22), in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("更多操作")
+                                }
                             }
 
                             Spacer(minLength: 20)
@@ -2188,24 +2259,6 @@ struct UserProfileView: View {
                                 }
                             }
 
-                            if user.id != store.currentUserID {
-                                Button {
-                                    pendingBlockConfirmation = BlockConfirmation(
-                                        userID: user.id,
-                                        nickname: user.nickname,
-                                        isUnblock: store.isBlocked(user.id)
-                                    )
-                                } label: {
-                                    Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundStyle(.white.opacity(0.9))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.top, 10)
-                            }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
@@ -2262,6 +2315,9 @@ struct UserProfileView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .sheet(item: $reportSource) { source in
+            ReportSheet(source: source) {}
+        }
         .alert(
             Text(pendingBlockConfirmation?.isUnblock == true ? "确认解除拉黑该用户？" : "确认拉黑该用户？"),
             isPresented: Binding(
@@ -2301,6 +2357,16 @@ struct UserProfileView: View {
                     dismiss()
                 }
         )
+    }
+
+    private func presentUserReport(_ user: User) {
+        guard SafetyReportEntryPolicy.canReportUser(userID: user.id, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.user(user)
     }
 
     private func profileEmptyMessage(for user: User) -> String {

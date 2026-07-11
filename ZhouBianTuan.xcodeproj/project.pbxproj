@@ -40,6 +40,7 @@
 		7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */; };
 		7D9F01012D21000100A10001 /* ReportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01002D21000100A10001 /* ReportViews.swift */; };
 		7D9F01032D21000100A10001 /* ReportFormLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */; };
+		7D9F01052D22000100A10001 /* ReportEntryPointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01042D22000100A10001 /* ReportEntryPointTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +106,7 @@
 		7D4E6EC22C8A4A5100A10001 /* ZhouBianTuanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZhouBianTuanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D9F01002D21000100A10001 /* ReportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportViews.swift; sourceTree = "<group>"; };
 		7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFormLogicTests.swift; sourceTree = "<group>"; };
+		7D9F01042D22000100A10001 /* ReportEntryPointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportEntryPointTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -219,6 +221,7 @@
 			children = (
 				7D4E6EC02C8A4A5100A10001 /* ReportingQualityTests.swift */,
 				7D9F01022D21000100A10001 /* ReportFormLogicTests.swift */,
+				7D9F01042D22000100A10001 /* ReportEntryPointTests.swift */,
 			);
 			path = ZhouBianTuanTests;
 			sourceTree = "<group>";
@@ -360,6 +363,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D9F01052D22000100A10001 /* ReportEntryPointTests.swift in Sources */,
 				7D9F01032D21000100A10001 /* ReportFormLogicTests.swift in Sources */,
 				7D4E6EC12C8A4A5100A10001 /* ReportingQualityTests.swift in Sources */,
 			);
