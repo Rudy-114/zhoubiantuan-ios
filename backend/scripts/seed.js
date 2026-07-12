@@ -1,5 +1,7 @@
+import { isIP } from "node:net";
 import { pool, query, withTransaction } from "../src/db.js";
 import { hashPassword } from "../src/auth.js";
+import { captureSourceEvidence } from "../src/safety/evidenceService.js";
 
 const now = new Date();
 const date = (days, hour) => {
@@ -169,7 +171,32 @@ const posts = [
   }
 ];
 
+const demoReport = {
+  id: "rp-1",
+  caseID: "sc-demo-invalid-contact",
+  evidenceID: "se-demo-rp-1",
+  clientRequestID: "seed-demo-rp-1",
+  reporterID: "u-me",
+  sourceType: "post",
+  sourceID: "p-badge",
+  subjectType: "collection",
+  subjectID: "col-winter-bucky",
+  impactScope: "collection",
+  reasonCode: "invalid_contact",
+  reportedField: "contact_wechat",
+  reason: "无效联系方式",
+  detail: "用户反馈微信搜索不到，需团长确认。"
+};
+
 try {
+  if (String(process.env.NODE_ENV || "").trim().toLowerCase() === "production") {
+    throw new Error("Refusing to seed a production database");
+  }
+  if (String(process.env.ALLOW_DEMO_SEED || "").trim().toLowerCase() !== "true") {
+    throw new Error("Refusing to seed without ALLOW_DEMO_SEED=true");
+  }
+  assertConfiguredLocalDatabase();
+  await assertConnectedLocalDatabase();
   const passwordHash = await hashPassword("123456");
   await withTransaction(async (client) => {
     for (const user of users) {
@@ -293,14 +320,276 @@ try {
       await client.query("INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [followerId, followingId]);
     }
 
-    await client.query(
-      `INSERT INTO reports (id, target_type, target_id, reason, detail, reporter_id)
-       VALUES ($1, 'post', $2, $3, $4, $5)
-       ON CONFLICT (id) DO NOTHING`,
-      ["rp-1", "p-badge", "无效联系方式", "用户反馈微信搜索不到，需团长确认。", "u-me"]
+    const sourceEvidence = await captureSourceEvidence(client, {
+      reporterId: demoReport.reporterID,
+      sourceType: demoReport.sourceType,
+      sourceId: demoReport.sourceID
+    });
+    const priorReportResult = await client.query(
+      "SELECT case_id FROM reports WHERE id = $1 FOR UPDATE",
+      [demoReport.id]
     );
+    const priorCaseID = priorReportResult.rows[0]?.case_id || null;
+    const caseResult = await client.query(
+      `INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope, status)
+       VALUES ($1, $2, $3, $4, $5, 'received')
+       ON CONFLICT (id) DO UPDATE SET
+         subject_type = EXCLUDED.subject_type,
+         subject_id = EXCLUDED.subject_id,
+         category = EXCLUDED.category,
+         impact_scope = EXCLUDED.impact_scope,
+         status = EXCLUDED.status,
+         risk_level = 'none',
+         confidence = 0,
+         ai_recommendation = '{}'::jsonb,
+         manual_hold = false,
+         correction_due_at = NULL,
+         model_version = '',
+         prompt_version = '',
+         policy_version = 'safety-policy-v1',
+         resolved_at = NULL,
+         updated_at = now()
+       WHERE (
+         (
+           safety_cases.subject_type = EXCLUDED.subject_type
+           AND safety_cases.subject_id = EXCLUDED.subject_id
+           AND safety_cases.category = EXCLUDED.category
+           AND safety_cases.impact_scope = EXCLUDED.impact_scope
+         ) OR EXISTS (
+           SELECT 1
+           FROM reports r
+           WHERE r.id = $6
+             AND r.case_id = safety_cases.id
+             AND r.target_type = $7
+             AND r.target_id = $8
+             AND r.reason = $9
+             AND r.detail = $10
+             AND r.reporter_id = $11
+         )
+       )
+         AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.case_id = safety_cases.id AND r.id <> $6)
+         AND NOT EXISTS (SELECT 1 FROM safety_evidence e WHERE e.case_id = safety_cases.id AND e.id <> $12)
+         AND NOT EXISTS (SELECT 1 FROM safety_case_events event WHERE event.case_id = safety_cases.id)
+         AND NOT EXISTS (SELECT 1 FROM safety_actions action WHERE action.case_id = safety_cases.id)
+         AND NOT EXISTS (SELECT 1 FROM safety_jobs job WHERE job.case_id = safety_cases.id)
+       RETURNING safety_cases.id`,
+      [
+        demoReport.caseID,
+        demoReport.subjectType,
+        demoReport.subjectID,
+        demoReport.reasonCode,
+        demoReport.impactScope,
+        demoReport.id,
+        demoReport.sourceType,
+        demoReport.sourceID,
+        demoReport.reason,
+        demoReport.detail,
+        demoReport.reporterID,
+        demoReport.evidenceID
+      ]
+    );
+    assertFixtureWrite(caseResult);
+    const reportResult = await client.query(
+      `INSERT INTO reports (
+         id, target_type, target_id, reason, detail, reporter_id, status,
+         client_request_id, case_id, source_type, source_id, subject_type, subject_id, reason_code, reported_field
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, 'pending',
+         $7, $8, $2, $3, $9, $10, $11, $12
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         target_type = EXCLUDED.target_type,
+         target_id = EXCLUDED.target_id,
+         reason = EXCLUDED.reason,
+         detail = EXCLUDED.detail,
+         reporter_id = EXCLUDED.reporter_id,
+         status = EXCLUDED.status,
+         client_request_id = EXCLUDED.client_request_id,
+         case_id = EXCLUDED.case_id,
+         source_type = EXCLUDED.source_type,
+         source_id = EXCLUDED.source_id,
+         subject_type = EXCLUDED.subject_type,
+         subject_id = EXCLUDED.subject_id,
+         reason_code = EXCLUDED.reason_code,
+         reported_field = EXCLUDED.reported_field,
+         admin_result = NULL,
+         handled_at = NULL,
+         updated_at = now()
+       WHERE reports.target_type = EXCLUDED.target_type
+         AND reports.target_id = EXCLUDED.target_id
+         AND reports.reason = EXCLUDED.reason
+         AND reports.detail = EXCLUDED.detail
+         AND reports.reporter_id = EXCLUDED.reporter_id
+         AND (
+           reports.case_id = EXCLUDED.case_id
+           OR (
+             reports.case_id LIKE 'sc-legacy-%'
+             AND NOT EXISTS (SELECT 1 FROM reports other WHERE other.case_id = reports.case_id AND other.id <> reports.id)
+             AND NOT EXISTS (SELECT 1 FROM safety_evidence e WHERE e.case_id = reports.case_id)
+             AND NOT EXISTS (SELECT 1 FROM safety_case_events event WHERE event.case_id = reports.case_id)
+             AND NOT EXISTS (SELECT 1 FROM safety_actions action WHERE action.case_id = reports.case_id)
+             AND NOT EXISTS (SELECT 1 FROM safety_jobs job WHERE job.case_id = reports.case_id)
+           )
+         )
+       RETURNING reports.id`,
+      [
+        demoReport.id,
+        demoReport.sourceType,
+        demoReport.sourceID,
+        demoReport.reason,
+        demoReport.detail,
+        demoReport.reporterID,
+        demoReport.clientRequestID,
+        demoReport.caseID,
+        demoReport.subjectType,
+        demoReport.subjectID,
+        demoReport.reasonCode,
+        demoReport.reportedField
+      ]
+    );
+    assertFixtureWrite(reportResult);
+    const evidenceResult = await client.query(
+      `INSERT INTO safety_evidence (
+         id, case_id, report_id, client_request_id, evidence_type, text_snapshot, structured_snapshot,
+         object_keys, context_start_message_id, context_end_message_id, retention_delete_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7::jsonb,
+         $8, $9, $10, $11
+       )
+       ON CONFLICT (id) DO UPDATE SET
+         case_id = EXCLUDED.case_id,
+         report_id = EXCLUDED.report_id,
+         client_request_id = EXCLUDED.client_request_id,
+         evidence_type = EXCLUDED.evidence_type,
+         text_snapshot = EXCLUDED.text_snapshot,
+         structured_snapshot = EXCLUDED.structured_snapshot,
+         object_keys = EXCLUDED.object_keys,
+         context_start_message_id = EXCLUDED.context_start_message_id,
+         context_end_message_id = EXCLUDED.context_end_message_id,
+         retention_delete_at = EXCLUDED.retention_delete_at,
+         redacted_at = NULL
+       WHERE safety_evidence.case_id = EXCLUDED.case_id
+         AND safety_evidence.report_id = EXCLUDED.report_id
+       RETURNING safety_evidence.id`,
+      [
+        demoReport.evidenceID,
+        demoReport.caseID,
+        demoReport.id,
+        demoReport.clientRequestID,
+        sourceEvidence.evidenceType,
+        sourceEvidence.textSnapshot,
+        JSON.stringify({
+          source: sourceEvidence.structuredSnapshot,
+          report: {
+            reasonCode: demoReport.reasonCode,
+            reportedField: demoReport.reportedField,
+            detail: demoReport.detail,
+            supplemental: false
+          }
+        }),
+        sourceEvidence.objectKeys,
+        sourceEvidence.contextStartMessageId,
+        sourceEvidence.contextEndMessageId,
+        sourceEvidence.retentionDeleteAt
+      ]
+    );
+    assertFixtureWrite(evidenceResult);
+    await cleanupMigratedDemoCase(client, priorCaseID);
   });
   console.log("seed complete");
 } finally {
   await pool.end();
+}
+
+function assertConfiguredLocalDatabase() {
+  const configuredHost = databaseHostFromEnvironment();
+  if (!isLocalDatabaseHost(configuredHost)) {
+    throw new Error("Refusing to seed a non-loopback database");
+  }
+}
+
+async function assertConnectedLocalDatabase() {
+  const allowedDatabases = demoSeedDatabaseAllowlist();
+  const { rows } = await query(
+    "SELECT current_database() AS database_name, host(inet_server_addr()) AS server_address"
+  );
+  const target = rows[0];
+  if (!target?.database_name || (target.server_address && !isLoopbackAddress(target.server_address))) {
+    throw new Error("Refusing to seed a non-loopback database");
+  }
+  if (!allowedDatabases.has(target.database_name)) {
+    throw new Error("Refusing to seed a database not listed in DEMO_SEED_DATABASE_ALLOWLIST");
+  }
+}
+
+function demoSeedDatabaseAllowlist() {
+  const raw = String(process.env.DEMO_SEED_DATABASE_ALLOWLIST || "").trim();
+  const names = raw.split(",").map((name) => name.trim());
+  if (!raw || names.some((name) => !name)) {
+    throw new Error("Refusing to seed without a valid DEMO_SEED_DATABASE_ALLOWLIST");
+  }
+  return new Set(names);
+}
+
+function databaseHostFromEnvironment() {
+  const explicitHost = String(process.env.DB_HOST || "").trim();
+  if (explicitHost) return explicitHost;
+
+  const databaseURL = String(process.env.DATABASE_URL || "").trim();
+  if (!databaseURL) throw new Error("Refusing to seed without an explicit local database target");
+  let parsed;
+  try {
+    parsed = new URL(databaseURL);
+  } catch {
+    throw new Error("Refusing to seed without a valid local database target");
+  }
+  return parsed.searchParams.get("host") || parsed.hostname;
+}
+
+function isLocalDatabaseHost(host) {
+  const normalized = String(host || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return !normalized || normalized.startsWith("/") || normalized === "localhost" || isLoopbackAddress(normalized);
+}
+
+function isLoopbackAddress(address) {
+  const normalized = String(address || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized.startsWith("::ffff:")) return isLoopbackAddress(normalized.slice(7));
+  if (isIP(normalized) === 4) return normalized.split(".")[0] === "127";
+  return isIP(normalized) === 6 && ["::1", "0:0:0:0:0:0:0:1"].includes(normalized);
+}
+
+function assertFixtureWrite(result) {
+  if (result.rowCount !== 1) refuseAmbiguousDemoFixture();
+}
+
+async function cleanupMigratedDemoCase(client, priorCaseID) {
+  if (!priorCaseID || priorCaseID === demoReport.caseID) return;
+  if (!priorCaseID.startsWith("sc-legacy-")) refuseAmbiguousDemoFixture();
+
+  const cleanupResult = await client.query(
+    `DELETE FROM safety_cases legacy_case
+     WHERE legacy_case.id = $1
+       AND legacy_case.id LIKE 'sc-legacy-%'
+       AND legacy_case.subject_type = $4
+       AND legacy_case.subject_id = $5
+       AND legacy_case.category = 'other'
+       AND legacy_case.impact_scope = $4
+       AND legacy_case.status = 'received'
+       AND EXISTS (
+         SELECT 1 FROM reports r
+         WHERE r.id = $2 AND r.case_id = $3
+       )
+       AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.case_id = legacy_case.id)
+       AND NOT EXISTS (SELECT 1 FROM safety_evidence e WHERE e.case_id = legacy_case.id)
+       AND NOT EXISTS (SELECT 1 FROM safety_case_events event WHERE event.case_id = legacy_case.id)
+       AND NOT EXISTS (SELECT 1 FROM safety_actions action WHERE action.case_id = legacy_case.id)
+       AND NOT EXISTS (SELECT 1 FROM safety_jobs job WHERE job.case_id = legacy_case.id)
+     RETURNING legacy_case.id`,
+    [priorCaseID, demoReport.id, demoReport.caseID, demoReport.sourceType, demoReport.sourceID]
+  );
+  assertFixtureWrite(cleanupResult);
+}
+
+function refuseAmbiguousDemoFixture() {
+  throw new Error("Refusing to repair an ambiguous demo safety fixture collision");
 }
