@@ -221,3 +221,203 @@ public struct SafetyReportsResponse: Codable, Sendable {
         self.reports = reports
     }
 }
+
+public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
+    public var id: String { caseID }
+    public let caseID: String
+    public let targetType: SafetyTargetType
+    public let targetID: String
+    public let category: SafetyReasonCode
+    public let status: String
+    public let affectedFields: [SafetyReportedField]
+    public let reason: String
+    public let currentRestriction: String
+    public let correctionDueAt: String?
+    public let canSubmitRevision: Bool
+    public let canAppeal: Bool
+    public let revisionStatus: String?
+    public let updatedAt: String
+
+    public init(
+        caseID: String,
+        targetType: SafetyTargetType,
+        targetID: String,
+        category: SafetyReasonCode,
+        status: String,
+        affectedFields: [SafetyReportedField],
+        reason: String,
+        currentRestriction: String,
+        correctionDueAt: String?,
+        canSubmitRevision: Bool,
+        canAppeal: Bool,
+        revisionStatus: String?,
+        updatedAt: String
+    ) {
+        self.caseID = caseID
+        self.targetType = targetType
+        self.targetID = targetID
+        self.category = category
+        self.status = status
+        self.affectedFields = affectedFields
+        self.reason = reason
+        self.currentRestriction = currentRestriction
+        self.correctionDueAt = correctionDueAt
+        self.canSubmitRevision = canSubmitRevision
+        self.canAppeal = canAppeal
+        self.revisionStatus = revisionStatus
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct SafetyRevisionRoleSnapshot: Codable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let quantity: Int
+    public let priceAdjustment: Double
+
+    public init(id: String, name: String, quantity: Int, priceAdjustment: Double) {
+        self.id = id
+        self.name = name
+        self.quantity = quantity
+        self.priceAdjustment = priceAdjustment
+    }
+}
+
+public struct SafetyPostRevisionSnapshot: Codable, Equatable, Sendable {
+    public let title: String
+    public let imageNames: [String]
+    public let imageObjectKeys: [String]
+    public let previewImageObjectKeys: [String]
+    public let groupType: String
+    public let categoryTags: [String]
+    public let fandomTags: [String]
+    public let price: String
+    public let deposit: String
+    public let condition: String
+    public let isFormed: Bool
+    public let description: String
+    public let externalLink: String
+    public let imageAspect: Double
+    public let pingguAveragePrice: String
+    public let pingguNote: String
+    public let unsoldRoles: [SafetyRevisionRoleSnapshot]
+
+    public init(
+        title: String,
+        imageNames: [String],
+        imageObjectKeys: [String],
+        previewImageObjectKeys: [String],
+        groupType: String,
+        categoryTags: [String],
+        fandomTags: [String],
+        price: String,
+        deposit: String,
+        condition: String,
+        isFormed: Bool,
+        description: String,
+        externalLink: String,
+        imageAspect: Double,
+        pingguAveragePrice: String,
+        pingguNote: String,
+        unsoldRoles: [SafetyRevisionRoleSnapshot]
+    ) {
+        self.title = title
+        self.imageNames = imageNames
+        self.imageObjectKeys = imageObjectKeys
+        self.previewImageObjectKeys = previewImageObjectKeys
+        self.groupType = groupType
+        self.categoryTags = categoryTags
+        self.fandomTags = fandomTags
+        self.price = price
+        self.deposit = deposit
+        self.condition = condition
+        self.isFormed = isFormed
+        self.description = description
+        self.externalLink = externalLink
+        self.imageAspect = imageAspect
+        self.pingguAveragePrice = pingguAveragePrice
+        self.pingguNote = pingguNote
+        self.unsoldRoles = unsoldRoles
+    }
+}
+
+public struct SafetyCollectionRevisionSnapshot: Codable, Equatable, Sendable {
+    public let name: String
+    public let contactWechat: String
+    public let contactQQ: String
+    public let contactGroupNumber: String
+    public let groupInfo: String
+    public let deadline: String
+    public let defaultNote: String
+    public let deadlineConfirmed: Bool
+
+    public init(
+        name: String,
+        contactWechat: String,
+        contactQQ: String,
+        contactGroupNumber: String,
+        groupInfo: String,
+        deadline: String,
+        defaultNote: String,
+        deadlineConfirmed: Bool
+    ) {
+        self.name = name
+        self.contactWechat = contactWechat
+        self.contactQQ = contactQQ
+        self.contactGroupNumber = contactGroupNumber
+        self.groupInfo = groupInfo
+        self.deadline = deadline
+        self.defaultNote = defaultNote
+        self.deadlineConfirmed = deadlineConfirmed
+    }
+}
+
+public enum SafetyRevisionDraft: Encodable, Equatable, Sendable {
+    case post(snapshot: SafetyPostRevisionSnapshot, objectKeys: [String])
+    case collection(snapshot: SafetyCollectionRevisionSnapshot, objectKeys: [String])
+
+    private enum CodingKeys: String, CodingKey {
+        case snapshot
+        case objectKeys
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .post(snapshot, objectKeys):
+            try container.encode(snapshot, forKey: .snapshot)
+            try container.encode(objectKeys, forKey: .objectKeys)
+        case let .collection(snapshot, objectKeys):
+            try container.encode(snapshot, forKey: .snapshot)
+            try container.encode(objectKeys, forKey: .objectKeys)
+        }
+    }
+}
+
+public struct SafetyAppealDraft: Codable, Equatable, Sendable {
+    public let detail: String
+    public let objectKeys: [String]
+
+    public init(detail: String, objectKeys: [String]) {
+        self.detail = detail
+        self.objectKeys = objectKeys
+    }
+}
+
+public struct SafetyContentActionsResponse: Codable, Equatable, Sendable {
+    public let actions: [SafetyContentAction]
+    public let nextCursor: String?
+
+    public init(actions: [SafetyContentAction], nextCursor: String? = nil) {
+        self.actions = actions
+        self.nextCursor = nextCursor
+    }
+}
+
+public struct SafetyContentActionResponse: Codable, Equatable, Sendable {
+    public let action: SafetyContentAction
+
+    public init(action: SafetyContentAction) {
+        self.action = action
+    }
+}

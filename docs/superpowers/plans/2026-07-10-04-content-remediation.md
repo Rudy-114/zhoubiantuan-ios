@@ -342,11 +342,11 @@ Post-review API contract:
 **Interfaces:**
 - Produces: `SafetyContentAction`, `SafetyRevisionDraft`, `contentActions`, `submitRevision`, and `submitAppeal`.
 
-- [ ] **Step 1: Write failing Codable tests**
+- [x] **Step 1: Write failing Codable tests**
 
 Decode an `awaiting_correction` post action with affected fields and deadline, and encode a post revision and appeal. Assert no report/admin fields appear in encoded owner payloads.
 
-- [ ] **Step 2: Implement models**
+- [x] **Step 2: Implement models**
 
 ```swift
 public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
@@ -369,7 +369,7 @@ public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
 
 Add typed post and collection revision payloads whose field names match Phase 4 backend snapshots.
 
-- [ ] **Step 3: Implement client methods and store state**
+- [x] **Step 3: Implement client methods and store state**
 
 ```swift
 func contentActions(token: String) async throws -> [SafetyContentAction]
@@ -379,7 +379,7 @@ func submitAppeal(token: String, caseID: String, detail: String, objectKeys: [St
 
 Add `@Published var safetyContentActions`, refresh on bootstrap/foreground/safety sync, and preserve the current public object until backend sync reports a published revision.
 
-- [ ] **Step 4: Run tests, build, and commit**
+- [x] **Step 4: Run tests, build, and commit**
 
 ```bash
 swift test --package-path .

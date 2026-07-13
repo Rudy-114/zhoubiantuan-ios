@@ -757,6 +757,72 @@ final class AliyunBackendClient {
         return response.reports
     }
 
+    func contentActions(token: String) async throws -> [SafetyContentAction] {
+        var actions: [SafetyContentAction] = []
+        var cursor: String?
+        var seenCursors = Set<String>()
+
+        repeat {
+            let path: String
+            if let cursor {
+                var components = URLComponents()
+                components.path = "/me/content-actions"
+                components.queryItems = [URLQueryItem(name: "cursor", value: cursor)]
+                guard let encodedPath = components.string else {
+                    throw NSError(
+                        domain: "AliyunBackendClient",
+                        code: -1004,
+                        userInfo: [NSLocalizedDescriptionKey: "内容操作分页游标无效"]
+                    )
+                }
+                path = encodedPath
+            } else {
+                path = "/me/content-actions"
+            }
+            let response: SafetyContentActionsResponse = try await request(path, token: token)
+            actions.append(contentsOf: response.actions)
+            cursor = response.nextCursor
+            if let cursor, !seenCursors.insert(cursor).inserted {
+                throw NSError(
+                    domain: "AliyunBackendClient",
+                    code: -1003,
+                    userInfo: [NSLocalizedDescriptionKey: "内容操作分页游标重复"]
+                )
+            }
+        } while cursor != nil
+
+        return actions
+    }
+
+    func submitRevision<T: Encodable>(
+        token: String,
+        caseID: String,
+        draft: T
+    ) async throws -> SafetyContentAction {
+        let response: SafetyContentActionResponse = try await encodedRequest(
+            "/content-actions/\(caseID)/revisions",
+            method: "POST",
+            token: token,
+            body: draft
+        )
+        return response.action
+    }
+
+    func submitAppeal(
+        token: String,
+        caseID: String,
+        detail: String,
+        objectKeys: [String]
+    ) async throws -> SafetyContentAction {
+        let response: SafetyContentActionResponse = try await encodedRequest(
+            "/content-actions/\(caseID)/appeal",
+            method: "POST",
+            token: token,
+            body: SafetyAppealDraft(detail: detail, objectKeys: objectKeys)
+        )
+        return response.action
+    }
+
     func deleteAccount(token: String) async throws {
         try await emptyRequest("/me", method: "DELETE", token: token)
     }

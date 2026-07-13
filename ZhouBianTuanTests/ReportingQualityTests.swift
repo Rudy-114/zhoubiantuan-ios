@@ -2243,6 +2243,358 @@ final class ReportingQualityTests: XCTestCase {
         )
     }
 
+    func testContentActionsFollowsEveryServerCursor() async throws {
+        let opaqueCursor = "opaque+page&2=#"
+        URLProtocolStub.setHandler { request in
+            let cursor = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "cursor" })?
+                .value
+            switch cursor {
+            case nil:
+                return .json(Self.contentActionsEnvelope(
+                    caseID: "case-first",
+                    nextCursor: opaqueCursor
+                ))
+            case opaqueCursor:
+                return .json(Self.contentActionsEnvelope(
+                    caseID: "case-second",
+                    nextCursor: nil
+                ))
+            default:
+                return .json(statusCode: 400, #"{"error":"unexpected cursor"}"#)
+            }
+        }
+
+        let actions = try await makeClient().contentActions(token: "owner-token")
+
+        XCTAssertEqual(actions.map(\.caseID), ["case-first", "case-second"])
+        XCTAssertEqual(URLProtocolStub.requests.count, 2)
+        XCTAssertTrue(URLProtocolStub.requests.allSatisfy {
+            $0.httpMethod == "GET" && $0.value(forHTTPHeaderField: "Authorization") == "Bearer owner-token"
+        })
+        XCTAssertEqual(
+            URLComponents(
+                url: try XCTUnwrap(URLProtocolStub.requests.last?.url),
+                resolvingAgainstBaseURL: false
+            )?.queryItems,
+            [URLQueryItem(name: "cursor", value: opaqueCursor)]
+        )
+    }
+
+    func testRevisionAndAppealClientMethodsSendOnlyOwnerPayloads() async throws {
+        URLProtocolStub.setHandler { request in
+            .json(Self.contentActionEnvelope(caseID: request.url?.path.contains("appeal") == true
+                ? "case-appeal"
+                : "case-revision"))
+        }
+        let client = makeClient()
+        let snapshot = SafetyPostRevisionSnapshot(
+            title: "修正标题",
+            imageNames: [],
+            imageObjectKeys: [],
+            previewImageObjectKeys: [],
+            groupType: "followGroup",
+            categoryTags: [],
+            fandomTags: [],
+            price: "35",
+            deposit: "10",
+            condition: "20 人成团",
+            isFormed: false,
+            description: "修正说明",
+            externalLink: "",
+            imageAspect: 1.08,
+            pingguAveragePrice: "",
+            pingguNote: "",
+            unsoldRoles: []
+        )
+
+        let revised = try await client.submitRevision(
+            token: "owner-token",
+            caseID: "case-revision",
+            draft: SafetyRevisionDraft.post(snapshot: snapshot, objectKeys: [])
+        )
+        let appealed = try await client.submitAppeal(
+            token: "owner-token",
+            caseID: "case-appeal",
+            detail: "请重新人工核对。",
+            objectKeys: ["report/u-owner/appeal.jpg"]
+        )
+
+        XCTAssertEqual(revised.caseID, "case-revision")
+        XCTAssertEqual(appealed.caseID, "case-appeal")
+        XCTAssertEqual(URLProtocolStub.requests.map(\.url?.path), [
+            "/api/content-actions/case-revision/revisions",
+            "/api/content-actions/case-appeal/appeal"
+        ])
+        XCTAssertTrue(URLProtocolStub.requests.allSatisfy { $0.httpMethod == "POST" })
+        let bodies = try URLProtocolStub.requestBodies.map {
+            try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap($0)) as? [String: Any])
+        }
+        XCTAssertEqual(Set(bodies[0].keys), ["snapshot", "objectKeys"])
+        XCTAssertEqual(Set(bodies[1].keys), ["detail", "objectKeys"])
+    }
+
+    @MainActor
+    func testSafetyContentActionSyncRefreshesPublishedStoreState() async throws {
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/sync":
+                return .json(Self.contentActionSyncPayload)
+            case "/api/me/content-actions":
+                return .json(Self.contentActionsEnvelope(caseID: "case-sync", nextCursor: nil))
+            default:
+                return .json(#"{}"#)
+            }
+        }
+        let store = makeStore()
+        SyncCursorStore.set("cursor-before", for: store.currentUserID)
+
+        let result = await store.syncFromBackend(reason: "quality-test")
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(store.safetyContentActions.map(\.caseID), ["case-sync"])
+        XCTAssertEqual(SyncCursorStore.cursor(for: store.currentUserID), "cursor-after")
+    }
+
+    @MainActor
+    func testStoreRevisionUpdatesActionWithoutMutatingCurrentPublicPost() async throws {
+        URLProtocolStub.setHandler { request in
+            guard request.url?.path == "/api/content-actions/case-revision/revisions" else {
+                return .json(#"{}"#)
+            }
+            return .json(Self.contentActionEnvelope(caseID: "case-revision"))
+        }
+        let store = makeStore()
+        let originalPosts = store.posts
+        let snapshot = SafetyPostRevisionSnapshot(
+            title: "候选版本标题",
+            imageNames: [],
+            imageObjectKeys: [],
+            previewImageObjectKeys: [],
+            groupType: "followGroup",
+            categoryTags: [],
+            fandomTags: [],
+            price: "35",
+            deposit: "10",
+            condition: "20 人成团",
+            isFormed: false,
+            description: "候选版本说明",
+            externalLink: "",
+            imageAspect: 1.08,
+            pingguAveragePrice: "",
+            pingguNote: "",
+            unsoldRoles: []
+        )
+
+        let submitted = await store.submitRevision(
+            caseID: "case-revision",
+            draft: .post(snapshot: snapshot, objectKeys: [])
+        )
+
+        XCTAssertTrue(submitted)
+        XCTAssertEqual(store.safetyContentActions.map(\.caseID), ["case-revision"])
+        XCTAssertEqual(store.posts, originalPosts)
+    }
+
+    @MainActor
+    func testOldContentActionRefreshCannotClearNewSessionLoadingOwner() async {
+        let oldRequestStarted = expectation(description: "old content action refresh started")
+        let newRequestStarted = expectation(description: "new content action refresh started")
+        let releaseOldRequest = DispatchSemaphore(value: 0)
+        let releaseNewRequest = DispatchSemaphore(value: 0)
+        URLProtocolStub.setHandler { request in
+            let authorization = request.value(forHTTPHeaderField: "Authorization")
+            if authorization == "Bearer content-race-old" {
+                oldRequestStarted.fulfill()
+                _ = releaseOldRequest.wait(timeout: .now() + 5)
+                return .json(Self.contentActionsEnvelope(caseID: "case-old", nextCursor: nil))
+            }
+            if authorization == "Bearer content-race-new" {
+                newRequestStarted.fulfill()
+                _ = releaseNewRequest.wait(timeout: .now() + 5)
+                return .json(Self.contentActionsEnvelope(caseID: "case-new", nextCursor: nil))
+            }
+            return .json(#"{"actions":[]}"#)
+        }
+        let store = makeStore()
+        store.backendToken = "content-race-old"
+
+        let oldRefresh = Task { @MainActor in await store.refreshSafetyContentActions() }
+        await fulfillment(of: [oldRequestStarted], timeout: 2)
+        store.logOut()
+        store.isLoggedIn = true
+        store.backendToken = "content-race-new"
+        let newRefresh = Task { @MainActor in await store.refreshSafetyContentActions() }
+        await fulfillment(of: [newRequestStarted], timeout: 2)
+        XCTAssertTrue(store.isLoadingSafetyContentActions)
+
+        releaseOldRequest.signal()
+        let oldRefreshSucceeded = await oldRefresh.value
+        XCTAssertFalse(oldRefreshSucceeded)
+        XCTAssertTrue(store.isLoadingSafetyContentActions)
+
+        releaseNewRequest.signal()
+        let newRefreshSucceeded = await newRefresh.value
+        XCTAssertTrue(newRefreshSucceeded)
+        XCTAssertFalse(store.isLoadingSafetyContentActions)
+        XCTAssertEqual(store.safetyContentActions.map(\.caseID), ["case-new"])
+    }
+
+    @MainActor
+    func testOldContentActionSubmissionCannotClearNewSessionSubmissionOwner() async {
+        let oldRequestStarted = expectation(description: "old revision started")
+        let newRequestStarted = expectation(description: "new revision started")
+        let releaseOldRequest = DispatchSemaphore(value: 0)
+        let releaseNewRequest = DispatchSemaphore(value: 0)
+        URLProtocolStub.setHandler { request in
+            let authorization = request.value(forHTTPHeaderField: "Authorization")
+            if authorization == "Bearer submission-race-old" {
+                oldRequestStarted.fulfill()
+                _ = releaseOldRequest.wait(timeout: .now() + 5)
+                return .json(Self.contentActionEnvelope(caseID: "case-old"))
+            }
+            if authorization == "Bearer submission-race-new" {
+                newRequestStarted.fulfill()
+                _ = releaseNewRequest.wait(timeout: .now() + 5)
+                return .json(Self.contentActionEnvelope(caseID: "case-new"))
+            }
+            return .json(statusCode: 400, #"{"error":"unexpected token"}"#)
+        }
+        let store = makeStore()
+        store.backendToken = "submission-race-old"
+        let draft = SafetyRevisionDraft.post(
+            snapshot: SafetyPostRevisionSnapshot(
+                title: "修正标题",
+                imageNames: [],
+                imageObjectKeys: [],
+                previewImageObjectKeys: [],
+                groupType: "followGroup",
+                categoryTags: [],
+                fandomTags: [],
+                price: "35",
+                deposit: "10",
+                condition: "20 人成团",
+                isFormed: false,
+                description: "修正说明",
+                externalLink: "",
+                imageAspect: 1.08,
+                pingguAveragePrice: "",
+                pingguNote: "",
+                unsoldRoles: []
+            ),
+            objectKeys: []
+        )
+
+        let oldSubmission = Task { @MainActor in
+            await store.submitRevision(caseID: "case-old", draft: draft)
+        }
+        await fulfillment(of: [oldRequestStarted], timeout: 2)
+        store.logOut()
+        store.isLoggedIn = true
+        store.backendToken = "submission-race-new"
+        let newSubmission = Task { @MainActor in
+            await store.submitRevision(caseID: "case-new", draft: draft)
+        }
+        await fulfillment(of: [newRequestStarted], timeout: 2)
+        XCTAssertTrue(store.isSubmittingSafetyContentAction)
+
+        releaseOldRequest.signal()
+        let oldSubmissionSucceeded = await oldSubmission.value
+        XCTAssertFalse(oldSubmissionSucceeded)
+        XCTAssertTrue(store.isSubmittingSafetyContentAction)
+
+        releaseNewRequest.signal()
+        let newSubmissionSucceeded = await newSubmission.value
+        XCTAssertTrue(newSubmissionSucceeded)
+        XCTAssertFalse(store.isSubmittingSafetyContentAction)
+        XCTAssertEqual(store.safetyContentActions.map(\.caseID), ["case-new"])
+    }
+
+    @MainActor
+    func testOlderContentActionRefreshCannotOverwriteSuccessfulRevision() async {
+        let refreshStarted = expectation(description: "content action refresh started")
+        let releaseRefresh = DispatchSemaphore(value: 0)
+        URLProtocolStub.setHandler { request in
+            if request.url?.path == "/api/me/content-actions" {
+                refreshStarted.fulfill()
+                _ = releaseRefresh.wait(timeout: .now() + 5)
+                return .json(Self.contentActionsEnvelope(
+                    caseID: "case-race",
+                    nextCursor: nil,
+                    status: "awaiting_correction",
+                    canSubmitRevision: true,
+                    revisionStatus: nil,
+                    updatedAt: "2026-07-13T04:00:00.000Z"
+                ))
+            }
+            return .json(Self.contentActionEnvelope(
+                caseID: "case-race",
+                status: "revision_pending",
+                canSubmitRevision: false,
+                revisionStatus: "pending",
+                updatedAt: "2026-07-13T04:01:00.000Z"
+            ))
+        }
+        let store = makeStore()
+        let draft = SafetyRevisionDraft.post(
+            snapshot: SafetyPostRevisionSnapshot(
+                title: "修正标题",
+                imageNames: [],
+                imageObjectKeys: [],
+                previewImageObjectKeys: [],
+                groupType: "followGroup",
+                categoryTags: [],
+                fandomTags: [],
+                price: "35",
+                deposit: "10",
+                condition: "20 人成团",
+                isFormed: false,
+                description: "修正说明",
+                externalLink: "",
+                imageAspect: 1.08,
+                pingguAveragePrice: "",
+                pingguNote: "",
+                unsoldRoles: []
+            ),
+            objectKeys: []
+        )
+
+        let refresh = Task { @MainActor in await store.refreshSafetyContentActions() }
+        await fulfillment(of: [refreshStarted], timeout: 2)
+        let submitted = await store.submitRevision(caseID: "case-race", draft: draft)
+        XCTAssertTrue(submitted)
+        XCTAssertEqual(store.safetyContentActions.first?.status, "revision_pending")
+
+        releaseRefresh.signal()
+        _ = await refresh.value
+        XCTAssertEqual(store.safetyContentActions.first?.status, "revision_pending")
+        XCTAssertFalse(store.safetyContentActions.first?.canSubmitRevision ?? true)
+    }
+
+    @MainActor
+    func testBootstrapContentActionFailurePreservesBootstrapAndShowsScopedError() async {
+        URLProtocolStub.setHandler { request in
+            if request.url?.path == "/api/bootstrap" {
+                return .json(Self.loginPayload(userID: "u-me", includeToken: false))
+            }
+            if request.url?.path == "/api/me/content-actions" {
+                return .json(statusCode: 500, #"{"error":"内容操作暂时不可用"}"#)
+            }
+            return .json(#"{}"#)
+        }
+        let store = makeStore()
+        SyncCursorStore.set("bootstrap-error-test", for: store.currentUserID)
+
+        let refreshed = await store.refreshFromBackend(silent: true)
+        store.stopBackendAutoRefresh()
+        try? await Task.sleep(nanoseconds: 600_000_000)
+
+        XCTAssertTrue(refreshed)
+        XCTAssertTrue(store.isLoggedIn)
+        XCTAssertEqual(store.safetyContentActionErrorMessage, "内容操作暂时不可用")
+    }
+
     private func makeClient() -> AliyunBackendClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
@@ -2381,10 +2733,11 @@ final class ReportingQualityTests: XCTestCase {
         """
     }
 
-    private static func loginPayload(userID: String) -> String {
-        """
+    private static func loginPayload(userID: String, includeToken: Bool = true) -> String {
+        let tokenField = includeToken ? #""token": "token-\#(userID)","# : ""
+        return """
         {
-          "token": "token-\(userID)",
+          \(tokenField)
           "currentUser": {
             "id": "\(userID)",
             "email": "\(userID)@example.com",
@@ -2407,6 +2760,74 @@ final class ReportingQualityTests: XCTestCase {
         """
     }
 
+    private static func contentActionsEnvelope(
+        caseID: String,
+        nextCursor: String?,
+        status: String = "awaiting_correction",
+        canSubmitRevision: Bool = true,
+        revisionStatus: String? = nil,
+        updatedAt: String = "2026-07-13T04:00:00.000Z"
+    ) -> String {
+        let cursorField = nextCursor.map { #", "nextCursor": "\#($0)""# } ?? ""
+        return """
+        {
+          "actions": [\(contentActionJSON(
+            caseID: caseID,
+            status: status,
+            canSubmitRevision: canSubmitRevision,
+            revisionStatus: revisionStatus,
+            updatedAt: updatedAt
+          ))]
+          \(cursorField)
+        }
+        """
+    }
+
+    private static func contentActionEnvelope(
+        caseID: String,
+        status: String = "awaiting_correction",
+        canSubmitRevision: Bool = true,
+        revisionStatus: String? = nil,
+        updatedAt: String = "2026-07-13T04:00:00.000Z"
+    ) -> String {
+        """
+        { "action": \(contentActionJSON(
+            caseID: caseID,
+            status: status,
+            canSubmitRevision: canSubmitRevision,
+            revisionStatus: revisionStatus,
+            updatedAt: updatedAt
+        )) }
+        """
+    }
+
+    private static func contentActionJSON(
+        caseID: String,
+        status: String = "awaiting_correction",
+        canSubmitRevision: Bool = true,
+        revisionStatus: String? = nil,
+        updatedAt: String = "2026-07-13T04:00:00.000Z"
+    ) -> String {
+        let revisionStatusJSON = revisionStatus.map { #""\#($0)""# } ?? "null"
+        return """
+        {
+          "caseID": "\(caseID)",
+          "targetType": "post",
+          "targetID": "post-owned",
+          "category": "other",
+          "status": "\(status)",
+          "affectedFields": ["content"],
+          "reason": "内容需要整改",
+          "currentRestriction": "帖子当前已隐藏",
+          "correctionDueAt": null,
+          "canSubmitRevision": \(canSubmitRevision),
+          "canAppeal": false,
+          "revisionStatus": \(revisionStatusJSON),
+          "updatedAt": "\(updatedAt)"
+        }
+        """
+    }
+
     private static let safetySyncPayload = """
     {
       "nextCursor": "cursor-after",
@@ -2420,6 +2841,26 @@ final class ReportingQualityTests: XCTestCase {
           "entityID": "rp-sync",
           "threadID": null,
           "createdAt": "2026-07-11T01:00:00.000Z"
+        }
+      ],
+      "messageThreads": [],
+      "unreadMessageCount": 0
+    }
+    """
+
+    private static let contentActionSyncPayload = """
+    {
+      "nextCursor": "cursor-after",
+      "hasMore": false,
+      "events": [
+        {
+          "id": "event-content-action",
+          "userID": "u-me",
+          "eventType": "safety.content_action.updated",
+          "entityType": "safety_case",
+          "entityID": "case-sync",
+          "threadID": null,
+          "createdAt": "2026-07-13T04:00:00.000Z"
         }
       ],
       "messageThreads": [],
