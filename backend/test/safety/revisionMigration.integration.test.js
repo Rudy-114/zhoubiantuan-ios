@@ -197,3 +197,52 @@ test("content revision migration enforces case identity and uniqueness and rolls
     });
   });
 });
+
+test("appealed-case aggregation migration permits a separate new case and blocks an unsafe down", async () => {
+  await withMigrationDatabase(async ({ pool, applyMigration, applyDownMigration }) => {
+    await applyMigration("013_safety_cases.sql");
+    await applyMigration("016_appealed_case_aggregation.sql");
+
+    await pool.query(
+      `INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope, status)
+       VALUES
+         ('case-appealed-old', 'post', 'post-shared', 'other', 'post', 'appealed'),
+         ('case-open-new', 'post', 'post-shared', 'other', 'post', 'manual_review')`
+    );
+    const migrated = await pool.query(
+      `SELECT indexdef
+       FROM pg_indexes
+       WHERE schemaname = 'public' AND indexname = 'safety_cases_one_open_subject_category'`
+    );
+    assert.match(migrated.rows[0].indexdef, /'appealed'/);
+
+    await assert.rejects(
+      applyDownMigration("016_appealed_case_aggregation.sql"),
+      /cannot roll back 016 while appealed and open safety cases coexist/
+    );
+    const blocked = await pool.query(
+      `SELECT
+         (SELECT indexdef
+          FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'safety_cases_one_open_subject_category') AS indexdef,
+         (SELECT count(*)::int
+          FROM safety_cases
+          WHERE id IN ('case-appealed-old', 'case-open-new')) AS case_count,
+         (SELECT count(*)::int
+          FROM schema_migrations
+          WHERE version = '016_appealed_case_aggregation.sql') AS migration_count`
+    );
+    assert.match(blocked.rows[0].indexdef, /'appealed'/);
+    assert.equal(blocked.rows[0].case_count, 2);
+    assert.equal(blocked.rows[0].migration_count, 1);
+
+    await pool.query("DELETE FROM safety_cases WHERE id = 'case-open-new'");
+    await applyDownMigration("016_appealed_case_aggregation.sql");
+    const rolledBack = await pool.query(
+      `SELECT indexdef
+       FROM pg_indexes
+       WHERE schemaname = 'public' AND indexname = 'safety_cases_one_open_subject_category'`
+    );
+    assert.doesNotMatch(rolledBack.rows[0].indexdef, /'appealed'/);
+  });
+});

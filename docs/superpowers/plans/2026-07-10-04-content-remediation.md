@@ -325,6 +325,12 @@ git add backend/src/safety/revisionRoutes.js backend/src/safety/contentActionMap
 git commit -m "Add owner correction and appeal APIs"
 ```
 
+Post-review API contract:
+
+- `GET /api/me/content-actions` returns at most 100 actions and an optional opaque `nextCursor`; clients must continue until `nextCursor` is absent. Pagination uses immutable case creation order so an action update between pages cannot hide a row.
+- Revision submissions have independent IP, account-daily, and account-burst limits and return `content_revision_rate_limited` when bounded.
+- An appealed case no longer accepts new report aggregation. Migration `016_appealed_case_aggregation.sql` permits a new case for the same subject/category; its down migration refuses rollback when legacy aggregation cannot represent the resulting rows safely.
+
 ### Task 5: Add iOS Content-Action Models and Client Methods
 
 **Files:**

@@ -32,11 +32,11 @@ export async function submitSafetyReport(client, { reporterId, body } = {}) {
   await claimReportUploadsForAttachment(client, { ownerUserID: reporterID, objectKeys: reportObjectKeys });
   const objectKeys = mergeObjectKeys(sourceEvidence.objectKeys, reportObjectKeys);
   let safetyCase = await findOrCreateOpenCase(client, subject, input.reasonCode);
-  await closeTerminalPendingReports(client, reporterID, subject, input.reasonCode);
+  await closeNonAggregatingPendingReports(client, reporterID, subject, input.reasonCode);
   safetyCase = await lockOpenCaseByID(client, safetyCase.id);
   if (!safetyCase) {
     safetyCase = await findOrCreateOpenCase(client, subject, input.reasonCode);
-    await closeTerminalPendingReports(client, reporterID, subject, input.reasonCode);
+    await closeNonAggregatingPendingReports(client, reporterID, subject, input.reasonCode);
   }
   let pendingReport = await findPendingReport(client, reporterID, safetyCase.id, input.reasonCode);
 
@@ -245,7 +245,7 @@ async function findOpenCase(client, subject, category) {
      WHERE subject_type = $1
        AND subject_id = $2
        AND category = $3
-       AND status NOT IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')
+       AND status NOT IN ('appealed', 'resolved_no_action', 'resolved_restored', 'resolved_actioned')
      LIMIT 1
      FOR UPDATE`,
     [subject.subjectType, subject.subjectId, category]
@@ -258,14 +258,14 @@ async function lockOpenCaseByID(client, caseID) {
     `SELECT *
      FROM safety_cases
      WHERE id = $1
-       AND status NOT IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')
+       AND status NOT IN ('appealed', 'resolved_no_action', 'resolved_restored', 'resolved_actioned')
      FOR UPDATE`,
     [caseID]
   );
   return rows[0] || null;
 }
 
-async function closeTerminalPendingReports(client, reporterID, subject, reasonCode) {
+async function closeNonAggregatingPendingReports(client, reporterID, subject, reasonCode) {
   await client.query(
     `UPDATE reports r
      SET status = 'closed', updated_at = now()
@@ -276,7 +276,7 @@ async function closeTerminalPendingReports(client, reporterID, subject, reasonCo
        AND r.subject_id = $3
        AND r.reason_code = $4
        AND r.status = 'pending'
-       AND sc.status IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')`,
+       AND sc.status IN ('appealed', 'resolved_no_action', 'resolved_restored', 'resolved_actioned')`,
     [reporterID, subject.subjectType, subject.subjectId, reasonCode]
   );
 }

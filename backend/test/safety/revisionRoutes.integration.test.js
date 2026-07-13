@@ -5,6 +5,7 @@ import express from "express";
 import { WebSocket } from "ws";
 import { signToken } from "../../src/auth.js";
 import { createApp } from "../../src/app.js";
+import { config } from "../../src/config.js";
 import { realtimeHub } from "../../src/realtime.js";
 import * as appealService from "../../src/safety/appealService.js";
 import { createSafetyRevisionRouter } from "../../src/safety/revisionRoutes.js";
@@ -181,7 +182,7 @@ test("uses an inclusive PostgreSQL appeal window at microsecond precision", asyn
   ]);
 });
 
-test("limits owner cases before loading correct report, revision, and decision aggregates", async () => {
+test("paginates owner cases without losing report, revision, or decision aggregates", async () => {
   await seedLargeOwnerActionListing();
 
   await withServer(async (baseUrl) => {
@@ -191,11 +192,31 @@ test("limits owner cases before loading correct report, revision, and decision a
     assert.equal(response.body.actions[0].caseID, "case-bulk-104");
     assert.equal(response.body.actions[99].caseID, "case-bulk-005");
     assert.equal(response.body.actions.some((action) => action.caseID === "case-bulk-004"), false);
+    assert.equal(typeof response.body.nextCursor, "string");
 
     assert.deepEqual(response.body.actions[0].affectedFields, ["content", "title"]);
     assert.equal(response.body.actions[0].revisionStatus, "published");
     const appealable = response.body.actions.find((action) => action.caseID === "case-bulk-103");
     assert.equal(appealable.canAppeal, true);
+
+    await pool.query(
+      "UPDATE safety_cases SET updated_at = '2026-07-14T00:00:00.000Z' WHERE id = 'case-bulk-004'"
+    );
+
+    const next = await get(
+      baseUrl,
+      `/api/me/content-actions?cursor=${encodeURIComponent(response.body.nextCursor)}`,
+      "u-owner"
+    );
+    assert.equal(next.status, 200);
+    assert.deepEqual(next.body.actions.map((action) => action.caseID), [
+      "case-bulk-004", "case-bulk-003", "case-bulk-002", "case-bulk-001", "case-bulk-000"
+    ]);
+    assert.equal(Object.hasOwn(next.body, "nextCursor"), false);
+
+    const allIDs = [...response.body.actions, ...next.body.actions].map((action) => action.caseID);
+    assert.equal(allIDs.length, 105);
+    assert.equal(new Set(allIDs).size, 105);
   });
 });
 
@@ -278,10 +299,42 @@ test("submits an immutable revision and notifies its owner only after commit", a
   }
 });
 
+test("rate limits repeated revision submissions before they enqueue more review work", async () => {
+  await seedRevisionRouteCase();
+
+  await withSafetyConfig({
+    contentRevisionAccountMax24h: 1,
+    contentRevisionIpMax24h: 100,
+    contentRevisionBurstMaxMinute: 100
+  }, () => withServer(async (baseUrl) => {
+    const first = await post(baseUrl, "/api/content-actions/case-revision-route/revisions", {
+      snapshot: postCandidate({ title: "First bounded candidate" })
+    }, "u-owner");
+    assert.equal(first.status, 201);
+
+    const limited = await post(baseUrl, "/api/content-actions/case-revision-route/revisions", {
+      snapshot: postCandidate({ title: "Second bounded candidate" })
+    }, "u-owner");
+    assert.equal(limited.status, 429);
+    assert.equal(limited.body.code, "content_revision_rate_limited");
+  }));
+
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT count(*)::int FROM content_revisions WHERE case_id = 'case-revision-route') AS revisions,
+       (SELECT count(*)::int FROM safety_jobs WHERE case_id = 'case-revision-route') AS jobs`
+  );
+  assert.deepEqual(rows[0], { revisions: 1, jobs: 1 });
+});
+
 test("rejects invalid, non-owned, unsupported, and non-correction revision requests without side effects", async () => {
   await seedRevisionFailureCases();
 
-  await withServer(async (baseUrl) => {
+  await withSafetyConfig({
+    contentRevisionAccountMax24h: 100,
+    contentRevisionIpMax24h: 100,
+    contentRevisionBurstMaxMinute: 100
+  }, () => withServer(async (baseUrl) => {
     for (const body of [
       [],
       {},
@@ -311,7 +364,7 @@ test("rejects invalid, non-owned, unsupported, and non-correction revision reque
     }, "u-owner");
     assert.equal(wrongStatus.status, 409);
     assert.equal(wrongStatus.body.code, "correction_not_requested");
-  });
+  }));
 
   const counts = await pool.query(
     `SELECT
@@ -663,6 +716,82 @@ test("appeal service accepts a decision applied exactly seven days before transa
   assert.deepEqual(state.rows[0], { appeals: 1, jobs: 0, case_status: "appealed" });
 });
 
+test("accepts an appeal when a newer open case exists for the same subject and category", async () => {
+  await seedAppealRouteCase();
+  await pool.query(
+    `INSERT INTO safety_cases (
+       id, subject_type, subject_id, category, impact_scope, status
+     ) VALUES (
+       'case-appeal-route-newer', 'post', 'post-owned', 'other', 'post', 'manual_review'
+     )`
+  );
+
+  await withServer(async (baseUrl) => {
+    const response = await post(baseUrl, "/api/content-actions/case-appeal-route/appeal", {
+      detail: "Please review the earlier final decision."
+    }, "u-owner");
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.action.status, "appealed");
+  });
+
+  const { rows } = await pool.query(
+    `SELECT id, status
+     FROM safety_cases
+     WHERE id IN ('case-appeal-route', 'case-appeal-route-newer')
+     ORDER BY id`
+  );
+  assert.deepEqual(rows, [
+    { id: "case-appeal-route", status: "appealed" },
+    { id: "case-appeal-route-newer", status: "manual_review" }
+  ]);
+});
+
+test("routes a new report to a new case while the prior decision is appealed", async () => {
+  await seedAppealRouteCase({ actionType: "remove_post" });
+
+  await withServer(async (baseUrl) => {
+    const appeal = await post(baseUrl, "/api/content-actions/case-appeal-route/appeal", {
+      detail: "Please review the earlier final decision."
+    }, "u-owner");
+    assert.equal(appeal.status, 201);
+
+    const report = await post(baseUrl, "/api/reports", {
+      clientRequestID: "report-during-appeal",
+      sourceType: "post",
+      sourceID: "post-owned",
+      reasonCode: "other",
+      reportedField: "content",
+      detail: "This is a new event after the earlier decision."
+    }, "u-reporter-secret");
+    assert.equal(report.status, 201);
+    assert.notEqual(report.body.report.caseID, "case-appeal-route");
+  });
+
+  const { rows } = await pool.query(
+    `SELECT id, status
+     FROM safety_cases
+     WHERE subject_type = 'post' AND subject_id = 'post-owned' AND category = 'other'
+     ORDER BY created_at, id`
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].id, "case-appeal-route");
+  assert.equal(rows[0].status, "appealed");
+  assert.equal(rows[1].status, "received");
+
+  const reports = await pool.query(
+    `SELECT case_id, status
+     FROM reports
+     WHERE reporter_id = 'u-reporter-secret' AND subject_type = 'post'
+       AND subject_id = 'post-owned' AND reason_code = 'other'
+     ORDER BY created_at, id`
+  );
+  assert.deepEqual(reports.rows, [
+    { case_id: "case-appeal-route", status: "closed" },
+    { case_id: rows[1].id, status: "pending" }
+  ]);
+});
+
 test("rejects non-owned and ineligible appeals with controlled API codes and no new state", async () => {
   await seedAppealRejectionCases();
 
@@ -908,6 +1037,16 @@ async function withServer(callback, app = createApp()) {
     await callback(`http://127.0.0.1:${port}`);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+async function withSafetyConfig(overrides, callback) {
+  const original = { ...config.safety };
+  Object.assign(config.safety, overrides);
+  try {
+    return await callback();
+  } finally {
+    Object.assign(config.safety, original);
   }
 }
 

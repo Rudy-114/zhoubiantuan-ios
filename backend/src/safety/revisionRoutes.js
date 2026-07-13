@@ -1,7 +1,9 @@
 import express from "express";
 import { requireAuth } from "../auth.js";
+import { config } from "../config.js";
 import { withTransaction } from "../db.js";
 import { logger } from "../logger.js";
+import { createRateLimiter } from "../rateLimit.js";
 import { notifySyncEvents } from "../realtime.js";
 import { createSyncEvent } from "../sync.js";
 import { badRequest } from "../validators.js";
@@ -14,6 +16,8 @@ const OWNER_ACTION_STATUSES = [
   "resolved_restored", "resolved_actioned"
 ];
 const MAX_CASE_ID_LENGTH = 160;
+const CONTENT_ACTION_PAGE_SIZE = 100;
+const MAX_CONTENT_ACTION_CURSOR_LENGTH = 512;
 const UNSAFE_CASE_ID_CHARACTERS = /[\u0000-\u001F\u007F]/;
 
 export function createSafetyRevisionRouter({
@@ -23,42 +27,88 @@ export function createSafetyRevisionRouter({
   if (typeof notifyEvents !== "function") throw new TypeError("notifySyncEvents must be a function");
   if (!eventLogger || typeof eventLogger.error !== "function") throw new TypeError("eventLogger must expose error");
   const router = express.Router();
+  const store = config.nodeEnv === "production" ? "postgres" : "memory";
+  const limiterOptions = {
+    store,
+    apiCode: "content_revision_rate_limited",
+    message: "整改提交太频繁，请稍后再试"
+  };
+  const revisionIpDailyLimiter = createRateLimiter({
+    ...limiterOptions,
+    name: "content_revision_ip_daily",
+    windowMs: 24 * 60 * 60 * 1000,
+    max: config.safety.contentRevisionIpMax24h,
+    keyGenerator: (req) => req.ip
+  });
+  const revisionAccountDailyLimiter = createRateLimiter({
+    ...limiterOptions,
+    name: "content_revision_account_daily",
+    windowMs: 24 * 60 * 60 * 1000,
+    max: config.safety.contentRevisionAccountMax24h,
+    keyGenerator: (req) => req.user.id
+  });
+  const revisionAccountBurstLimiter = createRateLimiter({
+    ...limiterOptions,
+    name: "content_revision_account_burst",
+    windowMs: 60 * 1000,
+    max: config.safety.contentRevisionBurstMaxMinute,
+    keyGenerator: (req) => req.user.id
+  });
 
   router.get("/me/content-actions", requireAuth, async (req, res, next) => {
     try {
-      const actions = await withTransaction((client) => loadOwnerContentActions(client, req.user.id));
-      res.json({ actions: actions.map(contentActionToClient) });
+      const cursor = decodeContentActionCursor(req.query.cursor);
+      const rows = await withTransaction((client) => loadOwnerContentActions(
+        client,
+        req.user.id,
+        null,
+        cursor,
+        CONTENT_ACTION_PAGE_SIZE + 1
+      ));
+      const page = rows.slice(0, CONTENT_ACTION_PAGE_SIZE);
+      const body = { actions: page.map(contentActionToClient) };
+      if (rows.length > CONTENT_ACTION_PAGE_SIZE) {
+        body.nextCursor = encodeContentActionCursor(page[page.length - 1]);
+      }
+      res.json(body);
     } catch (error) {
       next(error);
     }
   });
-  router.post("/content-actions/:caseId/revisions", requireAuth, async (req, res, next) => {
-    try {
-      const caseId = normalizeContentActionCaseId(req.params.caseId);
-      const input = normalizeRevisionRequest(req.body);
-      const result = await withTransaction(async (client) => {
-        await submitContentRevision(client, {
-          caseId,
-          ownerId: req.user.id,
-          snapshot: input.snapshot,
-          objectKeys: input.objectKeys
+  router.post(
+    "/content-actions/:caseId/revisions",
+    revisionIpDailyLimiter,
+    requireAuth,
+    revisionAccountDailyLimiter,
+    revisionAccountBurstLimiter,
+    async (req, res, next) => {
+      try {
+        const caseId = normalizeContentActionCaseId(req.params.caseId);
+        const input = normalizeRevisionRequest(req.body);
+        const result = await withTransaction(async (client) => {
+          await submitContentRevision(client, {
+            caseId,
+            ownerId: req.user.id,
+            snapshot: input.snapshot,
+            objectKeys: input.objectKeys
+          });
+          const syncEvent = await createSyncEvent(client, {
+            userId: req.user.id,
+            eventType: "safety.content_action.updated",
+            entityType: "safety_case",
+            entityId: caseId
+          });
+          const action = await loadOwnerContentAction(client, req.user.id, caseId);
+          if (!action) throw new Error("Unable to load submitted content action");
+          return { action: contentActionToClient(action), syncEvents: [syncEvent] };
         });
-        const syncEvent = await createSyncEvent(client, {
-          userId: req.user.id,
-          eventType: "safety.content_action.updated",
-          entityType: "safety_case",
-          entityId: caseId
-        });
-        const action = await loadOwnerContentAction(client, req.user.id, caseId);
-        if (!action) throw new Error("Unable to load submitted content action");
-        return { action: contentActionToClient(action), syncEvents: [syncEvent] };
-      });
-      await notifyContentActionEvents(notifyEvents, eventLogger, result.syncEvents);
-      res.status(201).json({ action: result.action });
-    } catch (error) {
-      next(error);
+        await notifyContentActionEvents(notifyEvents, eventLogger, result.syncEvents);
+        res.status(201).json({ action: result.action });
+      } catch (error) {
+        next(error);
+      }
     }
-  });
+  );
   router.post("/content-actions/:caseId/appeal", requireAuth, async (req, res, next) => {
     try {
       const caseId = normalizeContentActionCaseId(req.params.caseId);
@@ -102,11 +152,11 @@ async function loadOwnerContentAction(client, ownerId, caseId) {
   return actions[0] || null;
 }
 
-async function loadOwnerContentActions(client, ownerId, caseId = null) {
+async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = null, limit = CONTENT_ACTION_PAGE_SIZE) {
   const { rows } = await client.query(
     `WITH owner_case_candidates AS (
        SELECT sc.id, sc.subject_type, sc.subject_id, sc.category, sc.status,
-              sc.correction_due_at, sc.updated_at,
+              sc.correction_due_at, sc.created_at, sc.updated_at,
               p.status AS target_status, p.safety_status AS target_safety_status,
               parent.status AS parent_status, parent.safety_status AS parent_safety_status,
               parent.contact_visibility AS parent_contact_visibility
@@ -118,7 +168,7 @@ async function loadOwnerContentActions(client, ownerId, caseId = null) {
          AND ($3::text IS NULL OR sc.id = $3)
        UNION ALL
        SELECT sc.id, sc.subject_type, sc.subject_id, sc.category, sc.status,
-              sc.correction_due_at, sc.updated_at,
+              sc.correction_due_at, sc.created_at, sc.updated_at,
               c.status AS target_status, c.safety_status AS target_safety_status,
               NULL::text AS parent_status, NULL::text AS parent_safety_status,
               c.contact_visibility AS parent_contact_visibility
@@ -131,8 +181,12 @@ async function loadOwnerContentActions(client, ownerId, caseId = null) {
      owner_cases AS MATERIALIZED (
        SELECT *
        FROM owner_case_candidates
-       ORDER BY updated_at DESC, id DESC
-       LIMIT $4
+       WHERE (
+         $4::numeric IS NULL
+         OR (floor(extract(epoch FROM created_at) * 1000000), id) < ($4::numeric, $5::text)
+       )
+       ORDER BY created_at DESC, id DESC
+       LIMIT $6
      ),
      report_fields AS (
        SELECT r.case_id,
@@ -177,6 +231,8 @@ async function loadOwnerContentActions(client, ownerId, caseId = null) {
      )
      SELECT oc.id AS case_id, oc.subject_type, oc.subject_id, oc.category, oc.status,
             oc.correction_due_at, oc.updated_at,
+            floor(extract(epoch FROM oc.created_at) * 1000000)::bigint::text
+              AS cursor_created_at_micros,
             oc.target_status, oc.target_safety_status, oc.parent_status,
             oc.parent_safety_status, oc.parent_contact_visibility,
             COALESCE(fields.affected_fields, ARRAY[]::text[]) AS affected_fields,
@@ -192,14 +248,49 @@ async function loadOwnerContentActions(client, ownerId, caseId = null) {
      LEFT JOIN latest_revisions revision ON revision.case_id = oc.id
      LEFT JOIN latest_decisions decision ON decision.case_id = oc.id
      LEFT JOIN safety_appeals appeal ON appeal.decision_action_id = decision.id
-     ORDER BY oc.updated_at DESC, oc.id DESC`,
-    [ownerId, OWNER_ACTION_STATUSES, caseId, caseId ? 1 : 100]
+     ORDER BY oc.created_at DESC, oc.id DESC`,
+    [
+      ownerId,
+      OWNER_ACTION_STATUSES,
+      caseId,
+      cursor?.createdAtMicros || null,
+      cursor?.caseID || null,
+      caseId ? 1 : limit
+    ]
   );
   return rows.map((row) => ({
     ...row,
     owner_reason: ownerReason(row.category, row.affected_fields),
     current_restriction: currentRestriction(row)
   }));
+}
+
+function encodeContentActionCursor(row) {
+  return Buffer.from(JSON.stringify({
+    createdAtMicros: row.cursor_created_at_micros,
+    caseID: row.case_id
+  })).toString("base64url");
+}
+
+function decodeContentActionCursor(value) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !value || value.length > MAX_CONTENT_ACTION_CURSOR_LENGTH ||
+      !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw badRequest("内容操作游标不正确", "invalid_content_action_cursor");
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "caseID,createdAtMicros") {
+      throw new Error("invalid cursor shape");
+    }
+    const caseID = normalizeContentActionCaseId(parsed.caseID);
+    if (typeof parsed.createdAtMicros !== "string" || !/^[1-9]\d{0,19}$/.test(parsed.createdAtMicros)) {
+      throw new Error("invalid cursor timestamp");
+    }
+    return { caseID, createdAtMicros: parsed.createdAtMicros };
+  } catch {
+    throw badRequest("内容操作游标不正确", "invalid_content_action_cursor");
+  }
 }
 
 function normalizeContentActionCaseId(value) {

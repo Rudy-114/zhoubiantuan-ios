@@ -96,7 +96,10 @@ export const config = {
     reportUploadAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H", 60),
     reportSupplementAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H", 40),
     reportSupplementIpMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H", 120),
-    reportSupplementBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE", 10)
+    reportSupplementBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE", 10),
+    contentRevisionAccountMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_ACCOUNT_MAX_24H", 20),
+    contentRevisionIpMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_IP_MAX_24H", 60),
+    contentRevisionBurstMaxMinute: positiveFiniteInteger("SAFETY_CONTENT_REVISION_BURST_MAX_MINUTE", 5)
   },
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
