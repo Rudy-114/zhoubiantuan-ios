@@ -5,6 +5,7 @@ import { withTransaction } from "../db.js";
 import { createRateLimiter } from "../rateLimit.js";
 import { notifySyncEvents } from "../realtime.js";
 import { safetyReportToClient } from "./reportMapper.js";
+import { createSafetyRevisionRouter } from "./revisionRoutes.js";
 import { submitSafetyReport, supplementSafetyReport } from "./caseService.js";
 
 export function createSafetyReportRouter() {
@@ -112,6 +113,8 @@ export function createSafetyReportRouter() {
       }
     }
   );
+
+  router.use(createSafetyRevisionRouter());
 
   return router;
 }
