@@ -101,6 +101,18 @@ export const config = {
     contentRevisionIpMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_IP_MAX_24H", 60),
     contentRevisionBurstMaxMinute: positiveFiniteInteger("SAFETY_CONTENT_REVISION_BURST_MAX_MINUTE", 5)
   },
+  admin: {
+    sessionCookieName: "zbt_admin_session",
+    csrfCookieName: "zbt_admin_csrf",
+    cookieSecure: nodeEnv === "production"
+      ? true
+      : String(process.env.ADMIN_COOKIE_SECURE || "false").toLowerCase() === "true",
+    sessionIdleMinutes: 30,
+    sessionAbsoluteHours: 8,
+    challengeTtlSeconds: 120,
+    deviceRequestTtlMinutes: 10,
+    bootstrapTtlMinutes: 10
+  },
   email: {
     provider: process.env.EMAIL_PROVIDER || "console",
     from: process.env.EMAIL_FROM || "",

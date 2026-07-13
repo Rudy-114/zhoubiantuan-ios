@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { config } from "../config.js";
 
-const CHALLENGE_TTL_SECONDS = 120;
 const PURPOSES = new Set(["login", "approve_device", "reject_device"]);
 const TRANSACTION_PROBE = "admin_challenge_transaction_probe";
 
@@ -37,7 +37,7 @@ export async function createAdminChallenge(client, input = {}) {
        $1, $2, $3, $4, $5, $6, now() + ($7::integer * interval '1 second')
      )
      RETURNING id, purpose, target_id, expires_at`,
-    [challengeId, adminUserId, deviceId, purpose, targetId || null, nonceHash, CHALLENGE_TTL_SECONDS]
+    [challengeId, adminUserId, deviceId, purpose, targetId || null, nonceHash, config.admin.challengeTtlSeconds]
   );
   return {
     challengeId: inserted.rows[0].id,
