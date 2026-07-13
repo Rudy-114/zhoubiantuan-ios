@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
+    "admin:create": "node scripts/create-admin.js",
     "verify:websocket": "node scripts/verify-websocket.mjs",
     "test": "find test -type f -name '*.test.js' ! -name '*.integration.test.js' -exec node --test {} +",
     "test:db": "bash scripts/run-db-tests.sh"
