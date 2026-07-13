@@ -177,8 +177,8 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-04-content-remediation.md`
 
-- [ ] Add immutable revisions, original-ID publishing, automatic restoration boundaries, content-action UI, and one human appeal.
-- [ ] Prove likes, comments, favorites, and child-post states survive correction.
+- [x] Add immutable revisions, original-ID publishing, automatic restoration boundaries, content-action UI, and one human appeal.
+- [x] Prove likes, comments, favorites, and child-post states survive correction.
 
 ### Task 5: Add Isolated Admin Authentication
 

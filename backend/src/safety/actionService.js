@@ -55,7 +55,7 @@ export async function applySafetyAction(client, input = {}) {
     eventType: "safety_action_applied",
     eventData: { actionId: inserted.id, actionType: action.actionType, targetType: action.targetType, targetId: action.targetId }
   });
-  const syncEvents = await createSafetySyncEvents(client, {
+  const syncEvents = await createSafetyCaseSyncEvents(client, {
     caseId: action.caseId,
     ownerId: target.owner_id,
     ownerOnly: action.actionType === "notify_owner"
@@ -107,7 +107,9 @@ export async function rollbackSafetyAction(client, input = {}) {
     eventType: "safety_action_rolled_back",
     eventData: { actionId: action.id, actionType: action.action_type, targetType: action.target_type, targetId: action.target_id, reason }
   });
-  const syncEvents = await createSafetySyncEvents(client, { caseId: action.case_id, ownerId: target.owner_id });
+  const syncEvents = input.emitSyncEvents === false
+    ? []
+    : await createSafetyCaseSyncEvents(client, { caseId: action.case_id, ownerId: target.owner_id });
   return { action: rolledBack, unchanged: false, syncEvents };
 }
 
@@ -320,7 +322,7 @@ async function appendCaseEvent(client, { caseId, actorType, actorId, eventType, 
   );
 }
 
-async function createSafetySyncEvents(client, { caseId, ownerId, ownerOnly = false }) {
+export async function createSafetyCaseSyncEvents(client, { caseId, ownerId, ownerOnly = false }) {
   let userIds = [ownerId];
   if (!ownerOnly) {
     const { rows } = await client.query("SELECT DISTINCT reporter_id FROM reports WHERE case_id = $1", [caseId]);

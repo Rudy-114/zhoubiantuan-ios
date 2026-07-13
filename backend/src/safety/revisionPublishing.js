@@ -1,6 +1,10 @@
 import { createSyncEventsForUsers } from "../sync.js";
 import { badRequest } from "../validators.js";
-import { REVERSIBLE_AUTOMATIC_ACTIONS, rollbackSafetyAction } from "./actionService.js";
+import {
+  REVERSIBLE_AUTOMATIC_ACTIONS,
+  createSafetyCaseSyncEvents,
+  rollbackSafetyAction
+} from "./actionService.js";
 import { lockSafetyTarget } from "./safetyTargetLock.js";
 
 const TRANSACTION_PROBE = "publish_content_revision_probe";
@@ -38,9 +42,16 @@ export async function publishApprovedRevision(client, revisionId, approval) {
     for (const action of restoration.actions) {
       const rollback = await rollbackSafetyAction(client, {
         actionId: action.id,
-        ...normalizedApproval.rollbackActor
+        ...normalizedApproval.rollbackActor,
+        emitSyncEvents: false
       });
       syncEvents.push(...rollback.syncEvents);
+    }
+    if (restoration.actions.length) {
+      syncEvents.push(...await createSafetyCaseSyncEvents(client, {
+        caseId: revision.case_id,
+        ownerId: revision.owner_id
+      }));
     }
     if (await isEffectivelyVisible(client, revision)) {
       await client.query(

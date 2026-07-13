@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import test from "node:test";
+import { createApp } from "../../src/app.js";
 import { withTransaction } from "../../src/db.js";
 import { applySafetyAction } from "../../src/safety/actionService.js";
 import {
@@ -231,6 +233,10 @@ test("review summary persists only bounded allowlisted fields and strips credent
 });
 
 test("admin publication updates a post in place, preserves history and interactions, and restores visibility", async () => {
+  await pool.query(
+    `INSERT INTO safety_case_events (case_id, actor_type, actor_id, event_type, event_data)
+     VALUES ('case-revision', 'reporter', 'u-reporter', 'report.received', '{"source":"task-7-fixture"}'::jsonb)`
+  );
   const revision = await submitPostRevision();
   await approveRevision(revision.id);
   await pool.query("TRUNCATE sync_events RESTART IDENTITY");
@@ -283,6 +289,17 @@ test("admin publication updates a post in place, preserves history and interacti
     reports: 1,
     moderation_reviews: 1
   });
+  const preservedHistory = await pool.query(
+    `SELECT event_type, event_data FROM safety_case_events
+     WHERE case_id = 'case-revision' AND event_type = 'report.received'`
+  );
+  assert.deepEqual(preservedHistory.rows, [
+    { event_type: "report.received", event_data: { source: "task-7-fixture" } }
+  ]);
+  const preservedReport = await pool.query(
+    "SELECT case_id, subject_id FROM reports WHERE id = 'report-preserved'"
+  );
+  assert.deepEqual(preservedReport.rows[0], { case_id: "case-revision", subject_id: "p-original" });
   const state = await pool.query(
     `SELECT cr.status AS revision_status, cr.published_at,
             sc.status AS case_status, sc.correction_due_at, sc.resolved_at,
@@ -317,6 +334,17 @@ test("admin publication updates a post in place, preserves history and interacti
     { user_id: "u-audience", event_type: "post.updated", entity_type: "post", entity_id: "p-original" },
     { user_id: "u-reporter", event_type: "post.updated", entity_type: "post", entity_id: "p-original" }
   ]);
+  await withServer(async (baseUrl) => {
+    const sharedPost = await request(baseUrl, "/api/posts/p-original");
+    assert.equal(sharedPost.status, 200);
+    assert.equal(sharedPost.body.post.id, "p-original");
+    assert.equal(sharedPost.body.post.title, "Revised post");
+    assert.equal(sharedPost.body.post.likedCount, 1);
+    assert.equal(sharedPost.body.post.favoriteCount, 1);
+    assert.equal(sharedPost.body.post.commentCount, 1);
+    assert.equal(sharedPost.body.post.reportCount, 1);
+    assert.deepEqual(sharedPost.body.comments.map((comment) => comment.id), ["comment-preserved"]);
+  });
 });
 
 test("manual hold publishes editable content but keeps restrictions and restoration pending", async () => {
@@ -457,6 +485,17 @@ test("an applied non-reversible system action conservatively prevents restoratio
 });
 
 test("collection publication updates the original row and mirrors shared fields without changing child moderation", async () => {
+  await pool.query(
+    "UPDATE group_collections SET contact_visibility = 'hidden' WHERE id = 'collection-revision'"
+  );
+  await insertAppliedAction({
+    id: "action-hide-collection-contact-restorable",
+    caseId: "case-collection-revision",
+    actionType: "hide_collection_contact",
+    actorType: "system",
+    beforeSnapshot: { contact_visibility: "active", action_chain_id: "chain-hide-restorable-contact" },
+    afterSnapshot: { contact_visibility: "hidden", action_chain_id: "chain-hide-restorable-contact" }
+  });
   const revision = await submitCollectionRevision();
   await approveRevision(revision.id);
   await pool.query("TRUNCATE sync_events RESTART IDENTITY");
@@ -475,7 +514,8 @@ test("collection publication updates the original row and mirrors shared fields 
   assert.equal(collection.rows[0].owner_id, before.rows[0].owner_id);
   assert.equal(collection.rows[0].created_at.getTime(), before.rows[0].created_at.getTime());
   assert.equal(collection.rows[0].status, before.rows[0].status);
-  assert.equal(collection.rows[0].contact_visibility, before.rows[0].contact_visibility);
+  assert.equal(before.rows[0].contact_visibility, "hidden");
+  assert.equal(collection.rows[0].contact_visibility, "active");
   assert.equal(collection.rows[0].name, "Revised collection");
   assert.equal(collection.rows[0].contact_wechat, "revised-wechat");
   assert.equal(collection.rows[0].contact_qq, "revised-qq");
@@ -497,12 +537,34 @@ test("collection publication updates the original row and mirrors shared fields 
     assert.equal(child.group_info, "Revised collection group information");
     assert.equal(child.deadline.toISOString(), "2031-02-03T04:05:06.000Z");
   }
+  const restoredActions = await pool.query(
+    `SELECT id, execution_status FROM safety_actions
+     WHERE id IN ('action-suspend-collection', 'action-hide-collection-contact-restorable')
+     ORDER BY id`
+  );
+  assert.deepEqual(restoredActions.rows, [
+    { id: "action-hide-collection-contact-restorable", execution_status: "rolled_back" },
+    { id: "action-suspend-collection", execution_status: "rolled_back" }
+  ]);
+  await withServer(async (baseUrl) => {
+    const independentlyActiveChild = await request(baseUrl, "/api/posts/collection-child-active");
+    const separatelyHiddenChild = await request(baseUrl, "/api/posts/collection-child-hidden");
+    assert.equal(independentlyActiveChild.status, 200);
+    assert.equal(independentlyActiveChild.body.post.id, "collection-child-active");
+    assert.equal(separatelyHiddenChild.status, 404);
+  });
   assert.deepEqual(result.syncEvents.map(syncIdentity), [
     "u-owner:safety.report.updated:safety_case:case-collection-revision",
     "u-owner:collection.updated:collection:collection-revision",
     "u-audience:collection.updated:collection:collection-revision",
     "u-reporter:collection.updated:collection:collection-revision"
   ]);
+  const ownerSafetySync = await pool.query(
+    `SELECT count(*)::int AS count FROM sync_events
+     WHERE user_id = 'u-owner' AND event_type = 'safety.report.updated'
+       AND entity_id = 'case-collection-revision'`
+  );
+  assert.equal(ownerSafetySync.rows[0].count, 1);
 });
 
 test("restored collection publication includes reporters who directly reported the collection", async () => {
@@ -1287,6 +1349,22 @@ async function countCaseEventsForCase(caseId, eventType) {
     [caseId, eventType]
   );
   return rows[0].count;
+}
+
+async function withServer(callback) {
+  const server = http.createServer(createApp());
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  try {
+    await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+async function request(baseUrl, path) {
+  const response = await fetch(`${baseUrl}${path}`);
+  return { status: response.status, body: await response.json() };
 }
 
 async function runResubmitRevisionRace(secondOperation) {

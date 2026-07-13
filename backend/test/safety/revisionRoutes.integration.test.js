@@ -605,6 +605,7 @@ test("submits one owner appeal with registered evidence and no decision or AI jo
 
     const appealState = await pool.query(
       `SELECT sa.id, sa.decision_action_id, sa.owner_id, sa.detail, sa.object_keys, sa.status,
+              decision.execution_status AS decision_status,
               se.evidence_type, se.text_snapshot, se.structured_snapshot, se.object_keys AS evidence_object_keys,
               se.report_id, se.client_request_id,
               sc.status AS case_status, sc.manual_hold, sc.resolved_at,
@@ -616,6 +617,7 @@ test("submits one owner appeal with registered evidence and no decision or AI jo
                  AND sync.entity_type = 'safety_case' AND sync.entity_id = sa.case_id) AS owner_syncs
        FROM safety_appeals sa
        JOIN safety_cases sc ON sc.id = sa.case_id
+       JOIN safety_actions decision ON decision.id = sa.decision_action_id
        JOIN safety_evidence se ON se.case_id = sa.case_id AND se.evidence_type = 'appeal'
        JOIN safety_case_events event ON event.case_id = sa.case_id AND event.event_type = 'appeal.submitted'
        WHERE sa.case_id = 'case-appeal-route'`
@@ -629,6 +631,7 @@ test("submits one owner appeal with registered evidence and no decision or AI jo
       detail: "The final decision missed my supporting evidence. 申诉 😀",
       object_keys: objectKeys,
       status: "pending",
+      decision_status: "applied",
       evidence_type: "appeal",
       text_snapshot: "The final decision missed my supporting evidence. 申诉 😀",
       structured_snapshot: { appealId: row.id, decisionActionId: "action-appeal-route" },

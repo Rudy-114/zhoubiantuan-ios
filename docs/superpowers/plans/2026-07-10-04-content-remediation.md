@@ -441,19 +441,19 @@ git commit -m "Add owner content remediation UI"
 **Interfaces:**
 - Uses two user accounts and an injected passing moderation fixture; admin action remains a test fixture until Phase 6.
 
-- [ ] **Step 1: Verify post correction**
+- [x] **Step 1: Verify post correction**
 
 Create interactions, apply an automatic hide, submit a corrected post, run the review job, and assert the same ID, interaction counts, share route, and case history remain.
 
-- [ ] **Step 2: Verify collection correction**
+- [x] **Step 2: Verify collection correction**
 
 Apply contact hiding, submit corrected contact, publish, and assert collection contact restores and every independently active child returns without child status mutation; a separately hidden child remains hidden.
 
-- [ ] **Step 3: Verify manual boundaries and appeal**
+- [x] **Step 3: Verify manual boundaries and appeal**
 
 Apply a manual hold, submit a passing revision, assert no auto-restore, submit an appeal, and assert no worker changes the final decision.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 ```bash
 npm --prefix backend test
