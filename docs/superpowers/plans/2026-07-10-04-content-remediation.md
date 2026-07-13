@@ -33,7 +33,7 @@
 **Interfaces:**
 - Produces: `content_revisions` and `safety_appeals`.
 
-- [ ] **Step 1: Write the failing migration contract**
+- [x] **Step 1: Write the failing migration contract**
 
 ```js
 import test from "node:test";
@@ -49,13 +49,13 @@ test("content revision migration enforces monotonic revisions and one appeal per
 });
 ```
 
-- [ ] **Step 2: Run the database suite and verify failure**
+- [x] **Step 2: Run the database suite and verify failure**
 
 ```bash
 npm --prefix backend run test:db
 ```
 
-- [ ] **Step 3: Create the additive migration**
+- [x] **Step 3: Create the additive migration**
 
 ```sql
 CREATE TABLE content_revisions (
@@ -99,11 +99,11 @@ CREATE UNIQUE INDEX safety_appeals_one_per_decision ON safety_appeals (decision_
 CREATE INDEX safety_appeals_pending_created ON safety_appeals (status, created_at);
 ```
 
-- [ ] **Step 4: Add the down migration and test both directions**
+- [x] **Step 4: Add the down migration and test both directions**
 
 Drop appeals before revisions. The down migration removes no report/case tables. Apply up, seed one revision and appeal, assert uniqueness, then apply down on the disposable database and assert only these two tables disappear.
 
-- [ ] **Step 5: Commit the migration**
+- [x] **Step 5: Commit the migration**
 
 ```bash
 npm --prefix backend run test:db
@@ -122,7 +122,7 @@ git commit -m "Add content revision and appeal schema"
 - Produces: `submitContentRevision(client, input)`, `postRevisionSnapshot`, and `collectionRevisionSnapshot`.
 - Consumes: job queue and report object-key ownership checks.
 
-- [ ] **Step 1: Write failing ownership, state, and immutability tests**
+- [x] **Step 1: Write failing ownership, state, and immutability tests**
 
 Cover:
 
@@ -136,7 +136,7 @@ collection candidate does not modify group_collections before publish
 object keys outside report/post owner prefixes -> 400
 ```
 
-- [ ] **Step 2: Define exact normalized snapshots**
+- [x] **Step 2: Define exact normalized snapshots**
 
 Post snapshot:
 
@@ -159,7 +159,7 @@ Collection snapshot:
 
 Require collection name, a future-or-explicitly-confirmed deadline, default note, and at least one contact channel. Cap all strings to the same bounds used by current create routes.
 
-- [ ] **Step 3: Implement transaction and revision numbering**
+- [x] **Step 3: Implement transaction and revision numbering**
 
 ```js
 export async function submitContentRevision(client, { caseId, ownerId, snapshot, objectKeys = [] }) {
@@ -178,7 +178,7 @@ export async function submitContentRevision(client, { caseId, ownerId, snapshot,
 
 Use `FOR UPDATE` on the case and active revision query so concurrent submissions cannot create two pending revisions.
 
-- [ ] **Step 4: Run tests and commit submission behavior**
+- [x] **Step 4: Run tests and commit submission behavior**
 
 ```bash
 npm --prefix backend run test:db
@@ -198,7 +198,7 @@ git commit -m "Add immutable content revision intake"
 - Produces: `reviewContentRevision`, `publishApprovedRevision`, and `review_revision` worker handler.
 - Consumes: `reviewSubmission`, action rollback, and sync event creation.
 
-- [ ] **Step 1: Write failing preservation and restoration tests**
+- [x] **Step 1: Write failing preservation and restoration tests**
 
 Seed a post with one like, favorite, comment, report/case, and an applied automatic hide action. Submit a hard-safety-approved revision, publish it through an explicit human decision in this pre-Qwen phase, and assert:
 
@@ -213,7 +213,7 @@ assert.equal(revision.status, "published");
 
 Repeat with `manual_hold=true` and assert content remains restricted and case goes to `manual_review` even when the candidate passes.
 
-- [ ] **Step 2: Implement injected moderation review**
+- [x] **Step 2: Implement injected moderation review**
 
 ```js
 export async function reviewContentRevision(client, { revisionId, moderation = reviewSubmission }) {
@@ -236,11 +236,11 @@ export async function reviewContentRevision(client, { revisionId, moderation = r
 
 Provider exceptions fail into `manual_review`; they never publish or restore. Before Phase 7, a hard-safety pass still waits for a human admin to call `publishApprovedRevision`. Phase 7 may call the same function automatically only after a valid Qwen result and policy approval.
 
-- [ ] **Step 3: Publish posts without replacing IDs**
+- [x] **Step 3: Publish posts without replacing IDs**
 
 Update only editable post columns from the approved snapshot. Load the parent collection and mirror its shared fields and deadline. Leave `id`, `author_id`, `collection_id`, `created_at`, moderation history, and interaction tables unchanged. Set `updated_at=now()`.
 
-- [ ] **Step 4: Publish collections and mirror shared fields**
+- [x] **Step 4: Publish collections and mirror shared fields**
 
 Update the original collection, then:
 
@@ -257,15 +257,15 @@ WHERE collection_id = $1;
 
 Do not modify child post moderation `status` or `safety_status`.
 
-- [ ] **Step 5: Enforce automatic restoration boundaries**
+- [x] **Step 5: Enforce automatic restoration boundaries**
 
 `publishApprovedRevision(client, revisionId, approval)` accepts either `{ actorType: 'admin', actorId, reason }` or `{ actorType: 'policy', qwenResult, policyVersion }`. Policy approval is valid only after both Aliyun hard safety and schema-valid Qwen analysis pass. Auto-rollback only actions where `actor_type IN ('system','ai')`, action type is in the reversible allowlist, no manual action remains applied, `manual_hold=false`, and no open linked case blocks the target. Otherwise leave actions applied, move the case to `manual_review`, and record `revision.approved_waiting_manual_restore`.
 
-- [ ] **Step 6: Emit owner and audience sync events**
+- [x] **Step 6: Emit owner and audience sync events**
 
 In the same transaction, create owner events plus public entity events only if the object becomes effectively visible. Notify realtime only after commit.
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 ```bash
 npm --prefix backend run test:db
@@ -286,11 +286,11 @@ git commit -m "Publish approved revisions in place"
 **Interfaces:**
 - Produces: `GET /api/me/content-actions`, revision submit, and appeal submit APIs.
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 Cover owner filtering, field-level reason output, deadline, current revision status, one appeal per decision, seven-day cutoff, evidence ownership, and absence of reporter/admin/AI private fields.
 
-- [ ] **Step 2: Map only owner-visible action data**
+- [x] **Step 2: Map only owner-visible action data**
 
 ```js
 export function contentActionToClient(row) {
@@ -312,11 +312,11 @@ export function contentActionToClient(row) {
 }
 ```
 
-- [ ] **Step 3: Implement appeal transaction**
+- [x] **Step 3: Implement appeal transaction**
 
 Lock the case and latest applied human final action, verify target ownership and decision age at most seven days, insert one appeal for `decision_action_id`, set case to `appealed` and `manual_hold=true`, append evidence/event, create owner sync, and do not enqueue a decision job.
 
-- [ ] **Step 4: Mount routes and run all backend tests**
+- [x] **Step 4: Mount routes and run all backend tests**
 
 ```bash
 npm --prefix backend run test:db

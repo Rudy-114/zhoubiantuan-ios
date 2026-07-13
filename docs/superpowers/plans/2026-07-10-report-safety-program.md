@@ -155,23 +155,23 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-01-realtime-p0.md`
 
-- [ ] Execute every checkbox in the P0 plan.
-- [ ] Verify the public WebSocket handshake, HTTPS health, and privacy-policy route after the Nginx reload.
-- [ ] Record the P0 commit and production verification before starting database work.
+- [x] Execute every checkbox in the P0 plan.
+- [x] Verify the public WebSocket handshake, HTTPS health, and privacy-policy route after the Nginx reload.
+- [x] Record the P0 commit and production verification before starting database work.
 
 ### Task 2: Build the Safety-Case Backend Core
 
 **Plan:** `docs/superpowers/plans/2026-07-10-02-safety-core-backend.md`
 
-- [ ] Execute the additive migration, report intake, evidence, case aggregation, action, visibility, and job-queue tasks.
-- [ ] Deploy with `SAFETY_CASES_ENABLED=false` and `SAFETY_AI_MODE=off` before any client uses the new endpoints.
+- [x] Execute the additive migration, report intake, evidence, case aggregation, action, visibility, and job-queue tasks.
+- [x] Deploy with `SAFETY_CASES_ENABLED=false` and `SAFETY_AI_MODE=off` before any client uses the new endpoints.
 
 ### Task 3: Add the Five iOS Reporting Workflows
 
 **Plan:** `docs/superpowers/plans/2026-07-10-03-ios-reporting.md`
 
-- [ ] Add shared models, networking, report form, five entry points, optional block flow, and My Reports.
-- [ ] Pass `swift test`, Xcode Debug build, and simulator layout checks.
+- [x] Add shared models, networking, report form, five entry points, optional block flow, and My Reports.
+- [x] Pass `swift test`, Xcode Debug build, and simulator layout checks.
 
 ### Task 4: Add Owner Remediation and Appeals
 
