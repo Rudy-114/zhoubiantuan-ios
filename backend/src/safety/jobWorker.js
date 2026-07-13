@@ -1,6 +1,33 @@
 import { claimSafetyJobs, completeSafetyJob, failSafetyJob, releaseSafetyJob, sanitizeSafetyJobError } from "./jobQueue.js";
 import { logger } from "../logger.js";
 
+export function createReviewRevisionJobHandler({
+  withTransaction,
+  reviewContentRevision,
+  notifySyncEvents,
+  eventLogger = logger
+} = {}) {
+  if (typeof withTransaction !== "function") throw new TypeError("withTransaction must be a function");
+  if (typeof reviewContentRevision !== "function") throw new TypeError("reviewContentRevision must be a function");
+  if (typeof notifySyncEvents !== "function") throw new TypeError("notifySyncEvents must be a function");
+  if (!eventLogger || typeof eventLogger.error !== "function") throw new TypeError("eventLogger must expose error");
+
+  return async function handleReviewRevisionJob(job) {
+    const revisionId = requiredRevisionId(job?.payload?.revisionId);
+    const result = await withTransaction((client) => reviewContentRevision(client, { revisionId }));
+    if (result?.syncEvents?.length) {
+      try {
+        await notifySyncEvents(result.syncEvents);
+      } catch {
+        eventLogger.error("safety_worker.review_revision_notify_failed", {
+          errorCode: "REVIEW_REVISION_NOTIFY_FAILED"
+        });
+      }
+    }
+    return result;
+  };
+}
+
 export function startSafetyWorker({
   concurrency = 2,
   pollIntervalMs = 1000,
@@ -105,6 +132,13 @@ function positiveInteger(value, name, maximum) {
 function requiredString(value, name) {
   if (typeof value !== "string" || !value.trim() || value.length > 128) throw new TypeError(`${name} must be a non-empty string`);
   return value;
+}
+
+function requiredRevisionId(value) {
+  if (typeof value !== "string" || !value.trim() || Array.from(value.trim()).length > 160) {
+    throw new TypeError("review_revision payload.revisionId must be a non-empty string of at most 160 characters");
+  }
+  return value.trim();
 }
 
 function deferredTypes(value, handlers) {

@@ -252,7 +252,7 @@ test("rejects an unregistered owner-looking report upload", async () => {
   await assertSubmissionCounts({ revisions: 0, jobs: 0, events: 0 });
 });
 
-test("serializes contested case submissions behind an observed case-row lock", async () => {
+test("serializes contested case submissions behind target and case locks", async () => {
   const results = await runLockBarrierRace({
     firstInput: postSubmission(),
     secondInput: postSubmission(),
@@ -679,7 +679,7 @@ async function runLockBarrierRace({ firstInput, secondInput, contestedQuery }) {
   });
   const secondProxy = clientProxy(secondClient, (sql, params) => {
     const pending = secondClient.query(sql, params);
-    if (contestedQuery.test(String(sql))) secondAttempted.resolve();
+    if (contestedQuery.test(String(sql)) || /zbt:safety-target/.test(String(sql))) secondAttempted.resolve();
     return pending;
   });
 

@@ -3,19 +3,24 @@ import { assertOwnedObjectKeys } from "../moderation/index.js";
 import { badRequest } from "../validators.js";
 import { enqueueSafetyJob } from "./jobQueue.js";
 import { claimReportUploadsForAttachment } from "./reportUploadCleanup.js";
+import { publishApprovedRevision } from "./revisionPublishing.js";
+import { reviewContentRevision } from "./revisionReview.js";
 import { collectionRevisionSnapshot, postRevisionSnapshot } from "./revisionValidation.js";
+import { lockSafetyTarget } from "./safetyTargetLock.js";
 
 const ACTIVE_REVISION_STATUSES = ["pending", "reviewing", "approved"];
-const TRANSACTION_PROBE_SAVEPOINT = "submit_content_revision_probe";
+const TRANSACTION_PROBE = "submit_content_revision_probe";
 const MAX_REVISION_OBJECT_KEYS = 6;
 const MAX_OBJECT_KEY_LENGTH = 1024;
 const UNSAFE_OBJECT_KEY_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/;
 
 export async function submitContentRevision(client, input = {}) {
-  assertTransactionScopedClient(client);
+  assertTransactionClient(client);
   await assertActiveTransaction(client);
   const { caseId, ownerId, snapshot, objectKeys = [] } = input || {};
-  const safetyCase = await lockSafetyCase(client, caseId);
+  const caseMetadata = await loadSafetyCaseMetadata(client, caseId);
+  await lockSafetyTarget(client, caseMetadata.subject_type, caseMetadata.subject_id);
+  const safetyCase = await lockSafetyCase(client, caseMetadata);
   await lockAndAuthorizeTarget(client, safetyCase, ownerId);
 
   const activeRevision = await lockActiveRevision(client, safetyCase.id);
@@ -27,8 +32,8 @@ export async function submitContentRevision(client, input = {}) {
   const normalizedSnapshot = safetyCase.subject_type === "post"
     ? await postRevisionSnapshot(client, safetyCase.subject_id, ownerId, snapshot)
     : await collectionRevisionSnapshot(client, safetyCase.subject_id, ownerId, snapshot);
-  const normalizedObjectKeys = normalizeRevisionObjectKeys(ownerId, objectKeys);
-  await claimRevisionReportUploads(client, ownerId, normalizedObjectKeys);
+  const normalizedObjectKeys = normalizeObjectKeys(ownerId, objectKeys);
+  await claimReportUploads(client, ownerId, normalizedObjectKeys);
   const revisionNumber = await nextRevisionNumber(client, safetyCase.subject_type, safetyCase.subject_id);
   const revision = await insertRevision(client, {
     caseId: safetyCase.id,
@@ -58,9 +63,14 @@ export async function submitContentRevision(client, input = {}) {
   return revision;
 }
 
-export { collectionRevisionSnapshot, postRevisionSnapshot };
+export {
+  collectionRevisionSnapshot,
+  postRevisionSnapshot,
+  publishApprovedRevision,
+  reviewContentRevision
+};
 
-function assertTransactionScopedClient(client) {
+function assertTransactionClient(client) {
   if (!client || typeof client.query !== "function" || typeof client.release !== "function") {
     throw new TypeError(
       "submitContentRevision requires a transaction-scoped pg PoolClient; caller must BEGIN and own COMMIT/ROLLBACK"
@@ -70,8 +80,8 @@ function assertTransactionScopedClient(client) {
 
 async function assertActiveTransaction(client) {
   try {
-    await client.query(`SAVEPOINT ${TRANSACTION_PROBE_SAVEPOINT}`);
-    await client.query(`RELEASE SAVEPOINT ${TRANSACTION_PROBE_SAVEPOINT}`);
+    await client.query(`SAVEPOINT ${TRANSACTION_PROBE}`);
+    await client.query(`RELEASE SAVEPOINT ${TRANSACTION_PROBE}`);
   } catch (error) {
     const developerError = new TypeError(
       "submitContentRevision requires an active transaction; caller must BEGIN before invoking it"
@@ -81,10 +91,22 @@ async function assertActiveTransaction(client) {
   }
 }
 
-async function lockSafetyCase(client, caseId) {
+async function loadSafetyCaseMetadata(client, caseId) {
   if (!caseId || typeof caseId !== "string") throw badRequest("案件 ID 不能为空");
-  const { rows } = await client.query("SELECT * FROM safety_cases WHERE id = $1 FOR UPDATE", [caseId]);
+  const { rows } = await client.query(
+    "SELECT id, subject_type, subject_id FROM safety_cases WHERE id = $1",
+    [caseId]
+  );
   if (!rows[0]) throw httpError(404, "整改案件不存在", "safety_case_not_found");
+  return rows[0];
+}
+
+async function lockSafetyCase(client, metadata) {
+  const { rows } = await client.query("SELECT * FROM safety_cases WHERE id = $1 FOR UPDATE", [metadata.id]);
+  if (!rows[0]) throw httpError(404, "整改案件不存在", "safety_case_not_found");
+  if (rows[0].subject_type !== metadata.subject_type || rows[0].subject_id !== metadata.subject_id) {
+    throw conflict("整改案件目标已变化", "revision_target_changed");
+  }
   return rows[0];
 }
 
@@ -97,7 +119,6 @@ async function lockAndAuthorizeTarget(client, safetyCase, ownerId) {
   } else {
     throw badRequest("该内容类型不支持提交整改", "unsupported_revision_target");
   }
-
   const { rows } = await client.query(queryText, [safetyCase.subject_id]);
   if (!rows[0]) throw httpError(404, "整改目标不存在", "revision_target_not_found");
   if (!ownerId || rows[0].owner_id !== ownerId) throw httpError(403, "无权提交该内容的整改");
@@ -115,7 +136,7 @@ async function lockActiveRevision(client, caseId) {
   return rows[0] || null;
 }
 
-function normalizeRevisionObjectKeys(ownerId, objectKeys) {
+function normalizeObjectKeys(ownerId, objectKeys) {
   if (!Array.isArray(objectKeys)) throw badRequest("整改附件必须是数组");
   if (objectKeys.length > MAX_REVISION_OBJECT_KEYS) {
     throw badRequest(`整改附件最多包含 ${MAX_REVISION_OBJECT_KEYS} 项`);
@@ -123,9 +144,7 @@ function normalizeRevisionObjectKeys(ownerId, objectKeys) {
   const normalized = [];
   for (const item of objectKeys) {
     if (typeof item !== "string") throw badRequest("整改附件必须只包含字符串");
-    if (UNSAFE_OBJECT_KEY_CONTROL_CHARACTERS.test(item)) {
-      throw badRequest("整改附件包含不支持的控制字符");
-    }
+    if (UNSAFE_OBJECT_KEY_CONTROL_CHARACTERS.test(item)) throw badRequest("整改附件包含不支持的控制字符");
     const key = item.trim();
     if (!key) throw badRequest("整改附件不能为空");
     if (Array.from(key).length > MAX_OBJECT_KEY_LENGTH) {
@@ -133,11 +152,10 @@ function normalizeRevisionObjectKeys(ownerId, objectKeys) {
     }
     normalized.push(key);
   }
-  const ownedKeys = assertOwnedObjectKeys(ownerId, normalized, ["report", "post"]);
-  return [...new Set(ownedKeys)];
+  return [...new Set(assertOwnedObjectKeys(ownerId, normalized, ["report", "post"]))];
 }
 
-async function claimRevisionReportUploads(client, ownerId, objectKeys) {
+async function claimReportUploads(client, ownerId, objectKeys) {
   const reportObjectKeys = objectKeys.filter((key) => key.startsWith("report/"));
   try {
     await claimReportUploadsForAttachment(client, { ownerUserID: ownerId, objectKeys: reportObjectKeys });
@@ -166,14 +184,8 @@ async function insertRevision(client, input) {
      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'pending')
      RETURNING *`,
     [
-      `cr-${randomUUID()}`,
-      input.caseId,
-      input.targetType,
-      input.targetId,
-      input.ownerId,
-      input.revisionNumber,
-      JSON.stringify(input.snapshot),
-      input.objectKeys
+      `cr-${randomUUID()}`, input.caseId, input.targetType, input.targetId, input.ownerId,
+      input.revisionNumber, JSON.stringify(input.snapshot), input.objectKeys
     ]
   );
   return rows[0];

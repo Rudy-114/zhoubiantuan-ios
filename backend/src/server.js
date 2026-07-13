@@ -7,13 +7,14 @@ import { pool, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
 import { deleteObject } from "./oss.js";
 import { startRateLimitEventPruner } from "./rateLimit.js";
-import { attachRealtime } from "./realtime.js";
+import { attachRealtime, notifySyncEvents } from "./realtime.js";
 import { enqueueSafetyJob } from "./safety/jobQueue.js";
-import { startSafetyWorker } from "./safety/jobWorker.js";
+import { createReviewRevisionJobHandler, startSafetyWorker } from "./safety/jobWorker.js";
 import { cleanupRegisteredReportUpload, reportUploadKeyFromJob } from "./safety/reportUploadCleanup.js";
+import { reviewContentRevision } from "./safety/revisionService.js";
 import { startSyncEventPruner } from "./sync.js";
 
-const DEFERRED_SAFETY_JOB_TYPES = ["analyze_case", "review_revision"];
+const DEFERRED_SAFETY_JOB_TYPES = ["analyze_case"];
 
 export function createSafetyServerRuntime({
   app = createApp(),
@@ -25,6 +26,8 @@ export function createSafetyServerRuntime({
   startSafetyWorker: startWorker = startSafetyWorker,
   withTransaction: transaction = withTransaction,
   enqueueSafetyJob: enqueueJob = enqueueSafetyJob,
+  reviewContentRevision: reviewRevision = reviewContentRevision,
+  notifySyncEvents: notifyEvents = notifySyncEvents,
   cleanupReportUpload: cleanupUpload = cleanupRegisteredReportUpload,
   deleteReportUpload: deleteUpload = deleteObject,
   pool: databasePool = pool,
@@ -71,7 +74,14 @@ export function createSafetyServerRuntime({
         const deferredJobTypes = [...DEFERRED_SAFETY_JOB_TYPES];
         if (runtimeConfig.safety.enabled) {
           handlers.case_received = handleCaseReceived;
+          handlers.review_revision = createReviewRevisionJobHandler({
+            withTransaction: transaction,
+            reviewContentRevision: reviewRevision,
+            notifySyncEvents: notifyEvents,
+            eventLogger
+          });
         } else {
+          deferredJobTypes.push("review_revision");
           deferredJobTypes.push("case_received");
         }
         safetyWorker = startWorker({ handlers, deferredJobTypes });

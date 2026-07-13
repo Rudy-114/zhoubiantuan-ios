@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createReviewRevisionJobHandler } from "../../src/safety/jobWorker.js";
 import { createSafetyServerRuntime } from "../../src/server.js";
 
 test("documents report upload and supplement abuse defaults with the final migration order", async () => {
@@ -102,9 +103,102 @@ test("non-off case_received idempotently enqueues pending analyze_case without a
     payload: {},
     status: "pending"
   }]);
-  assert.deepEqual(workerOptions.deferredJobTypes, ["analyze_case", "review_revision"]);
+  assert.deepEqual(workerOptions.deferredJobTypes, ["analyze_case"]);
   assert.equal(workerOptions.handlers.analyze_case, undefined);
+  assert.equal(typeof workerOptions.handlers.review_revision, "function");
   await runtime.shutdown("test");
+});
+
+test("review revision handler validates payload and notifies realtime only after commit", async () => {
+  let transactionCalls = 0;
+  let committed = false;
+  const notifications = [];
+  const handler = createReviewRevisionJobHandler({
+    withTransaction: async (callback) => {
+      transactionCalls += 1;
+      const result = await callback({ query: async () => ({}) });
+      committed = true;
+      return result;
+    },
+    reviewContentRevision: async (_client, input) => ({
+      published: false,
+      revisionId: input.revisionId,
+      syncEvents: [{ id: "sync-1" }]
+    }),
+    notifySyncEvents(events) {
+      notifications.push({ committed, events });
+    }
+  });
+
+  await assert.rejects(handler({ payload: {} }), /revisionId/);
+  assert.equal(transactionCalls, 0);
+  const result = await handler({ payload: { revisionId: "revision-1" } });
+  assert.equal(result.revisionId, "revision-1");
+  assert.deepEqual(notifications, [{ committed: true, events: [{ id: "sync-1" }] }]);
+});
+
+test("review revision notifier failures are sanitized and do not fail durable retries", async () => {
+  let reviewCalls = 0;
+  let notifyCalls = 0;
+  const logs = [];
+  const handler = createReviewRevisionJobHandler({
+    withTransaction: async (callback) => callback({ query: async () => ({}) }),
+    reviewContentRevision: async () => {
+      reviewCalls += 1;
+      return reviewCalls === 1
+        ? { unchanged: false, syncEvents: [{ id: "sync-notify" }] }
+        : { unchanged: true, syncEvents: [] };
+    },
+    async notifySyncEvents() {
+      notifyCalls += 1;
+      throw new Error("Authorization: Bearer raw-notifier-secret");
+    },
+    eventLogger: {
+      error(event, fields) { logs.push({ event, fields }); }
+    }
+  });
+
+  const first = await handler({ payload: { revisionId: "revision-retry" } });
+  const second = await handler({ payload: { revisionId: "revision-retry" } });
+
+  assert.equal(first.unchanged, false);
+  assert.equal(second.unchanged, true);
+  assert.equal(reviewCalls, 2);
+  assert.equal(notifyCalls, 1);
+  assert.deepEqual(logs, [{
+    event: "safety_worker.review_revision_notify_failed",
+    fields: { errorCode: "REVIEW_REVISION_NOTIFY_FAILED" }
+  }]);
+  assert.doesNotMatch(JSON.stringify(logs), /raw-notifier-secret|Bearer/);
+});
+
+test("feature-on runtime wires review_revision through injected transaction and notifier", async () => {
+  let workerOptions;
+  const calls = [];
+  const runtime = createRuntime({
+    safety: { enabled: true, aiMode: "off" },
+    startSafetyWorker(options) {
+      workerOptions = options;
+      return { stop: async () => {} };
+    },
+    reviewContentRevision: async (_client, input) => {
+      calls.push(["review", input.revisionId]);
+      return { syncEvents: [{ id: "sync-runtime" }] };
+    },
+    notifySyncEvents(events) {
+      calls.push(["notify", events[0].id]);
+    }
+  });
+
+  await runtime.start({ port: 0, host: "127.0.0.1" });
+  try {
+    assert.equal(typeof workerOptions.handlers.review_revision, "function");
+    assert.deepEqual(workerOptions.deferredJobTypes, ["analyze_case"]);
+    await workerOptions.handlers.review_revision({ payload: { revisionId: "revision-runtime" } });
+    assert.deepEqual(calls, [["review", "revision-runtime"], ["notify", "sync-runtime"]]);
+  } finally {
+    await runtime.shutdown("test");
+  }
 });
 
 test("cleanup report upload worker deletes only unattached objects and retries deletion failures", async () => {

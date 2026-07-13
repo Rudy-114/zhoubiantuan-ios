@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createSyncEventsForUsers } from "../sync.js";
 import { badRequest } from "../validators.js";
+import { lockSafetyTarget } from "./safetyTargetLock.js";
 
 export const REVERSIBLE_AUTOMATIC_ACTIONS = new Set([
   "hide_post", "hide_comment", "hide_message",
@@ -25,6 +26,7 @@ export async function applySafetyAction(client, input = {}) {
     assertMatchingIdempotencyPayload(existing, action);
     return { action: existing, unchanged: true, syncEvents: [] };
   }
+  await lockSafetyTarget(client, action.targetType, action.targetId);
   const safetyCase = await lockCase(client, action.caseId);
   validateCaseTarget(safetyCase, action);
   const target = await lockTarget(client, action.targetType, action.targetId);
@@ -69,6 +71,9 @@ export async function rollbackSafetyAction(client, input = {}) {
   const actionMetadata = await findActionById(client, actionId);
   if (!actionMetadata) throw badRequest("安全操作不存在");
   if (!REVERSIBLE_AUTOMATIC_ACTIONS.has(actionMetadata.action_type)) throw badRequest("该安全操作不支持撤销");
+  await lockSafetyTarget(client, actionMetadata.target_type, actionMetadata.target_id);
+  const revalidatedMetadata = await findActionById(client, actionId);
+  if (!sameActionMetadata(actionMetadata, revalidatedMetadata)) throw badRequest("安全操作已变化");
   const safetyCase = await lockCase(client, actionMetadata.case_id);
   const target = await lockTarget(client, actionMetadata.target_type, actionMetadata.target_id);
   const targetActions = await lockTargetActions(client, actionMetadata);
@@ -104,6 +109,12 @@ export async function rollbackSafetyAction(client, input = {}) {
   });
   const syncEvents = await createSafetySyncEvents(client, { caseId: action.case_id, ownerId: target.owner_id });
   return { action: rolledBack, unchanged: false, syncEvents };
+}
+
+function sameActionMetadata(expected, actual) {
+  return Boolean(actual) && ["case_id", "action_type", "target_type", "target_id"].every(
+    (key) => actual[key] === expected[key]
+  );
 }
 
 function normalizeActionInput(input) {
