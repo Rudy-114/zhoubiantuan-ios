@@ -1,12 +1,12 @@
 # Codex Conversation Handoff
 
-Status: 已在当前最小 TDD 循环结束后暂停，尚未进入下一个总阶段
-Generated: 2026-07-13 15:08 CST
+Status: `d31e34d` 最终独立代码质量复核与修复已完成；仍停留在总阶段 4，子任务 5 尚未开始
+Generated: 2026-07-13 16:00 CST
 Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
 
 ## Resume Prompt
 
-请先阅读 `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`，再用当前文件系统、Git 状态和计划文件复核。Rudy 已要求在当前最小 TDD 循环后停止；只有收到他明确的继续指令后才恢复。恢复后的第一动作是在不进入新总阶段的前提下，对 `d31e34dc56da5a4f21806d1fcb641c15daa21a4c` 相对 `1fc72b4abdf1430a950c9181bcefb17fc802cc43` 做一次独立代码质量复核；如有问题，按最小 TDD 循环修复并重跑完整验证。复核通过后，仍在总阶段 4 内从子任务 5 开始，不要提前进入总阶段 5。
+请先阅读 `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`，再用当前文件系统、Git 状态和计划文件复核。`d31e34d` 相对 `1fc72b4` 的最终 Standards / Spec 独立复核、TDD 修复和完整后端验证已在 `d8e2a30` 完成。只有收到 Rudy 明确的继续指令后，才从总阶段 4 子任务 5（iOS 内容操作模型、客户端与 Store）开始；不得提前进入总阶段 5。
 
 ## Objective And User Intent
 
@@ -30,7 +30,7 @@ Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-s
 1. 修正版本与申诉数据库结构：完成。
 2. 不可变候选版本提交：完成。
 3. 审核并原位发布修正内容：完成。
-4. 团长内容操作、修正提交与申诉 API：实现及最小 TDD 循环完成；最新提交仍欠一次独立代码质量复核。
+4. 团长内容操作、修正提交与申诉 API：完成；最终 Standards / Spec 独立复核无遗留 P1/P2。
 5. iOS 内容操作模型、客户端与 Store：未开始。
 6. iOS 内容修正与申诉界面：未开始。
 7. 保留原 ID 的端到端验证：未开始。
@@ -43,7 +43,7 @@ Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-s
 ## Git State And Completed Commits
 
 - Branch: `codex/report-safety-system`
-- Latest implementation commit: `d31e34dc56da5a4f21806d1fcb641c15daa21a4c`
+- Latest implementation/review-fix commit: `d8e2a3046b332db64020768a7b5925d738094ebc`
 - 本交接文件和计划勾选位于包含本文件的检查点提交中。
 
 当前总阶段 4 已完成提交：
@@ -52,6 +52,7 @@ Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-s
 - `c0ecf5fce637f6a59a31607682bff032a91bbe94` `Add immutable content revision intake`
 - `1fc72b4abdf1430a950c9181bcefb17fc802cc43` `Publish approved revisions in place`
 - `d31e34dc56da5a4f21806d1fcb641c15daa21a4c` `Add owner correction and appeal APIs`
+- `d8e2a3046b332db64020768a7b5925d738094ebc` `Fix owner remediation review findings`
 
 此前举报系统关键提交：
 
@@ -82,6 +83,14 @@ Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-s
 
 已覆盖团长数据隔离、私有审核字段隐藏、当前状态约束、不可变修正版本、证据归属、七天申诉窗口、每次最终人工决定仅一次申诉、并发重复申诉以及提交后通知失败不回滚已提交事务。
 
+最终独立复核另外发现并修复：
+
+- 申诉案与同目标/类别的新开放案触发旧唯一索引冲突；新增 `016_appealed_case_aggregation.sql`，申诉案不再吸收后续新举报。
+- 同一举报人的旧 pending 举报会阻塞申诉期间的新举报；进入申诉后旧 pending 举报会关闭，新举报进入独立案件。
+- 整改提交原本没有滥用上限；新增 IP 日限、账号日限和账号分钟突发限制，稳定错误码为 `content_revision_rate_limited`。
+- `GET /api/me/content-actions` 原本只返回前 100 项；现返回可选 `nextCursor`，用不可变创建时间和 ID 做微秒精度稳定分页。
+- 016 down 若存在旧应用无法安全表示的多案件状态会拒绝回滚，并在事务内保留迁移、索引和案件；无冲突时才恢复旧约束。
+
 ## Verification
 
 ### Full PostgreSQL Database Suite
@@ -93,15 +102,14 @@ cd /Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backen
 PG_BINDIR=/usr/local/opt/postgresql@16/bin ZBT_TEST_PG_PORT=55432 npm run test:db
 ```
 
-结果：`169/169` 通过，退出码 `0`，耗时约 `116.8s`。
-
-第一次启动测试时发现端口 `55432` 上有遗留测试集群，测试尚未开始即失败。该集群已用 PostgreSQL 16 的 `pg_ctl` 正常停止并删除，随后完整重跑通过。
+最终结果：`173/173` 通过，退出码 `0`，耗时约 `119.1s`。该结果是在安全 down 闸门最后修改后重新完整执行所得。
 
 ### Backend Focused And Unit Suites
 
-- 团长修正/申诉路由集成测试：`18/18` 通过。
+- 团长修正/申诉路由与迁移聚焦集成测试：`24/24` 通过（路由 `21`、迁移 `3`）。
 - 后端非数据库单元测试：`64/64` 通过。
-- 最新数据库完整测试：`169/169` 通过。
+- 最新数据库完整测试：`173/173` 通过。
+- `git diff --check` 与修改过的 Node 源文件语法检查通过。
 
 ### Clean iOS XCTest
 
@@ -124,8 +132,8 @@ xcodebuild test \
 
 ### Environment Cleanup
 
-- 已停止并删除遗留临时 PostgreSQL 集群 `zbt-safety-pg.KPOtHU`、`zbt-safety-task3.HFTmU6` 和 `zbt-safety-task4-pg`。
-- 已复核临时目录、PostgreSQL 进程及端口 `55432-55439`，没有举报系统临时测试集群仍在运行。
+- 每次验证使用的临时 PostgreSQL 16 集群均由测试 trap 停止并删除。
+- 已复核 PostgreSQL 进程及端口 `55432`，没有本轮临时测试集群仍在运行。
 - XCTest 完成后已关闭测试模拟器。
 - 当前没有为本阶段启动的临时开发服务器。
 - 本检查点没有部署总阶段 4 的修正/申诉实现到生产环境。
@@ -134,7 +142,7 @@ xcodebuild test \
 
 - 修正内容原位更新，保留帖子/合集原 ID、作者、互动、举报和审核历史。
 - 合集共享字段错误可以影响合集与子帖；单帖内容问题不自动连坐合集。
-- 申诉绑定最近一次仍生效的人工最终动作；每个最终动作最多一次申诉，创建时间起七天内（含边界）可提交。
+- 申诉绑定最近一次仍生效的人工最终动作；每个最终动作最多一次申诉，动作生效时间起七天内（含边界）可提交。
 - 申诉后设置 `manual_hold=true`，AI 不自动裁决申诉，也不直接恢复内容。
 - 团长接口不得暴露举报人、管理员内部备注、AI 原始分析或其他用户隐私。
 - 修正版本发布和自动恢复必须遵守人工动作、其他开放案件与 `manual_hold` 边界。
@@ -144,15 +152,16 @@ xcodebuild test \
 ## Review State And Risks
 
 - 子任务 3 已通过规格与代码质量复核。
-- 子任务 4 的规格复核已通过；随后一次代码质量复核提出的问题已在 `d31e34d` 修复并通过测试。
-- 按 Rudy 的停止指令，本轮没有继续发起 `d31e34d` 的最终独立代码质量复核。这是恢复后的第一项工作，不应被误写为已经通过。
+- 子任务 4 已完成最终独立 Standards / Spec 复核。初轮与修复复核发现的问题均按最小 TDD 循环解决；最后两路复核均回复 `no findings`。
+- 申诉窗口仍按最近人工最终动作的 `applied_at` 计算。动作与团长同步事件在同一事务产生，当前数据模型没有独立 `notified_at`；阶段 4 计划也明确使用 decision age。
+- 申诉提交目前只创建团长的同步事件，符合阶段 4 子任务 4 的 owner sync 约定；是否同时变更举报人的公开案件状态应在后续产品规格明确后另行处理。
+- 016 down 是安全闸门：若生产数据已存在旧约束无法表达的多案件组合，应用/迁移不能回滚到不兼容版本，必须先采用兼容代码或显式数据迁移，不能删除或改写案件来强行回滚。
 - iOS 尚无内容操作客户端、修正表单和申诉界面，因此用户端流程尚未完整。
 - 保留原 ID 和互动的完整 iOS 到后端端到端流程尚未验证。
 - 总阶段 4 代码尚未部署到生产环境。
 
 ## Unfinished Work
 
-- 对 `d31e34d` 做最终独立代码质量复核，并按需要完成一个最小 TDD 修复循环。
 - 总阶段 4 子任务 5：iOS 内容操作模型、客户端与 Store。
 - 总阶段 4 子任务 6：iOS 内容修正、重新发布与申诉 UI。
 - 总阶段 4 子任务 7：原 ID、互动保留、恢复边界的端到端验证及阶段复核。
@@ -165,10 +174,10 @@ xcodebuild test \
 
 收到 Rudy 明确的继续指令后：
 
-1. 复核工作区与计划状态，不修改代码。
-2. 对 `d31e34dc56da5a4f21806d1fcb641c15daa21a4c` 相对 `1fc72b4abdf1430a950c9181bcefb17fc802cc43` 做最终独立代码质量复核。
-3. 有发现时仅完成对应的最小 TDD 修复循环，再用正确的 `PG_BINDIR` 重跑后端验证。
-4. 复核通过后才开始总阶段 4 子任务 5；完成总阶段 4 前不得进入总阶段 5。
+1. 复核工作区、Git 与两个计划文件，确认本 handoff 未过期。
+2. 在总阶段 4 内开始子任务 5，先为 `SafetyContentAction`、修正草稿与申诉 payload 写失败的 Codable 测试。
+3. iOS 客户端读取 `GET /api/me/content-actions` 时必须持续跟随可选 `nextCursor`，直到游标不存在，不能只取第一页。
+4. 完成子任务 5 的测试与检查点提交后再进入总阶段 4 子任务 6；总阶段 4 完成前不得进入总阶段 5。
 
 ## Important Paths
 
