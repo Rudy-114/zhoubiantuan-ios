@@ -402,23 +402,23 @@ git commit -m "Connect iOS content remediation APIs"
 **Interfaces:**
 - Produces: `Route.contentRemediation`, `ContentRemediationView`, `SafetyPostCorrectionView`, `SafetyCollectionCorrectionView`, and `SafetyAppealSheet`.
 
-- [ ] **Step 1: Add the Content Remediation settings route**
+- [x] **Step 1: Add the Content Remediation settings route**
 
 Display pending items grouped by waiting correction, rechecking, manual review, and appeal. Each row shows object title, affected fields, restriction, deadline, and one clear command. Do not nest item cards inside section cards.
 
-- [ ] **Step 2: Reuse the post editor in revision mode**
+- [x] **Step 2: Reuse the post editor in revision mode**
 
 Add `revisionCaseID` and `editingOriginalPostID` parameters. In revision mode, prefill the original post, keep collection fields read-only/inherited, upload new images, call `submitRevision`, and never call `createPost` or `deletePost`. Keep the legacy moderation republish path separate until it is migrated explicitly.
 
-- [ ] **Step 3: Reuse the collection editor in revision mode**
+- [x] **Step 3: Reuse the collection editor in revision mode**
 
 Add `revisionCaseID` to `CreateCollectionSheet`. In revision mode call the revision endpoint and leave the currently public collection untouched until server approval.
 
-- [ ] **Step 4: Add revision and appeal status states**
+- [x] **Step 4: Add revision and appeal status states**
 
 Show “复审中” after submit, a rejected revision reason with another correction command, and appeal entry only when `canAppeal`. Appeal sheet has 1000-character detail, optional six images, submit progress, and no AI decision language.
 
-- [ ] **Step 5: Build and inspect layouts**
+- [x] **Step 5: Build and inspect layouts**
 
 ```bash
 xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO build
@@ -426,7 +426,7 @@ xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration D
 
 Inspect waiting, reviewing, rejected, restored, and appeal states on iPhone 17 Pro and one narrow simulator. Verify no text overlap and that the original object remains visible in the app until the backend publishes the candidate.
 
-- [ ] **Step 6: Commit the UI**
+- [x] **Step 6: Commit the UI**
 
 ```bash
 git add ZhouBianTuan/ContentRemediationViews.swift ZhouBianTuan/SettingsViews.swift ZhouBianTuan/ZhouBianTuanApp.swift ZhouBianTuan/CreatePostViews.swift ZhouBianTuan/ProfileViews.swift ZhouBianTuan/MockAppStore.swift ZhouBianTuan.xcodeproj/project.pbxproj

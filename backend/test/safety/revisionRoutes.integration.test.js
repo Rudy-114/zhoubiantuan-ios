@@ -50,6 +50,7 @@ test("lists only owned post and collection actions with deterministic owner-safe
           caseID: "case-owned-post",
           targetType: "post",
           targetID: "post-owned",
+          targetTitle: "Owned post",
           category: "suspected_scam",
           status: "awaiting_correction",
           affectedFields: ["content"],
@@ -65,6 +66,7 @@ test("lists only owned post and collection actions with deterministic owner-safe
           caseID: "case-owned-collection",
           targetType: "collection",
           targetID: "collection-owned",
+          targetTitle: "Owned collection",
           category: "invalid_contact",
           status: "manual_review",
           affectedFields: ["contact_qq", "contact_wechat"],
@@ -82,7 +84,7 @@ test("lists only owned post and collection actions with deterministic owner-safe
     const expectedKeys = [
       "affectedFields", "canAppeal", "canSubmitRevision", "caseID", "category",
       "correctionDueAt", "currentRestriction", "reason", "revisionStatus", "status",
-      "targetID", "targetType", "updatedAt"
+      "targetID", "targetTitle", "targetType", "updatedAt"
     ];
     for (const action of response.body.actions) {
       assert.deepEqual(Object.keys(action).sort(), expectedKeys);
@@ -99,6 +101,28 @@ test("lists only owned post and collection actions with deterministic owner-safe
   });
 });
 
+test("returns owner-visible target titles and the latest rejection reason", async () => {
+  await seedContentActionListing();
+  await pool.query(
+    `UPDATE content_revisions
+     SET status = 'rejected',
+         review_summary = '{"reason":"商品来源说明仍不完整","privateNote":"must-not-leak"}'::jsonb
+     WHERE id = 'revision-owned-post-2'`
+  );
+
+  await withServer(async (baseUrl) => {
+    const response = await get(baseUrl, "/api/me/content-actions", "u-owner");
+    assert.equal(response.status, 200);
+    const postAction = response.body.actions.find((action) => action.caseID === "case-owned-post");
+    const collectionAction = response.body.actions.find((action) => action.caseID === "case-owned-collection");
+
+    assert.equal(postAction.targetTitle, "Owned post");
+    assert.equal(collectionAction.targetTitle, "Owned collection");
+    assert.equal(postAction.reason, "商品来源说明仍不完整");
+    assert.equal(JSON.stringify(response.body).includes("must-not-leak"), false);
+  });
+});
+
 test("lists restored content and derives restrictions from current target and parent state", async () => {
   await seedRestoredAndParentRestrictedActions();
 
@@ -111,6 +135,7 @@ test("lists restored content and derives restrictions from current target and pa
       caseID: "case-restored-post",
       targetType: "post",
       targetID: "post-restored",
+      targetTitle: "Restored post",
       category: "other",
       status: "resolved_restored",
       affectedFields: ["content"],
@@ -126,6 +151,7 @@ test("lists restored content and derives restrictions from current target and pa
       caseID: "case-parent-restricted",
       targetType: "post",
       targetID: "post-parent-restricted",
+      targetTitle: "Parent restricted post",
       category: "other",
       status: "monitoring",
       affectedFields: ["content"],
@@ -245,6 +271,7 @@ test("submits an immutable revision and notifies its owner only after commit", a
         caseID: "case-revision-route",
         targetType: "post",
         targetID: "post-owned",
+        targetTitle: "Owned post",
         category: "other",
         status: "rechecking",
         affectedFields: ["content"],
@@ -556,6 +583,7 @@ test("submits one owner appeal with registered evidence and no decision or AI jo
           caseID: "case-appeal-route",
           targetType: "post",
           targetID: "post-owned",
+          targetTitle: "Owned post",
           category: "other",
           status: "appealed",
           affectedFields: ["content"],

@@ -106,11 +106,33 @@ test("hard-safety rejection and review outcomes never publish or restore", async
     );
     assert.deepEqual(state.rows[0], {
       status: scenario.expectedRevisionStatus,
-      case_status: "manual_review",
+      case_status: scenario.status === "rejected" ? "awaiting_correction" : "manual_review",
       title: "Original post",
       safety_status: "hidden"
     });
   }
+});
+
+test("hard-safety rejection keeps the public post restricted and allows another correction", async () => {
+  const rejectedRevision = await submitPostRevision();
+
+  await withTransaction((client) => reviewContentRevision(client, {
+    revisionId: rejectedRevision.id,
+    moderation: async () => ({
+      outcome: "block",
+      status: "rejected",
+      riskLevel: "high",
+      source: "textKeyword",
+      reason: "商品来源说明仍不完整",
+      rawSummary: { labels: ["risk"] }
+    })
+  }));
+
+  const nextRevision = await submitPostRevision();
+
+  assert.equal(nextRevision.revision_number, 2);
+  const post = await pool.query("SELECT title, safety_status FROM posts WHERE id = 'p-original'");
+  assert.deepEqual(post.rows[0], { title: "Original post", safety_status: "hidden" });
 });
 
 test("provider exceptions persist a bounded manual-review outcome without leaking details", async () => {

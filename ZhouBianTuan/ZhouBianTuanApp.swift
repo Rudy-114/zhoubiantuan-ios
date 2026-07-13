@@ -7,9 +7,17 @@ import UniformTypeIdentifiers
 
 @main
 struct ZhouBianTuanApp: App {
-    @StateObject private var store = MockAppStore()
+    @StateObject private var store: MockAppStore
 
     init() {
+        let appStore = MockAppStore()
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+            appStore.installContentRemediationPreviewFixture()
+        }
+        #endif
+        _store = StateObject(wrappedValue: appStore)
+
         let tabAppearance = UITabBarAppearance()
         tabAppearance.configureWithOpaqueBackground()
         tabAppearance.backgroundColor = Theme.barBackgroundUIColor
@@ -31,10 +39,58 @@ struct ZhouBianTuanApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+                if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "appeal",
+                   let appealAction = store.safetyContentActions.first(where: \.canAppeal) {
+                    SafetyAppealSheet(action: appealAction)
+                        .environmentObject(store)
+                        .tint(Theme.hotPink)
+                        .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "post",
+                          let postAction = store.safetyContentActions.first(where: {
+                              $0.targetType == .post && $0.canSubmitRevision
+                          }) {
+                    NavigationStack {
+                        SafetyPostCorrectionView(action: postAction)
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "collection",
+                          let collectionAction = store.safetyContentActions.first(where: {
+                              $0.targetType == .collection && $0.canSubmitRevision
+                          }) {
+                    NavigationStack {
+                        SafetyCollectionCorrectionView(action: collectionAction)
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else {
+                    NavigationStack {
+                        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "resolved" {
+                            ContentRemediationView(visibleBuckets: [.manualReview, .appeal, .completed])
+                        } else {
+                            ContentRemediationView()
+                        }
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                }
+            } else {
+                RootView()
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+            }
+            #else
             RootView()
                 .environmentObject(store)
                 .tint(Theme.hotPink)
                 .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+            #endif
         }
     }
 }
@@ -105,6 +161,7 @@ enum Route: Hashable {
     case settings
     case accountSecuritySettings
     case myReports
+    case contentRemediation
     case generalSettings
     case notificationSettings
     case admin
@@ -391,6 +448,8 @@ extension View {
                 AccountSecuritySettingsView()
             case .myReports:
                 MyReportsView()
+            case .contentRemediation:
+                ContentRemediationView()
             case .generalSettings:
                 GeneralSettingsView()
             case .notificationSettings:

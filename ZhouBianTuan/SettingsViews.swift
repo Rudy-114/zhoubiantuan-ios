@@ -31,6 +31,11 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: Route.contentRemediation) {
+                            SettingsRow(icon: "checkmark.shield", title: "内容处理")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
                         NavigationLink(destination: GeneralSettingsView()) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }

@@ -227,6 +227,7 @@ public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
     public let caseID: String
     public let targetType: SafetyTargetType
     public let targetID: String
+    public let targetTitle: String?
     public let category: SafetyReasonCode
     public let status: String
     public let affectedFields: [SafetyReportedField]
@@ -251,11 +252,13 @@ public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
         canSubmitRevision: Bool,
         canAppeal: Bool,
         revisionStatus: String?,
-        updatedAt: String
+        updatedAt: String,
+        targetTitle: String? = nil
     ) {
         self.caseID = caseID
         self.targetType = targetType
         self.targetID = targetID
+        self.targetTitle = targetTitle
         self.category = category
         self.status = status
         self.affectedFields = affectedFields

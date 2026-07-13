@@ -971,6 +971,7 @@ struct CreateCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     let editingCollection: GroupCollection?
+    let revisionCaseID: String?
     var onCreated: ((String) -> Void)? = nil
     @State private var name = ""
     @State private var wechat = ""
@@ -979,9 +980,16 @@ struct CreateCollectionSheet: View {
     @State private var groupInfo = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var note = ""
+    @State private var isSubmittingRevision = false
+    @State private var revisionErrorMessage: String?
 
-    init(editingCollection: GroupCollection? = nil, onCreated: ((String) -> Void)? = nil) {
+    init(
+        editingCollection: GroupCollection? = nil,
+        revisionCaseID: String? = nil,
+        onCreated: ((String) -> Void)? = nil
+    ) {
         self.editingCollection = editingCollection
+        self.revisionCaseID = revisionCaseID
         self.onCreated = onCreated
         _name = State(initialValue: editingCollection?.name ?? "")
         _wechat = State(initialValue: editingCollection?.contactWechat ?? "")
@@ -996,6 +1004,10 @@ struct CreateCollectionSheet: View {
         editingCollection != nil
     }
 
+    var isRevision: Bool {
+        revisionCaseID != nil && editingCollection != nil
+    }
+
     var canCreate: Bool {
         !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty) && !note.trimmed.isEmpty
     }
@@ -1004,7 +1016,12 @@ struct CreateCollectionSheet: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HeaderTitle(title: isEditing ? "编辑拼团信息" : "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
+                    HeaderTitle(
+                        title: isRevision ? "整改拼团合集" : (isEditing ? "编辑拼团信息" : "创建拼团合集"),
+                        subtitle: isRevision
+                            ? "提交的是候选版本；审核通过前，当前合集信息保持不变"
+                            : "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明"
+                    )
                     PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
                     HStack(spacing: 10) {
                         PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
@@ -1019,14 +1036,17 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
-                        if let editingCollection {
+                        if isRevision {
+                            Task { await submitRevision() }
+                        } else if let editingCollection {
                             store.updateCollection(id: editingCollection.id, name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
+                            dismiss()
                         } else if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
                             onCreated?(collectionID)
+                            dismiss()
                         }
-                        dismiss()
                     } label: {
-                        Text(canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段")
+                        Text(submitButtonTitle)
                             .font(.system(size: 17, weight: .bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
@@ -1034,8 +1054,11 @@ struct CreateCollectionSheet: View {
                             .foregroundStyle(canCreate ? .white : Theme.muted)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canCreate)
+                    .disabled(!canCreate || isSubmittingRevision || store.isSubmittingSafetyContentAction)
                     .padding(.top, 8)
+                    if isRevision, let revisionErrorMessage {
+                        SafetyContentActionInlineError(message: revisionErrorMessage)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
@@ -1046,6 +1069,41 @@ struct CreateCollectionSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
+        }
+    }
+
+    private var submitButtonTitle: String {
+        guard canCreate else { return "补齐必填字段" }
+        if isRevision {
+            return isSubmittingRevision || store.isSubmittingSafetyContentAction ? "正在提交整改" : "提交整改复审"
+        }
+        return isEditing ? "保存修改" : "创建合集"
+    }
+
+    @MainActor
+    private func submitRevision() async {
+        guard let revisionCaseID else { return }
+        isSubmittingRevision = true
+        revisionErrorMessage = nil
+        defer { isSubmittingRevision = false }
+        let snapshot = SafetyCollectionRevisionSnapshot(
+            name: name.trimmed,
+            contactWechat: wechat.trimmed,
+            contactQQ: qq.trimmed,
+            contactGroupNumber: groupNumber.trimmed,
+            groupInfo: groupInfo.trimmed,
+            deadline: BackendDateParserString.string(from: deadline),
+            defaultNote: note.trimmed,
+            deadlineConfirmed: true
+        )
+        let succeeded = await store.submitRevision(
+            caseID: revisionCaseID,
+            draft: .collection(snapshot: snapshot, objectKeys: [])
+        )
+        if succeeded {
+            dismiss()
+        } else {
+            revisionErrorMessage = store.safetyContentActionErrorMessage ?? "整改提交失败，请重试"
         }
     }
 }

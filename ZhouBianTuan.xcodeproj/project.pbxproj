@@ -43,6 +43,7 @@
 		7D9F01052D22000100A10001 /* ReportEntryPointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01042D22000100A10001 /* ReportEntryPointTests.swift */; };
 		7D9F01072D23000100A10001 /* MyReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01062D23000100A10001 /* MyReportsTests.swift */; };
 		7D9F01092D23000100A10001 /* MyReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F01082D23000100A10001 /* MyReportsView.swift */; };
+		7D9F010B2D24000100A10001 /* ContentRemediationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9F010A2D24000100A10001 /* ContentRemediationViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -111,6 +112,7 @@
 		7D9F01042D22000100A10001 /* ReportEntryPointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportEntryPointTests.swift; sourceTree = "<group>"; };
 		7D9F01062D23000100A10001 /* MyReportsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyReportsTests.swift; sourceTree = "<group>"; };
 		7D9F01082D23000100A10001 /* MyReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyReportsView.swift; sourceTree = "<group>"; };
+		7D9F010A2D24000100A10001 /* ContentRemediationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentRemediationViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -173,6 +175,7 @@
 				7D4E6E782C8A4A5100A10001 /* ProfileViews.swift */,
 				7D4E6E792C8A4A5100A10001 /* SettingsViews.swift */,
 				7D9F01082D23000100A10001 /* MyReportsView.swift */,
+				7D9F010A2D24000100A10001 /* ContentRemediationViews.swift */,
 				7D4E6E902C8A4A5100A10001 /* MockAppStore.swift */,
 				7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */,
 				7D4E6E922C8A4A5100A10001 /* ModerationService.swift */,
@@ -353,6 +356,7 @@
 				7D4E6E882C8A4A5100A10001 /* ProfileViews.swift in Sources */,
 				7D4E6E892C8A4A5100A10001 /* SettingsViews.swift in Sources */,
 				7D9F01092D23000100A10001 /* MyReportsView.swift in Sources */,
+				7D9F010B2D24000100A10001 /* ContentRemediationViews.swift in Sources */,
 				7D4E6EA02C8A4A5100A10001 /* MockAppStore.swift in Sources */,
 				7D4E6EA12C8A4A5100A10001 /* ModerationModels.swift in Sources */,
 				7D4E6EA22C8A4A5100A10001 /* ModerationService.swift in Sources */,

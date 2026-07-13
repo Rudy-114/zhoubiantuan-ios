@@ -1045,6 +1045,95 @@ final class MockAppStore: ObservableObject {
     }
 
     @discardableResult
+    func submitPostRevision(
+        caseID: String,
+        candidate: GroupBuyPost,
+        imageData: [Data]
+    ) async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交整改"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            async let uploadedObjectKeys = backendClient.uploadPostImages(
+                token: backendToken,
+                images: imageData
+            )
+            async let uploadedPreviewObjectKeys = backendClient.uploadPostPreviewImages(
+                token: backendToken,
+                images: imageData
+            )
+            let (objectKeys, previewObjectKeys) = try await (
+                uploadedObjectKeys,
+                uploadedPreviewObjectKeys
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            let snapshot = SafetyPostRevisionSnapshot(
+                title: candidate.title,
+                imageNames: candidate.imageNames,
+                imageObjectKeys: objectKeys,
+                previewImageObjectKeys: previewObjectKeys,
+                groupType: candidate.groupType.backendValue,
+                categoryTags: candidate.categoryTags,
+                fandomTags: candidate.fandomTags,
+                price: candidate.price,
+                deposit: candidate.deposit,
+                condition: candidate.condition,
+                isFormed: candidate.isFormed,
+                description: candidate.description,
+                externalLink: candidate.externalLink,
+                imageAspect: candidate.imageAspect,
+                pingguAveragePrice: candidate.pingguAveragePrice,
+                pingguNote: candidate.pingguNote,
+                unsoldRoles: candidate.unsoldRoles.map {
+                    SafetyRevisionRoleSnapshot(
+                        id: $0.id,
+                        name: $0.name,
+                        quantity: $0.quantity,
+                        priceAdjustment: $0.priceAdjustment
+                    )
+                }
+            )
+            let action = try await backendClient.submitRevision(
+                token: backendToken,
+                caseID: caseID,
+                draft: SafetyRevisionDraft.post(snapshot: snapshot, objectKeys: objectKeys)
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
     func submitAppeal(caseID: String, detail: String, objectKeys: [String]) async -> Bool {
         guard isBackendEnabled, let backendToken else {
             safetyContentActionErrorMessage = "请先登录再提交申诉"
@@ -1063,6 +1152,71 @@ final class MockAppStore: ObservableObject {
                 token: backendToken,
                 caseID: caseID,
                 detail: detail,
+                objectKeys: objectKeys
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func submitAppeal(caseID: String, detail: String, imageData: [Data]) async -> Bool {
+        let trimmedDetail = detail.trimmed
+        guard !trimmedDetail.isEmpty else {
+            safetyContentActionErrorMessage = "请填写申诉说明"
+            return false
+        }
+        guard SafetyReportFormLogic.codePointCount(in: trimmedDetail) <= 1_000 else {
+            safetyContentActionErrorMessage = "申诉说明最多填写 1000 字"
+            return false
+        }
+        guard imageData.count <= 6 else {
+            safetyContentActionErrorMessage = "申诉图片最多上传 6 张"
+            return false
+        }
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交申诉"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            let objectKeys = try await backendClient.uploadReportImages(
+                token: backendToken,
+                images: imageData
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            let action = try await backendClient.submitAppeal(
+                token: backendToken,
+                caseID: caseID,
+                detail: trimmedDetail,
                 objectKeys: objectKeys
             )
             guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
@@ -3200,6 +3354,112 @@ final class MockAppStore: ObservableObject {
         }
         showToast(replacingPostID == nil ? "发布成功，已进入\(groupType.moduleTitle)模块" : "已重新发布，旧版本已删除")
     }
+
+    #if DEBUG
+    func installContentRemediationPreviewFixture() {
+        isLoggedIn = true
+        isBackendEnabled = false
+        let collection = GroupCollection(
+            id: "collection-remediation-preview",
+            ownerID: currentUserID,
+            name: "冬季小卡拼团合集",
+            contactWechat: "preview-owner",
+            contactQQ: "",
+            contactGroupNumber: "",
+            groupInfo: "备注昵称后拉群",
+            deadline: Date().addingTimeInterval(172_800),
+            defaultNote: "合集内商品共享联系方式与截团时间。",
+            postIDs: ["post-remediation-preview"],
+            createdAt: Date()
+        )
+        let post = GroupBuyPost(
+            id: "post-remediation-preview",
+            title: "巡演限定小卡套组二开",
+            imageNames: ["merch_photocards"],
+            authorID: currentUserID,
+            collectionID: collection.id,
+            categoryTags: ["小卡", "预售"],
+            fandomTags: [],
+            price: "¥35-68",
+            deposit: "定金 30%",
+            deadline: collection.deadline,
+            condition: "满 60 套开团",
+            isFormed: false,
+            description: "预览用公开内容",
+            wechat: collection.contactWechat,
+            qq: "",
+            groupNumber: "",
+            groupInfo: collection.groupInfo,
+            externalLink: "",
+            createdAt: Date(),
+            likedCount: 18,
+            favoriteCount: 9,
+            commentCount: 4,
+            reportCount: 0,
+            status: .hidden,
+            imageAspect: 1.08
+        )
+        collections = [collection]
+        posts = [post]
+
+        func action(
+            id: String,
+            targetType: SafetyTargetType = .post,
+            targetID: String = "post-remediation-preview",
+            status: String,
+            revisionStatus: String? = nil,
+            canSubmitRevision: Bool = false,
+            canAppeal: Bool = false,
+            restriction: String = "帖子当前已隐藏"
+        ) -> SafetyContentAction {
+            SafetyContentAction(
+                caseID: id,
+                targetType: targetType,
+                targetID: targetID,
+                category: .other,
+                status: status,
+                affectedFields: targetType == .collection ? [.contactWechat, .collectionDefaultNote] : [.content],
+                reason: revisionStatus == "rejected"
+                    ? "上次提交仍缺少完整商品来源说明，请补充后再次提交。"
+                    : "请核实受影响字段并提交准确内容。",
+                currentRestriction: restriction,
+                correctionDueAt: status == "awaiting_correction"
+                    ? BackendDateParserString.string(from: Date().addingTimeInterval(86_400))
+                    : nil,
+                canSubmitRevision: canSubmitRevision,
+                canAppeal: canAppeal,
+                revisionStatus: revisionStatus,
+                updatedAt: BackendDateParserString.string(from: Date())
+            )
+        }
+
+        let waiting = action(id: "case-waiting", status: "awaiting_correction", canSubmitRevision: true)
+        let collectionWaiting = action(
+            id: "case-collection-waiting",
+            targetType: .collection,
+            targetID: collection.id,
+            status: "awaiting_correction",
+            canSubmitRevision: true,
+            restriction: "合集联系方式当前已隐藏"
+        )
+        let rejected = action(id: "case-rejected", status: "awaiting_correction", revisionStatus: "rejected", canSubmitRevision: true)
+        let reviewing = action(id: "case-reviewing", status: "reviewing", revisionStatus: "pending")
+        let manual = action(
+                id: "case-manual",
+                targetType: .collection,
+                targetID: collection.id,
+                status: "manual_review",
+                restriction: "合集联系方式当前已隐藏"
+            )
+        let appeal = action(id: "case-appeal", status: "resolved_actioned", canAppeal: true)
+        let restored = action(id: "case-restored", status: "resolved_restored", revisionStatus: "published", restriction: "")
+        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "resolved" {
+            safetyContentActions = [appeal, restored, manual, reviewing, waiting, collectionWaiting, rejected]
+        } else {
+            safetyContentActions = [waiting, collectionWaiting, rejected, reviewing, manual, appeal, restored]
+        }
+    }
+    #endif
 
     // MARK: - Toasts
 

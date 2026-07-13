@@ -32,10 +32,20 @@ struct CreatePostView: View {
     @State private var isCollectionPickerPresented = false
     @State private var isCreatingCollection = false
     @State private var isPhotoLibraryPresented = false
+    @State private var isSubmittingRevision = false
+    @State private var revisionErrorMessage: String?
     let republishingPostID: String?
+    let revisionCaseID: String?
+    let editingOriginalPostID: String?
 
-    init(republishingPostID: String? = nil) {
+    init(
+        republishingPostID: String? = nil,
+        revisionCaseID: String? = nil,
+        editingOriginalPostID: String? = nil
+    ) {
         self.republishingPostID = republishingPostID
+        self.revisionCaseID = revisionCaseID
+        self.editingOriginalPostID = editingOriginalPostID
     }
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
@@ -51,6 +61,10 @@ struct CreatePostView: View {
 
     var isRepublishing: Bool {
         republishingPostID != nil
+    }
+
+    var isRevision: Bool {
+        revisionCaseID != nil && editingOriginalPostID != nil
     }
 
     var isSplitGoods: Bool {
@@ -86,7 +100,21 @@ struct CreatePostView: View {
         if store.isLoggedIn {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    HeaderTitle(title: isRepublishing ? "重新编辑团购帖" : "发布团购帖", subtitle: isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
+                    if isRevision {
+                        Button { dismiss() } label: {
+                            Label("返回内容处理", systemImage: "chevron.left")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Theme.hotPink)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                    }
+                    HeaderTitle(
+                        title: isRevision ? "整改团购帖" : (isRepublishing ? "重新编辑团购帖" : "发布团购帖"),
+                        subtitle: isRevision
+                            ? "提交的是候选版本；审核通过前，当前帖子不会被替换或删除"
+                            : (isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
+                    )
                 VStack(alignment: .leading, spacing: 14) {
                     RequiredLabel("拼团类型")
                     HStack(spacing: 10) {
@@ -111,14 +139,20 @@ struct CreatePostView: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .disabled(isRevision)
                         }
+                    }
+                    if isRevision {
+                        Label("沿用原帖类型，整改时不可修改", systemImage: "lock.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.muted)
                     }
                 }
                 .padding(.horizontal, 16)
 
                 VStack(alignment: .leading, spacing: 10) {
                     RequiredLabel("拼团合集")
-                    if store.collections(ownerID: store.currentUserID).isEmpty {
+                    if store.collections(ownerID: store.currentUserID).isEmpty && !isRevision {
                         VStack(alignment: .leading, spacing: 12) {
                             Label("发布前必须先创建一个合集", systemImage: "rectangle.stack.badge.plus")
                                 .font(.system(size: 16, weight: .black))
@@ -140,13 +174,37 @@ struct CreatePostView: View {
                         }
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    } else if isRevision, let selectedCollection {
+                        HStack(spacing: 12) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.hotPink)
+                                .frame(width: 38, height: 38)
+                                .background(Theme.hotPink.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(selectedCollection.name)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(Theme.text)
+                                Text("沿用原帖合集，整改时不可修改")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.muted)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(13)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Theme.hairline, lineWidth: 1)
+                        }
                     } else {
                         Button {
-                            isCollectionPickerPresented = true
+                            if !isRevision { isCollectionPickerPresented = true }
                         } label: {
                             CollectionPickerSummary(collection: selectedCollection)
                         }
                         .buttonStyle(.plain)
+                        .disabled(isRevision)
                     }
 
                     if let selectedCollection {
@@ -288,15 +346,19 @@ struct CreatePostView: View {
 
                 Button {
                     if let selectedGroupType, let selectedCollection {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID)
-                        if isRepublishing {
-                            dismiss()
+                        if isRevision {
+                            Task { await submitRevision() }
                         } else {
-                            reset()
+                            store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID)
+                            if isRepublishing {
+                                dismiss()
+                            } else {
+                                reset()
+                            }
                         }
                     }
                 } label: {
-                    Text(canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
+                    Text(submitButtonTitle)
                         .font(.system(size: 17, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
@@ -304,16 +366,20 @@ struct CreatePostView: View {
                         .foregroundStyle(canPublish ? .white : Theme.muted)
                 }
                 .buttonStyle(.plain)
-                .disabled(!canPublish)
+                .disabled(!canPublish || isSubmittingRevision || store.isSubmittingSafetyContentAction)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 28)
+                if isRevision, let revisionErrorMessage {
+                    SafetyContentActionInlineError(message: revisionErrorMessage)
+                        .padding(.horizontal, 16)
                 }
+                }
+                .padding(.bottom, 28)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.background.ignoresSafeArea())
             .navigationBarHidden(true)
-            .task(id: republishingPostID) {
-                await loadRepublishDraftIfNeeded()
+            .task(id: editingOriginalPostID ?? republishingPostID) {
+                await loadEditingDraftIfNeeded()
             }
             .sheet(isPresented: $isCollectionPickerPresented) {
                 CollectionPickerSheet(
@@ -365,11 +431,11 @@ struct CreatePostView: View {
     }
 
     @MainActor
-    func loadRepublishDraftIfNeeded() async {
-        guard let republishingPostID,
-              loadedRepublishPostID != republishingPostID,
-              let post = store.post(id: republishingPostID) else { return }
-        loadedRepublishPostID = republishingPostID
+    func loadEditingDraftIfNeeded() async {
+        guard let sourcePostID = editingOriginalPostID ?? republishingPostID,
+              loadedRepublishPostID != sourcePostID,
+              let post = store.post(id: sourcePostID) else { return }
+        loadedRepublishPostID = sourcePostID
         title = post.title
         selectedGroupType = post.groupType
         selectedCollectionID = post.collectionID ?? noCollectionID
@@ -392,6 +458,50 @@ struct CreatePostView: View {
             isLoadingRepublishImages = true
             uploadedImageData = await loadImageData(from: post.remoteImageURLs)
             isLoadingRepublishImages = false
+        }
+    }
+
+    var submitButtonTitle: String {
+        guard canPublish else { return isRevision ? "补齐必填字段后提交" : "补齐必填字段后发布" }
+        if isRevision {
+            return isSubmittingRevision || store.isSubmittingSafetyContentAction ? "正在提交整改" : "提交整改复审"
+        }
+        return isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块"
+    }
+
+    @MainActor
+    func submitRevision() async {
+        guard let revisionCaseID,
+              let editingOriginalPostID,
+              var candidate = store.post(id: editingOriginalPostID),
+              let selectedGroupType,
+              let selectedCollection else { return }
+        isSubmittingRevision = true
+        revisionErrorMessage = nil
+        defer { isSubmittingRevision = false }
+
+        candidate.title = title.trimmed
+        candidate.groupType = selectedGroupType
+        candidate.collectionID = selectedCollection.id
+        candidate.categoryTags = Array(selectedTags)
+        candidate.price = priceRangeText
+        candidate.deposit = depositText
+        candidate.condition = condition.trimmed
+        candidate.description = description.trimmed
+        candidate.pingguAveragePrice = selectedGroupType == .splitGoods ? pingguAveragePrice.trimmed : ""
+        candidate.pingguNote = selectedGroupType == .splitGoods ? pingguNote.trimmed : ""
+        candidate.unsoldRoles = selectedGroupType == .splitGoods ? roleDrafts.filter(\.isAvailable) : []
+        candidate.uploadedImageData = uploadedImageData
+
+        let succeeded = await store.submitPostRevision(
+            caseID: revisionCaseID,
+            candidate: candidate,
+            imageData: uploadedImageData
+        )
+        if succeeded {
+            dismiss()
+        } else {
+            revisionErrorMessage = store.safetyContentActionErrorMessage ?? "整改提交失败，请重试"
         }
     }
 

@@ -157,6 +157,7 @@ async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = 
     `WITH owner_case_candidates AS (
        SELECT sc.id, sc.subject_type, sc.subject_id, sc.category, sc.status,
               sc.correction_due_at, sc.created_at, sc.updated_at,
+              p.title AS target_title,
               p.status AS target_status, p.safety_status AS target_safety_status,
               parent.status AS parent_status, parent.safety_status AS parent_safety_status,
               parent.contact_visibility AS parent_contact_visibility
@@ -169,6 +170,7 @@ async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = 
        UNION ALL
        SELECT sc.id, sc.subject_type, sc.subject_id, sc.category, sc.status,
               sc.correction_due_at, sc.created_at, sc.updated_at,
+              c.name AS target_title,
               c.status AS target_status, c.safety_status AS target_safety_status,
               NULL::text AS parent_status, NULL::text AS parent_safety_status,
               c.contact_visibility AS parent_contact_visibility
@@ -196,7 +198,7 @@ async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = 
        GROUP BY r.case_id
      ),
      revision_rows AS (
-       SELECT cr.case_id, cr.status,
+       SELECT cr.case_id, cr.status, cr.review_summary ->> 'reason' AS revision_reason,
               row_number() OVER (
                 PARTITION BY cr.case_id
                 ORDER BY cr.revision_number DESC, cr.created_at DESC, cr.id DESC
@@ -205,7 +207,7 @@ async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = 
        JOIN owner_cases oc ON oc.id = cr.case_id
      ),
      latest_revisions AS (
-       SELECT case_id, status
+       SELECT case_id, status, revision_reason
        FROM revision_rows
        WHERE revision_rank = 1
      ),
@@ -229,14 +231,15 @@ async function loadOwnerContentActions(client, ownerId, caseId = null, cursor = 
        FROM decision_rows
        WHERE decision_rank = 1
      )
-     SELECT oc.id AS case_id, oc.subject_type, oc.subject_id, oc.category, oc.status,
+     SELECT oc.id AS case_id, oc.subject_type, oc.subject_id, oc.target_title,
+            oc.category, oc.status,
             oc.correction_due_at, oc.updated_at,
             floor(extract(epoch FROM oc.created_at) * 1000000)::bigint::text
               AS cursor_created_at_micros,
             oc.target_status, oc.target_safety_status, oc.parent_status,
             oc.parent_safety_status, oc.parent_contact_visibility,
             COALESCE(fields.affected_fields, ARRAY[]::text[]) AS affected_fields,
-            revision.status AS revision_status,
+            revision.status AS revision_status, revision.revision_reason,
             (
               oc.status = 'resolved_actioned'
               AND decision.id IS NOT NULL

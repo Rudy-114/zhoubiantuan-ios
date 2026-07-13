@@ -56,9 +56,10 @@ export async function reviewContentRevision(client, input = {}) {
      WHERE id = $1`,
     [revision.id, revisionStatus, JSON.stringify(reviewSummary)]
   );
+  const nextCaseStatus = revisionStatus === "rejected" ? "awaiting_correction" : "manual_review";
   await client.query(
-    "UPDATE safety_cases SET status = 'manual_review', updated_at = now() WHERE id = $1",
-    [revision.case_id]
+    "UPDATE safety_cases SET status = $2, updated_at = now() WHERE id = $1",
+    [revision.case_id, nextCaseStatus]
   );
   if (revisionStatus === "approved") {
     await insertCaseEvent(client, revision);

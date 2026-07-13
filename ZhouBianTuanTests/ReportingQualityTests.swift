@@ -2595,12 +2595,195 @@ final class ReportingQualityTests: XCTestCase {
         XCTAssertEqual(store.safetyContentActionErrorMessage, "内容操作暂时不可用")
     }
 
+    func testContentRemediationPresentationGroupsEveryOwnerState() {
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(status: "awaiting_correction")),
+            .waitingCorrection
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(
+                status: "reviewing",
+                revisionStatus: "pending"
+            )),
+            .rechecking
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(status: "rechecking")),
+            .rechecking
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.statusTitle(for: makeContentAction(status: "rechecking")),
+            "复审中"
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(status: "manual_review")),
+            .manualReview
+        )
+        let approvedAwaitingHuman = makeContentAction(
+            status: "manual_review",
+            revisionStatus: "approved"
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: approvedAwaitingHuman),
+            .manualReview
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.statusTitle(for: approvedAwaitingHuman),
+            "人工处理中"
+        )
+        let rejectedAwaitingHuman = makeContentAction(
+            status: "manual_review",
+            revisionStatus: "rejected"
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.statusTitle(for: rejectedAwaitingHuman),
+            "人工处理中"
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(
+                status: "resolved_actioned",
+                canAppeal: true
+            )),
+            .appeal
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.bucket(for: makeContentAction(status: "resolved_restored")),
+            .completed
+        )
+    }
+
+    func testContentRemediationPresentationExposesOneCommandAndAppealLimit() {
+        XCTAssertEqual(
+            ContentRemediationPresentation.primaryCommand(for: makeContentAction(
+                status: "awaiting_correction",
+                revisionStatus: "rejected",
+                canSubmitRevision: true
+            )),
+            .correctAgain
+        )
+        XCTAssertEqual(
+            ContentRemediationPresentation.primaryCommand(for: makeContentAction(
+                status: "resolved_actioned",
+                canAppeal: true
+            )),
+            .appeal
+        )
+        XCTAssertNil(ContentRemediationPresentation.primaryCommand(for: makeContentAction(
+            status: "manual_review"
+        )))
+        XCTAssertEqual(ContentRemediationPresentation.appealDetailLimit, 1_000)
+        XCTAssertEqual(ContentRemediationPresentation.appealImageLimit, 6)
+    }
+
+    @MainActor
+    func testPostCorrectionUploadsCandidateImagesWithoutMutatingPublicPost() async throws {
+        let presignCalls = LockedCounter()
+        URLProtocolStub.setHandler { request in
+            switch request.url?.path {
+            case "/api/uploads/presign":
+                let call = presignCalls.next()
+                return .json(
+                    """
+                    {"objectKey":"post/revision-\(call).jpg","uploadUrl":"https://upload.invalid/revision-\(call)"}
+                    """
+                )
+            case "/api/content-actions/case-post-correction/revisions":
+                return .json(Self.contentActionEnvelope(
+                    caseID: "case-post-correction",
+                    status: "reviewing",
+                    canSubmitRevision: false,
+                    revisionStatus: "pending",
+                    updatedAt: "2026-07-13T05:00:00.000Z"
+                ))
+            default:
+                return URLProtocolStub.StubResponse(statusCode: 200, headers: [:], body: Data())
+            }
+        }
+        let store = makeStore()
+        let original = GroupBuyPost(
+            id: "post-public-original",
+            title: "当前公开标题",
+            imageNames: ["merch_photocards"],
+            authorID: store.currentUserID,
+            categoryTags: ["小卡"],
+            fandomTags: [],
+            price: "¥35",
+            deposit: "无定金",
+            deadline: Date().addingTimeInterval(86_400),
+            condition: "满 20 人成团",
+            isFormed: false,
+            description: "当前公开说明",
+            wechat: "owner-wechat",
+            qq: "",
+            groupNumber: "",
+            groupInfo: "",
+            externalLink: "",
+            createdAt: Date(),
+            likedCount: 3,
+            favoriteCount: 2,
+            commentCount: 1,
+            reportCount: 0,
+            status: .hidden,
+            imageAspect: 1.08
+        )
+        store.posts = [original]
+        var candidate = original
+        candidate.title = "仅候选版本可见的标题"
+        candidate.description = "仅候选版本可见的说明"
+
+        let submitted = await store.submitPostRevision(
+            caseID: "case-post-correction",
+            candidate: candidate,
+            imageData: [Data([0x01, 0x02, 0x03])]
+        )
+
+        XCTAssertTrue(submitted)
+        XCTAssertEqual(store.post(id: original.id), original)
+        XCTAssertEqual(store.safetyContentActions.first?.revisionStatus, "pending")
+        XCTAssertEqual(
+            URLProtocolStub.requests.filter { $0.url?.path == "/api/uploads/presign" }.count,
+            2
+        )
+        let revisionBody = try XCTUnwrap(zip(
+            URLProtocolStub.requests,
+            URLProtocolStub.requestBodies
+        ).first(where: { $0.0.url?.path == "/api/content-actions/case-post-correction/revisions" })?.1)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: revisionBody) as? [String: Any])
+        let snapshot = try XCTUnwrap(json["snapshot"] as? [String: Any])
+        XCTAssertEqual(snapshot["title"] as? String, candidate.title)
+        XCTAssertEqual((snapshot["imageObjectKeys"] as? [String])?.count, 1)
+        XCTAssertEqual((snapshot["previewImageObjectKeys"] as? [String])?.count, 1)
+    }
+
     private func makeClient() -> AliyunBackendClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
         return AliyunBackendClient(
             baseURLString: "https://unit-test.invalid/api",
             session: URLSession(configuration: configuration)
+        )
+    }
+
+    private func makeContentAction(
+        status: String,
+        revisionStatus: String? = nil,
+        canSubmitRevision: Bool = false,
+        canAppeal: Bool = false
+    ) -> SafetyContentAction {
+        SafetyContentAction(
+            caseID: "case-presentation",
+            targetType: .post,
+            targetID: "post-owned",
+            category: .other,
+            status: status,
+            affectedFields: [.content],
+            reason: "请核实并整改",
+            currentRestriction: "帖子当前已隐藏",
+            correctionDueAt: nil,
+            canSubmitRevision: canSubmitRevision,
+            canAppeal: canAppeal,
+            revisionStatus: revisionStatus,
+            updatedAt: "2026-07-13T04:00:00.000Z"
         )
     }
 

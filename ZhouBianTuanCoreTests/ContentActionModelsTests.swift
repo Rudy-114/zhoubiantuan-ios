@@ -8,6 +8,7 @@ final class ContentActionModelsTests: XCTestCase {
           "caseID": "case-correction-1",
           "targetType": "post",
           "targetID": "post-1",
+          "targetTitle": "巡演限定小卡套组二开",
           "category": "false_or_expired_group_buy",
           "status": "awaiting_correction",
           "affectedFields": ["content", "collection_deadline"],
@@ -25,6 +26,7 @@ final class ContentActionModelsTests: XCTestCase {
 
         XCTAssertEqual(action.id, "case-correction-1")
         XCTAssertEqual(action.targetType, .post)
+        XCTAssertEqual(action.targetTitle, "巡演限定小卡套组二开")
         XCTAssertEqual(action.category, .falseOrExpiredGroupBuy)
         XCTAssertEqual(action.status, "awaiting_correction")
         XCTAssertEqual(action.affectedFields, [.content, .collectionDeadline])
