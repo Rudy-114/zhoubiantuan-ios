@@ -35,6 +35,9 @@ export function validateAdminDeviceInput(input = {}) {
   const name = boundedText(input.displayName, 80, "displayName");
   let fingerprint;
   try {
+    if (Object.prototype.hasOwnProperty.call(input.publicKeyJWK, "d")) {
+      throw new TypeError("Private JWK material is not accepted");
+    }
     fingerprint = publicKeyFingerprint(input.publicKeyJWK);
   } catch {
     throw adminBadRequest("设备公钥无效");

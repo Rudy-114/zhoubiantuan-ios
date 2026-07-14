@@ -6,18 +6,16 @@ import { validateAdminDeviceInput } from "../../src/admin/deviceService.js";
 
 process.env.ADMIN_RECOVERY_PEPPER = "test-admin-recovery-pepper-with-32-plus-characters";
 
-test("stores only public P-256 coordinates even if a private JWK is supplied", () => {
+test("rejects an exported private JWK instead of silently accepting leaked key material", () => {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const privateJwk = privateKey.export({ format: "jwk" });
   assert.ok(privateJwk.d);
 
-  const device = validateAdminDeviceInput({
-    deviceID: "device-sanitized",
-    displayName: "Sanitized Device",
+  assert.throws(() => validateAdminDeviceInput({
+    deviceID: "device-private-key",
+    displayName: "Private Key Device",
     publicKeyJWK: privateJwk
-  });
-  assert.deepEqual(Object.keys(device.publicKeyJwk).sort(), ["crv", "kty", "x", "y"]);
-  assert.equal("d" in device.publicKeyJwk, false);
+  }), (error) => error?.status === 400 && error?.apiCode === "admin_request_invalid");
   assert.throws(() => validateAdminDeviceInput(null), (error) => {
     return error?.status === 400 && error?.apiCode === "admin_request_invalid";
   });

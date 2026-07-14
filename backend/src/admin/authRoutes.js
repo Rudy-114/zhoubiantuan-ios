@@ -366,12 +366,16 @@ export function createAdminAuthRouter() {
                   name: requestRow.display_name
                 };
               }
-              await client.query(
-                `UPDATE admin_device_requests
-                 SET status = $2, handled_by_device_id = $3, handled_at = now()
-                 WHERE id = $1`,
-                [requestId, decision === "approve" ? "approved" : "rejected", req.adminDevice.id]
-              );
+              if (decision === "approve") {
+                await client.query(
+                  `UPDATE admin_device_requests
+                   SET status = 'approved', handled_by_device_id = $2, handled_at = now()
+                   WHERE id = $1`,
+                  [requestId, req.adminDevice.id]
+                );
+              } else {
+                await client.query("DELETE FROM admin_device_requests WHERE id = $1", [requestId]);
+              }
               await audit(client, req, {
                 adminUserId: req.adminUser.id,
                 deviceId: req.adminDevice.id,
@@ -426,13 +430,13 @@ export function createAdminAuthRouter() {
           return { error: invalidAuth() };
         }
         try {
-          const collision = await client.query("SELECT 1 FROM admin_devices WHERE id = $1", [device.id]);
-          if (collision.rows[0]) throw adminError(409, "admin_device_invalid", "新根设备不可用");
           await consumeRecoveryCode(client, {
             adminUserId: verified.admin.id,
             recoveryCode: req.body?.recoveryCode,
             pepper: process.env.ADMIN_RECOVERY_PEPPER
           });
+          const collision = await client.query("SELECT 1 FROM admin_devices WHERE id = $1", [device.id]);
+          if (collision.rows[0]) throw adminError(409, "admin_device_invalid", "新根设备不可用");
           await client.query(
             `UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
              WHERE admin_user_id = $1`,
@@ -468,6 +472,7 @@ export function createAdminAuthRouter() {
           return { device: deviceResponse(device, true) };
         } catch (error) {
           if (!isClientError(error)) throw error;
+          if (error.apiCode === "admin_device_invalid") throw error;
           await audit(client, req, {
             adminUserId: verified.admin.id,
             eventType: "admin.recovery_failed",

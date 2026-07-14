@@ -185,6 +185,11 @@ test("runs bootstrap, trusted-device login, approval, recovery, lockout, and log
     );
     assert.equal(rejected.status, 200);
     assert.deepEqual(rejected.body, { status: "rejected" });
+    const rejectedRequestState = await pool.query(
+      "SELECT count(*)::int AS retained FROM admin_device_requests WHERE id = $1",
+      [thirdPending.body.requestID]
+    );
+    assert.equal(rejectedRequestState.rows[0].retained, 0);
 
     const pendingAtRecovery = await request(baseUrl, "/admin/api/auth/device-requests", {
       method: "POST",
@@ -223,6 +228,34 @@ test("runs bootstrap, trusted-device login, approval, recovery, lockout, and log
       { status: unknownUser.status, body: unknownUser.body }
     );
     assert.equal((await adminUserState()).failed_login_count, 1);
+
+    const invalidRecoveryCode = "AAAA-AAAA-AAAA-AAAA";
+    const oldDeviceProbe = await request(baseUrl, "/admin/api/auth/recover", {
+      method: "POST",
+      body: {
+        username,
+        password,
+        recoveryCode: invalidRecoveryCode,
+        deviceID: "device-root",
+        displayName: "Collision Probe",
+        publicKeyJWK: keyPair().jwk
+      }
+    });
+    const unusedDeviceProbe = await request(baseUrl, "/admin/api/auth/recover", {
+      method: "POST",
+      body: {
+        username,
+        password,
+        recoveryCode: invalidRecoveryCode,
+        deviceID: "device-unused",
+        displayName: "Unused Probe",
+        publicKeyJWK: keyPair().jwk
+      }
+    });
+    assert.deepEqual(
+      { status: oldDeviceProbe.status, body: oldDeviceProbe.body },
+      { status: unusedDeviceProbe.status, body: unusedDeviceProbe.body }
+    );
 
     const recoveryKey = keyPair();
     const recovered = await request(baseUrl, "/admin/api/auth/recover", {
