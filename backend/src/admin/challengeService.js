@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { config } from "../config.js";
 
-const PURPOSES = new Set(["login", "approve_device", "reject_device"]);
+const PURPOSES = new Set(["login", "approve_device", "reject_device", "revoke_device"]);
 const TRANSACTION_PROBE = "admin_challenge_transaction_probe";
 
 export async function createAdminChallenge(client, input = {}) {

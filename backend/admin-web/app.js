@@ -100,6 +100,15 @@ function handleClick(event) {
     render();
     return;
   }
+  if (action === "open-revoke-device") {
+    const device = state.devices.find((item) => item.id === button.dataset.deviceId);
+    if (!device || device.isRoot || device.status !== "approved") return;
+    state.dialog = { type: "revoke", device };
+    state.error = "";
+    render();
+    queueMicrotask(() => app.querySelector("dialog h2")?.focus());
+    return;
+  }
   if (action === "open-approve-device" || action === "open-reject-device") {
     const request = state.requests.find((item) => item.id === button.dataset.requestId);
     if (!request) return;
@@ -252,8 +261,9 @@ async function checkDeviceStatus() {
 }
 
 async function decideDevice(form, values) {
-  const request = state.requests.find((item) => item.id === form.dataset.requestId);
   const decision = form.dataset.decision;
+  if (decision === "revoke") return revokeDevice(form, values);
+  const request = state.requests.find((item) => item.id === form.dataset.requestId);
   if (!request || !["approve", "reject"].includes(decision)) return;
   beginRequest();
   try {
@@ -282,6 +292,37 @@ async function decideDevice(form, values) {
     finishRequest();
   } catch (error) {
     failRequest(error, decision === "approve" ? "设备批准失败。" : "设备拒绝失败。", AuthScreen.AUTHENTICATED);
+  }
+}
+
+async function revokeDevice(form, values) {
+  const device = state.devices.find((item) => item.id === form.dataset.deviceId);
+  if (!device || device.isRoot || device.status !== "approved") return;
+  beginRequest();
+  try {
+    if (state.session.deviceID !== state.identity.deviceID) {
+      throw new Error("当前会话与本地设备密钥不一致，请退出后重新登录");
+    }
+    const challenge = await adminFetch("/admin/api/auth/challenges", {
+      method: "POST",
+      body: { purpose: "revoke_device", targetID: device.id }
+    });
+    const signature = await signChallenge(state.identity, canonicalChallengePayload(challenge));
+    await adminFetch(`/admin/api/auth/devices/${encodeURIComponent(device.id)}/revoke`, {
+      method: "POST",
+      body: {
+        reason: values.reason,
+        challengeID: challenge.challengeID,
+        nonce: challenge.nonce,
+        signature
+      }
+    });
+    state.dialog = null;
+    state.notice = "设备已撤销，该设备的所有会话已失效。";
+    await loadDeviceData();
+    finishRequest();
+  } catch (error) {
+    failRequest(error, "设备撤销失败。", AuthScreen.AUTHENTICATED);
   }
 }
 

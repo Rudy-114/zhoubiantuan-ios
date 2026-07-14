@@ -22,6 +22,7 @@ test("admin identities are stored in eight tables isolated from consumer users",
     await applyMigration("015_content_revisions.sql");
     await applyMigration("016_appealed_case_aggregation.sql");
     await applyMigration("017_admin_auth.sql");
+    await applyMigration("017_admin_device_revocation.sql");
 
     const relations = await pool.query(
       `SELECT table_name, to_regclass('public.' || table_name)::text AS regclass
@@ -65,6 +66,14 @@ test("admin identities are stored in eight tables isolated from consumer users",
       "admin_device_requests_pending",
       "admin_sessions_active"
     ]);
+
+    const challengePurpose = await pool.query(
+      `SELECT pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint
+       WHERE conrelid = 'admin_auth_challenges'::regclass
+         AND conname = 'admin_auth_challenges_purpose_check'`
+    );
+    assert.match(challengePurpose.rows[0].definition, /revoke_device/u);
   });
 });
 

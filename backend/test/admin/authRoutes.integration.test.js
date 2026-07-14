@@ -106,6 +106,13 @@ test("runs bootstrap, trusted-device login, approval, recovery, lockout, and log
     assert.match(pending.body.shortCode, /^[A-Z2-9]{6}$/);
     assert.deepEqual(pending.headers.getSetCookie(), []);
 
+    const pendingLoginChallenge = await request(baseUrl, "/admin/api/auth/challenges", {
+      method: "POST",
+      body: { username, deviceID: "device-second", purpose: "login" }
+    });
+    assert.equal(pendingLoginChallenge.status, 401);
+    assert.deepEqual(pendingLoginChallenge.headers.getSetCookie(), []);
+
     const requests = await request(baseUrl, "/admin/api/auth/device-requests", { cookies: rootCookies });
     assert.equal(requests.status, 200);
     assert.equal(requests.body.requests.length, 1);
@@ -190,6 +197,48 @@ test("runs bootstrap, trusted-device login, approval, recovery, lockout, and log
       [thirdPending.body.requestID]
     );
     assert.equal(rejectedRequestState.rows[0].retained, 0);
+
+    const selfRevoke = await request(baseUrl, "/admin/api/auth/devices/device-root/revoke", {
+      method: "POST",
+      cookies: rootCookies,
+      csrf: rootCookies.get("zbt_admin_csrf"),
+      body: { reason: "Must never revoke the active root" }
+    });
+    assert.equal(selfRevoke.status, 409);
+    assert.equal(selfRevoke.body.code, "admin_device_revoke_invalid");
+
+    const revokeChallenge = await decisionChallenge(
+      baseUrl,
+      rootCookies,
+      "revoke_device",
+      "device-second"
+    );
+    const revoked = await request(baseUrl, "/admin/api/auth/devices/device-second/revoke", {
+      method: "POST",
+      cookies: rootCookies,
+      csrf: rootCookies.get("zbt_admin_csrf"),
+      body: {
+        ...signedChallengeBody(revokeChallenge, rootKey.privateKey),
+        reason: "Second-device verification complete"
+      }
+    });
+    assert.equal(revoked.status, 200);
+    assert.deepEqual(revoked.body, {
+      status: "revoked",
+      device: { id: "device-second", name: "Second Browser", isRoot: false }
+    });
+    const devicesAfterRevoke = await request(baseUrl, "/admin/api/auth/devices", {
+      cookies: rootCookies
+    });
+    assert.equal(devicesAfterRevoke.status, 200);
+    assert.equal(
+      devicesAfterRevoke.body.devices.find((device) => device.id === "device-second")?.status,
+      "revoked"
+    );
+    const revokedDeviceSession = await request(baseUrl, "/admin/api/auth/session", {
+      cookies: secondCookies
+    });
+    assert.equal(revokedDeviceSession.status, 401);
 
     const pendingAtRecovery = await request(baseUrl, "/admin/api/auth/device-requests", {
       method: "POST",
@@ -362,6 +411,7 @@ test("runs bootstrap, trusted-device login, approval, recovery, lockout, and log
     assert.ok(audits.rows.some((row) => row.event_type === "admin.root_enrolled"));
     assert.ok(audits.rows.some((row) => row.event_type === "admin.device_approved"));
     assert.ok(audits.rows.some((row) => row.event_type === "admin.device_rejected"));
+    assert.ok(audits.rows.some((row) => row.event_type === "admin.device_revoked"));
     assert.ok(audits.rows.some((row) => row.event_type === "admin.root_recovered"));
     assert.ok(audits.rows.some((row) => row.event_type === "admin.logout"));
     assert.ok(audits.rows.every((row) => !row.ip_hash || /^[a-f0-9]{64}$/.test(row.ip_hash)));
@@ -433,10 +483,16 @@ async function decisionChallenge(baseUrl, cookies, purpose, targetID) {
 
 function signedDecisionBody(challenge, privateKey, shortCode) {
   return {
+    ...signedChallengeBody(challenge, privateKey),
+    shortCode
+  };
+}
+
+function signedChallengeBody(challenge, privateKey) {
+  return {
     challengeID: challenge.challengeID,
     nonce: challenge.nonce,
-    signature: signChallenge(challenge, privateKey),
-    shortCode
+    signature: signChallenge(challenge, privateKey)
   };
 }
 

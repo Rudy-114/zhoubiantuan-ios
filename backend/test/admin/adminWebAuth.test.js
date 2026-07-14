@@ -20,6 +20,15 @@ test("builds the exact browser challenge payload expected by the server", () => 
     }),
     "zbt-admin-v1\nchallenge-login\nlogin\nlogin-nonce\n"
   );
+  assert.equal(
+    canonicalChallengePayload({
+      challengeID: "challenge-revoke",
+      purpose: "revoke_device",
+      nonce: "revoke-nonce",
+      targetID: "device-second"
+    }),
+    "zbt-admin-v1\nchallenge-revoke\nrevoke_device\nrevoke-nonce\ndevice-second"
+  );
 });
 
 test("rejects malformed challenge metadata before signing", () => {

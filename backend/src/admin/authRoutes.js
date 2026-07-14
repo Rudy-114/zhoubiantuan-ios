@@ -156,7 +156,7 @@ export function createAdminAuthRouter() {
     async (req, res, next) => {
       try {
         const purpose = req.body?.purpose;
-        if (purpose !== "approve_device" && purpose !== "reject_device") {
+        if (!["approve_device", "reject_device", "revoke_device"].includes(purpose)) {
           throw adminError(400, "admin_request_invalid", "挑战用途无效");
         }
         const targetId = requiredIdentifier(req.body.targetID, "targetID");
@@ -172,7 +172,7 @@ export function createAdminAuthRouter() {
             deviceId: req.adminDevice.id,
             sessionId: req.adminSession.id,
             eventType: "admin.challenge_created",
-            subjectType: "device_request",
+            subjectType: purpose === "revoke_device" ? "device" : "device_request",
             subjectId: targetId,
             eventData: { outcome: purpose }
           });
@@ -414,6 +414,104 @@ export function createAdminAuthRouter() {
       }
     );
   }
+
+  router.post(
+    "/auth/devices/:deviceId/revoke",
+    requireAdminSession,
+    requireAdminCSRF,
+    requireRoot,
+    async (req, res, next) => {
+      try {
+        const deviceId = requiredIdentifier(req.params.deviceId, "deviceID");
+        const reason = requiredReason(req.body?.reason);
+        if (deviceId === req.adminDevice.id) {
+          throw adminError(409, "admin_device_revoke_invalid", "不能撤销当前根设备");
+        }
+        const result = await withTransaction(async (client) => {
+          try {
+            await client.query("SELECT id FROM admin_users WHERE id = $1 FOR UPDATE", [req.adminUser.id]);
+            const actorDevice = await loadApprovedAdminDevice(client, {
+              adminUserId: req.adminUser.id,
+              deviceId: req.adminDevice.id,
+              lock: true
+            });
+            const targetResult = await client.query(
+              `SELECT id, display_name
+               FROM admin_devices
+               WHERE id = $1 AND admin_user_id = $2 AND status = 'approved' AND is_root = false
+               FOR UPDATE`,
+              [deviceId, req.adminUser.id]
+            );
+            const targetDevice = targetResult.rows[0];
+            if (!actorDevice || !targetDevice) {
+              throw adminError(409, "admin_device_revoke_invalid", "设备已撤销或不可撤销");
+            }
+            const challengeId = requiredIdentifier(req.body?.challengeID, "challengeID");
+            const nonce = requiredText(req.body?.nonce, 256, "nonce");
+            const purpose = "revoke_device";
+            const payload = canonicalChallengePayload({
+              challengeId,
+              purpose,
+              nonce,
+              targetId: deviceId
+            });
+            if (!verifyDeviceSignature({
+              publicKeyJwk: actorDevice.public_key_jwk,
+              payload,
+              signature: req.body?.signature
+            })) throw invalidAuth();
+            await consumeAdminChallenge(client, {
+              challengeId,
+              adminUserId: req.adminUser.id,
+              deviceId: req.adminDevice.id,
+              purpose,
+              targetId: deviceId,
+              nonce
+            });
+            await client.query(
+              `UPDATE admin_devices SET status = 'revoked', revoked_at = now()
+               WHERE id = $1`,
+              [deviceId]
+            );
+            await client.query(
+              `UPDATE admin_sessions SET revoked_at = COALESCE(revoked_at, now())
+               WHERE admin_user_id = $1 AND device_id = $2`,
+              [req.adminUser.id, deviceId]
+            );
+            await audit(client, req, {
+              adminUserId: req.adminUser.id,
+              deviceId: req.adminDevice.id,
+              sessionId: req.adminSession.id,
+              eventType: "admin.device_revoked",
+              subjectType: "device",
+              subjectId: deviceId,
+              eventData: { outcome: "revoked", reason }
+            });
+            return { device: { id: targetDevice.id, name: targetDevice.display_name } };
+          } catch (error) {
+            if (!isClientError(error) && error?.apiCode !== "invalid_admin_challenge") throw error;
+            await audit(client, req, {
+              adminUserId: req.adminUser.id,
+              deviceId: req.adminDevice.id,
+              sessionId: req.adminSession.id,
+              eventType: "admin.device_revoke_failed",
+              subjectType: "device",
+              subjectId: deviceId,
+              eventData: { outcome: error.apiCode || "invalid_challenge" }
+            });
+            return { error: error?.apiCode === "invalid_admin_challenge" ? invalidAuth() : error };
+          }
+        });
+        if (result.error) throw result.error;
+        return res.json({
+          status: "revoked",
+          device: deviceResponse(result.device, false)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
 
   router.post("/auth/recover", recoveryLimiter, async (req, res, next) => {
     try {

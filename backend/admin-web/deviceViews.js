@@ -111,7 +111,7 @@ export function renderDeviceManagementPanel({
   const devicesSection = sectionHeading("已登记设备", "撤销状态会明确显示；私钥和公钥材料不会出现在此页面。");
   const deviceList = element("div", "device-list");
   if (!devices.length) deviceList.append(emptyState("没有可显示的设备。"));
-  for (const device of devices) deviceList.append(deviceRow(device));
+  for (const device of devices) deviceList.append(deviceRow(device, session?.deviceID, busy));
   devicesSection.append(deviceList);
   panel.append(pendingSection, devicesSection);
   if (dialog) panel.append(decisionDialog(dialog, busy));
@@ -137,7 +137,7 @@ function pendingRequestRow(request, busy) {
   return article;
 }
 
-function deviceRow(device) {
+function deviceRow(device, currentDeviceID, busy) {
   const article = element("article", "device-row");
   const body = element("div");
   const title = element("h3");
@@ -150,38 +150,57 @@ function deviceRow(device) {
     : `登记于 ${formatDateTime(device.createdAt)}`;
   body.append(title, state, time);
   article.append(body);
+  if (device.status === "approved" && !device.isRoot && device.id !== currentDeviceID) {
+    const actions = element("div", "row-actions");
+    const revoke = actionButton("撤销", "open-revoke-device", { busy, deviceID: device.id });
+    revoke.classList.add("danger-button");
+    actions.append(revoke);
+    article.append(actions);
+  }
   return article;
 }
 
 function decisionDialog(dialog, busy) {
+  const isRevoke = dialog.type === "revoke";
+  const target = isRevoke ? dialog.device : dialog.request;
   const panel = element("dialog", "decision-dialog");
   panel.setAttribute("aria-labelledby", "device-dialog-title");
   const title = element("h2");
   title.id = "device-dialog-title";
   title.tabIndex = -1;
-  title.textContent = dialog.type === "approve" ? "批准设备" : "拒绝设备";
+  title.textContent = dialog.type === "approve"
+    ? "批准设备"
+    : (isRevoke ? "撤销设备" : "拒绝设备");
   const intro = element("p");
   intro.textContent = dialog.type === "approve"
-    ? `确认“${dialog.request.name}”上的六位校验码与此处输入一致。`
-    : `拒绝“${dialog.request.name}”后，该申请将被删除。`;
+    ? `确认“${target.name}”上的六位校验码与此处输入一致。`
+    : (isRevoke
+      ? `撤销“${target.name}”后，该设备的所有会话将立即失效。`
+      : `拒绝“${target.name}”后，该申请将被删除。`);
   const form = element("form", "auth-form");
   form.id = "device-decision-form";
   form.dataset.decision = dialog.type;
-  form.dataset.requestId = dialog.request.id;
-  const shortCode = inputField("decision-short-code", "shortCode", "六位校验码", {
-    maxlength: 6,
-    pattern: "[A-Za-z2-9]{6}",
-    spellcheck: false
-  });
-  form.append(shortCode);
-  if (dialog.type === "reject") {
-    form.append(inputField("decision-reason", "reason", "拒绝原因", { maxlength: 500 }));
+  if (isRevoke) {
+    form.dataset.deviceId = target.id;
+    form.append(inputField("decision-reason", "reason", "撤销原因", { maxlength: 500 }));
+  } else {
+    form.dataset.requestId = target.id;
+    form.append(inputField("decision-short-code", "shortCode", "六位校验码", {
+      maxlength: 6,
+      pattern: "[A-Za-z2-9]{6}",
+      spellcheck: false
+    }));
+    if (dialog.type === "reject") {
+      form.append(inputField("decision-reason", "reason", "拒绝原因", { maxlength: 500 }));
+    }
   }
   const actions = element("div", "button-row");
   const confirm = element("button", dialog.type === "approve" ? "primary-button" : "secondary-button danger-button");
   confirm.type = "submit";
   confirm.disabled = busy;
-  confirm.textContent = busy ? "处理中…" : (dialog.type === "approve" ? "确认批准" : "确认拒绝");
+  confirm.textContent = busy
+    ? "处理中…"
+    : (dialog.type === "approve" ? "确认批准" : (isRevoke ? "确认撤销" : "确认拒绝"));
   const cancel = actionButton("取消", "close-device-dialog", { busy });
   actions.append(confirm, cancel);
   form.append(actions);
@@ -249,11 +268,17 @@ function statusMessages({ notice, error }) {
   return container;
 }
 
-function actionButton(label, action, { primary = false, busy = false, requestID = "" } = {}) {
+function actionButton(label, action, {
+  primary = false,
+  busy = false,
+  requestID = "",
+  deviceID = ""
+} = {}) {
   const button = element("button", primary ? "primary-button" : "secondary-button");
   button.type = "button";
   button.dataset.action = action;
   if (requestID) button.dataset.requestId = requestID;
+  if (deviceID) button.dataset.deviceId = deviceID;
   button.disabled = busy;
   button.textContent = label;
   return button;
