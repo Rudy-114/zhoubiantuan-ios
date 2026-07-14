@@ -50,6 +50,11 @@ function positiveFiniteInteger(name, fallback) {
   return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function nonNegativeFiniteNumber(name, fallback = 0) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 export const config = {
   nodeEnv,
   port: Number(process.env.PORT || 8080),
@@ -96,6 +101,17 @@ export const config = {
     contentRevisionAccountMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_ACCOUNT_MAX_24H", 20),
     contentRevisionIpMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_IP_MAX_24H", 60),
     contentRevisionBurstMaxMinute: positiveFiniteInteger("SAFETY_CONTENT_REVISION_BURST_MAX_MINUTE", 5)
+  },
+  safetyAi: {
+    baseUrl: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiKey: process.env.DASHSCOPE_API_KEY || "",
+    model: "qwen3.7-plus-2026-05-26",
+    promptVersion: "safety-case-prompt-v1",
+    policyVersion: "safety-policy-v1",
+    monthlyBudgetCny: nonNegativeFiniteNumber("SAFETY_AI_MONTHLY_BUDGET_CNY"),
+    inputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_INPUT_CNY_PER_MILLION"),
+    outputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_OUTPUT_CNY_PER_MILLION"),
+    timeoutMs: positiveFiniteInteger("SAFETY_QWEN_TIMEOUT_MS", 12_000)
   },
   admin: {
     webEnabled: String(process.env.ADMIN_WEB_ENABLED || "false").toLowerCase() === "true",
