@@ -184,8 +184,8 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-05-admin-auth.md`
 
-- [ ] Add separate admin tables, hidden password bootstrap, P-256 device challenges, sessions, CSRF, approvals, recovery, and audit.
-- [ ] Do not create the real administrator account until the Phase 6 browser UI is deployed.
+- [x] Add separate admin tables, hidden password bootstrap, P-256 device challenges, sessions, CSRF, approvals, recovery, and audit.
+- [x] Do not create the real administrator account until the Phase 6 browser UI is deployed.
 
 ### Task 6: Build and Deploy the Admin Web Console
 
