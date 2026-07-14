@@ -79,11 +79,7 @@ export const config = {
     endpoint: process.env.ALIYUN_MODERATION_ENDPOINT || "https://green-cip.cn-shanghai.aliyuncs.com",
     textAgentAppId: process.env.ALIYUN_TEXT_AGENT_APP_ID || "",
     textService: process.env.ALIYUN_TEXT_MODERATION_SERVICE || "comment_detection",
-    imageService: process.env.ALIYUN_IMAGE_MODERATION_SERVICE || "baselineCheck",
-    adminEmails: String(process.env.ADMIN_EMAILS || "")
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean)
+    imageService: process.env.ALIYUN_IMAGE_MODERATION_SERVICE || "baselineCheck"
   },
   safety: {
     enabled: String(process.env.SAFETY_CASES_ENABLED || "false").toLowerCase() === "true",

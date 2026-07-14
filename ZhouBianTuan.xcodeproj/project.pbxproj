@@ -15,7 +15,6 @@
 		7D4E6EB32C8A4A5100A10001 /* SafetyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */; };
 		7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */; };
 		7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */; };
-		7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E612C8A4A5100A10001 /* AdminViews.swift */; };
 		7D4E6E802C8A4A5100A10001 /* HomeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E702C8A4A5100A10001 /* HomeViews.swift */; };
 		7D4E6E812C8A4A5100A10001 /* LegalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E712C8A4A5100A10001 /* LegalViews.swift */; };
 		7D4E6E822C8A4A5100A10001 /* AuthViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E722C8A4A5100A10001 /* AuthViews.swift */; };
@@ -30,9 +29,7 @@
 		7D4E6EA12C8A4A5100A10001 /* ModerationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */; };
 		7D4E6EA22C8A4A5100A10001 /* ModerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E922C8A4A5100A10001 /* ModerationService.swift */; };
 		7D4E6EA32C8A4A5100A10001 /* MockModerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */; };
-		7D4E6EA42C8A4A5100A10001 /* AdminModerationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */; };
 		7D4E6EA52C8A4A5100A10001 /* ModerationAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E952C8A4A5100A10001 /* ModerationAPI.swift */; };
-		7D4E6EA62C8A4A5100A10001 /* ModerationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */; };
 		7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */; };
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
@@ -65,7 +62,6 @@
 		7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyModels.swift; sourceTree = "<group>"; };
 		7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonComponents.swift; sourceTree = "<group>"; };
-		7D4E6E612C8A4A5100A10001 /* AdminViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminViews.swift; sourceTree = "<group>"; };
 		7D4E6E702C8A4A5100A10001 /* HomeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViews.swift; sourceTree = "<group>"; };
 		7D4E6E712C8A4A5100A10001 /* LegalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalViews.swift; sourceTree = "<group>"; };
 		7D4E6E722C8A4A5100A10001 /* AuthViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViews.swift; sourceTree = "<group>"; };
@@ -80,9 +76,7 @@
 		7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationModels.swift; sourceTree = "<group>"; };
 		7D4E6E922C8A4A5100A10001 /* ModerationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationService.swift; sourceTree = "<group>"; };
 		7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockModerationService.swift; sourceTree = "<group>"; };
-		7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminModerationView.swift; sourceTree = "<group>"; };
 		7D4E6E952C8A4A5100A10001 /* ModerationAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationAPI.swift; sourceTree = "<group>"; };
-		7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStore.swift; sourceTree = "<group>"; };
 		7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStatusViews.swift; sourceTree = "<group>"; };
 		7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZhouBianTuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZhouBianTuanApp.swift; sourceTree = "<group>"; };
@@ -163,7 +157,6 @@
 				7D4E6EB12C8A4A5100A10001 /* SafetyModels.swift */,
 				7D4E6E542C8A4A5100A10001 /* KeychainStore.swift */,
 				7D4E6E602C8A4A5100A10001 /* CommonComponents.swift */,
-				7D4E6E612C8A4A5100A10001 /* AdminViews.swift */,
 				7D4E6E702C8A4A5100A10001 /* HomeViews.swift */,
 				7D4E6E712C8A4A5100A10001 /* LegalViews.swift */,
 				7D4E6E722C8A4A5100A10001 /* AuthViews.swift */,
@@ -180,9 +173,7 @@
 				7D4E6E912C8A4A5100A10001 /* ModerationModels.swift */,
 				7D4E6E922C8A4A5100A10001 /* ModerationService.swift */,
 				7D4E6E932C8A4A5100A10001 /* MockModerationService.swift */,
-				7D4E6E942C8A4A5100A10001 /* AdminModerationView.swift */,
 				7D4E6E952C8A4A5100A10001 /* ModerationAPI.swift */,
-				7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */,
 				7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */,
 				7D9F01002D21000100A10001 /* ReportViews.swift */,
 				7D4E6E382C8A4A5100A10001 /* Info.plist */,
@@ -344,7 +335,6 @@
 				7D4E6EB32C8A4A5100A10001 /* SafetyModels.swift in Sources */,
 				7D4E6E592C8A4A5100A10001 /* KeychainStore.swift in Sources */,
 				7D4E6E622C8A4A5100A10001 /* CommonComponents.swift in Sources */,
-				7D4E6E632C8A4A5100A10001 /* AdminViews.swift in Sources */,
 				7D4E6E802C8A4A5100A10001 /* HomeViews.swift in Sources */,
 				7D4E6E812C8A4A5100A10001 /* LegalViews.swift in Sources */,
 				7D4E6E822C8A4A5100A10001 /* AuthViews.swift in Sources */,
@@ -361,9 +351,7 @@
 				7D4E6EA12C8A4A5100A10001 /* ModerationModels.swift in Sources */,
 				7D4E6EA22C8A4A5100A10001 /* ModerationService.swift in Sources */,
 				7D4E6EA32C8A4A5100A10001 /* MockModerationService.swift in Sources */,
-				7D4E6EA42C8A4A5100A10001 /* AdminModerationView.swift in Sources */,
 				7D4E6EA52C8A4A5100A10001 /* ModerationAPI.swift in Sources */,
-				7D4E6EA62C8A4A5100A10001 /* ModerationStore.swift in Sources */,
 				7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */,
 				7D9F01012D21000100A10001 /* ReportViews.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,

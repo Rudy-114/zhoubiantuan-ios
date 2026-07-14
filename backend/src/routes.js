@@ -7,10 +7,9 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
-import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
+import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
-import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
-import { applyModerationDecision, moderationDecision } from "./moderation/decisionService.js";
+import { assertOwnedObjectKeys, createModerationReview, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { createUploadTarget, deleteObjects, signedReadUrl } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
@@ -1094,58 +1093,6 @@ export function createRouter() {
     mountLegacyReportRoute(router);
   }
 
-  router.get("/moderation/reviews", requireAuth, requireModerationAdmin, async (req, res, next) => {
-    try {
-      const status = trimmedString(req.query.status, "review");
-      const params = [];
-      let where = "";
-      if (status !== "all") {
-        params.push(status);
-        where = "WHERE mr.status = $1";
-      }
-      const { rows } = await query(
-        `SELECT mr.*
-         FROM moderation_reviews mr
-         ${where}
-         ORDER BY mr.created_at DESC
-         LIMIT 200`,
-        params
-      );
-      res.json({ reviews: rows.map(moderationReviewToClient) });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  router.post("/moderation/reviews/:id/decision", requireAuth, requireModerationAdmin, async (req, res, next) => {
-    try {
-      const decision = moderationDecision(req.body.decision);
-      const adminReason = trimmedString(req.body.reason);
-      const review = await withTransaction(async (client) => {
-        const selected = await client.query("SELECT * FROM moderation_reviews WHERE id = $1 FOR UPDATE", [req.params.id]);
-        const row = selected.rows[0];
-        if (!row) {
-          const error = new Error("审核记录不存在");
-          error.status = 404;
-          throw error;
-        }
-        await applyModerationDecision(client, row, decision);
-        const updated = await client.query(
-          `UPDATE moderation_reviews
-           SET status = $2, decision = $3, reason = COALESCE(NULLIF($4, ''), reason),
-               handled_by = $5, handled_at = now(), updated_at = now()
-           WHERE id = $1
-           RETURNING *`,
-          [row.id, decision.reviewStatus, decision.decision, adminReason, req.user.id]
-        );
-        return updated.rows[0];
-      });
-      res.json({ review: moderationReviewToClient(review) });
-    } catch (error) {
-      next(error);
-    }
-  });
-
   router.post("/uploads/presign", requireAuth, async (req, res, next) => {
     try {
       const contentType = String(req.body.contentType || "").split(";")[0].trim().toLowerCase();
@@ -1773,13 +1720,6 @@ async function createRegistrationNicknameReview(client, user, nickname, moderati
       backgroundImageName: user.background_image_name || "merch_magazine"
     }
   });
-}
-
-function requireModerationAdmin(req, res, next) {
-  if (!isModerationAdmin(req.user)) {
-    return res.status(403).json({ error: "只有管理员可以访问审核后台" });
-  }
-  next();
 }
 
 function moderationResponse(results) {

@@ -685,20 +685,6 @@ final class AliyunBackendClient {
         ])
     }
 
-    func moderationReviews(token: String, status: String = "review") async throws -> [ModerationReview] {
-        let payload: BackendModerationReviewsResponse = try await request("/moderation/reviews?status=\(status)", token: token)
-        return payload.reviews.map { $0.localReview() }
-    }
-
-    @discardableResult
-    func decideModerationReview(token: String, reviewID: String, decision: String, reason: String = "") async throws -> ModerationReview {
-        let payload: BackendModerationReviewResponse = try await request("/moderation/reviews/\(reviewID)/decision", method: "POST", token: token, body: [
-            "decision": decision,
-            "reason": reason
-        ])
-        return payload.review.localReview()
-    }
-
     func deleteComment(token: String, commentID: String) async throws {
         try await emptyRequest("/comments/\(commentID)", method: "DELETE", token: token)
     }

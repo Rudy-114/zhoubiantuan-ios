@@ -164,7 +164,6 @@ enum Route: Hashable {
     case contentRemediation
     case generalSettings
     case notificationSettings
-    case admin
 }
 
 enum SafetyReportResumeDecision {
@@ -454,8 +453,6 @@ extension View {
                 GeneralSettingsView()
             case .notificationSettings:
                 NotificationSettingsView()
-            case .admin:
-                AdminModerationView()
             }
         }
     }
@@ -489,15 +486,6 @@ extension View {
 #Preview("我的主页") {
     NavigationStack {
         ProfileView()
-    }
-    .environmentObject(MockAppStore())
-    .tint(Theme.hotPink)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("审核后台") {
-    NavigationStack {
-        AdminModerationView()
     }
     .environmentObject(MockAppStore())
     .tint(Theme.hotPink)

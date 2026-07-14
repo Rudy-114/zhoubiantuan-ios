@@ -77,10 +77,6 @@ export function assertOwnedObjectKeys(userId, objectKeys, allowedKinds) {
   return keys;
 }
 
-export function isModerationAdmin(user) {
-  return Boolean(user?.email && config.moderation.adminEmails.includes(String(user.email).toLowerCase()));
-}
-
 async function safeReview(callback, source) {
   try {
     return await callback();

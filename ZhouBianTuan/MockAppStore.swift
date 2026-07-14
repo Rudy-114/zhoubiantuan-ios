@@ -44,7 +44,6 @@ final class MockAppStore: ObservableObject {
             persistThreads()
         }
     }
-    @Published var moderationReviews: [ModerationReview]
     @Published var reports: [Report]
     @Published var safetyReports: [SafetyReport] = []
     @Published private(set) var safetyContentActions: [SafetyContentAction] = []
@@ -347,7 +346,6 @@ final class MockAppStore: ObservableObject {
         reviews = []
         comments = []
         threads = []
-        moderationReviews = []
         reports = []
         reminders = []
         likedPostIDs = []
@@ -2529,7 +2527,6 @@ final class MockAppStore: ObservableObject {
         threads.removeAll()
         reports.removeAll()
         resetSafetyReportSessionState()
-        moderationReviews.removeAll()
         reminders.removeAll()
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()

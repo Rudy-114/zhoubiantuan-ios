@@ -90,7 +90,17 @@ test("moves pre-publication moderation behind admin session and audits decisions
     const legacyConsumerRoute = await request(baseUrl, "/api/moderation/reviews", {
       bearer: appJWT
     });
-    assert.equal(legacyConsumerRoute.status, 403);
+    assert.equal(legacyConsumerRoute.status, 404);
+    const legacyConsumerDecision = await request(
+      baseUrl,
+      "/api/moderation/reviews/moderation-admin-review/decision",
+      {
+        method: "POST",
+        bearer: appJWT,
+        body: { decision: "approve", reason: "legacy consumer route must stay retired" }
+      }
+    );
+    assert.equal(legacyConsumerDecision.status, 404);
   });
 });
 
