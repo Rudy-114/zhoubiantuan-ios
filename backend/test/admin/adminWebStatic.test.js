@@ -39,7 +39,11 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
       "formatters.js",
       "app.js",
       "authViews.js",
-      "deviceViews.js"
+      "deviceViews.js",
+      "workspace.js",
+      "caseViews.js",
+      "moderationViews.js",
+      "auditViews.js"
     ]) {
       const response = await fetch(`${baseUrl}/admin/${asset}`);
       assert.equal(response.status, 200, asset);

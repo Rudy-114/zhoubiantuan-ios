@@ -53,13 +53,52 @@ export function renderAuthenticatedView({
   if (session?.isRoot) headerActions.append(actionButton("刷新设备", "refresh-device-data", { busy }));
   headerActions.append(actionButton("退出登录", "logout", { busy }));
   header.append(headingBlock, headerActions);
-  main.append(header, statusMessages({ notice, error }));
+  main.append(header, renderDeviceManagementPanel({
+    session,
+    devices,
+    requests,
+    dialog,
+    notice,
+    error,
+    busy
+  }));
+  return main;
+}
+
+export function renderDeviceManagementPanel({
+  session,
+  devices = [],
+  requests = [],
+  dialog = null,
+  notice = "",
+  error = "",
+  busy = false,
+  embedded = false
+} = {}) {
+  const panel = element("section", "device-management-panel");
+  if (embedded) {
+    const header = element("header", "content-heading");
+    const block = element("div");
+    const heading = element("h1");
+    heading.tabIndex = -1;
+    heading.textContent = session?.isRoot ? "受信设备" : "本设备";
+    const intro = element("p", "muted");
+    intro.textContent = session?.isRoot
+      ? "审批新设备并检查已撤销设备；密钥材料不会离开浏览器或显示在页面中。"
+      : "此设备已获批准；设备管理仅能在根设备执行。";
+    block.append(heading, intro);
+    const refresh = actionButton("刷新", "refresh-device-data", { busy });
+    if (!session?.isRoot) refresh.hidden = true;
+    header.append(block, refresh);
+    panel.append(header);
+  }
+  panel.append(statusMessages({ notice, error }));
 
   if (!session?.isRoot) {
     const copy = element("p", "auth-intro");
     copy.textContent = "此设备已获批准。设备审批与恢复仅能在根设备上进行。";
-    main.append(copy);
-    return main;
+    panel.append(copy);
+    return panel;
   }
 
   const pendingSection = sectionHeading("待审批申请", "逐一核对设备名称、环境摘要和六位校验码。");
@@ -74,9 +113,9 @@ export function renderAuthenticatedView({
   if (!devices.length) deviceList.append(emptyState("没有可显示的设备。"));
   for (const device of devices) deviceList.append(deviceRow(device));
   devicesSection.append(deviceList);
-  main.append(pendingSection, devicesSection);
-  if (dialog) main.append(decisionDialog(dialog, busy));
-  return main;
+  panel.append(pendingSection, devicesSection);
+  if (dialog) panel.append(decisionDialog(dialog, busy));
+  return panel;
 }
 
 function pendingRequestRow(request, busy) {

@@ -10,7 +10,8 @@ import {
   renderRootEnrollmentView,
   renderStartupView
 } from "./authViews.js";
-import { renderAuthenticatedView, renderPendingDeviceView } from "./deviceViews.js";
+import { renderPendingDeviceView } from "./deviceViews.js";
+import { createWorkspaceController } from "./workspace.js";
 
 export const AuthScreen = Object.freeze({
   LOGIN: "login",
@@ -46,12 +47,18 @@ const state = {
   ready: false,
   suppressUnauthorized: 0
 };
+const workspace = app ? createWorkspaceController({
+  api: adminFetch,
+  onRender: render,
+  onLoadDevices: loadDeviceData
+}) : null;
 
 if (app) {
   app.replaceChildren(renderStartupView());
   app.addEventListener("click", handleClick);
   app.addEventListener("submit", handleSubmit);
   globalThis.addEventListener("admin:unauthorized", handleUnauthorized);
+  globalThis.addEventListener("popstate", () => void workspace?.handlePopState());
   void start();
 }
 
@@ -62,6 +69,7 @@ async function start() {
     state.session = payload.session;
     state.screen = AuthScreen.AUTHENTICATED;
     await loadDeviceData();
+    await workspace?.activate();
   } catch (error) {
     if (!(error instanceof AdminAPIError) || error.status !== 401) state.error = safeMessage(error);
     state.screen = AuthScreen.LOGIN;
@@ -74,6 +82,7 @@ async function start() {
 function handleClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button || !app.contains(button)) return;
+  if (state.screen === AuthScreen.AUTHENTICATED && workspace?.handleClick(button)) return;
   const action = button.dataset.action;
   if (action === "toggle-password") return togglePassword(button);
   if (action === "show-login") return navigate(AuthScreen.LOGIN);
@@ -97,7 +106,7 @@ function handleClick(event) {
     state.dialog = { type: action === "open-approve-device" ? "approve" : "reject", request };
     state.error = "";
     render();
-    queueMicrotask(() => app.querySelector("[role='dialog'] h2")?.focus());
+    queueMicrotask(() => app.querySelector("dialog h2")?.focus());
   }
 }
 
@@ -106,6 +115,9 @@ function handleSubmit(event) {
   const form = event.target;
   if (!form.reportValidity()) return;
   const values = Object.fromEntries(new FormData(form));
+  if (state.screen === AuthScreen.AUTHENTICATED && workspace?.handleSubmit(form, values)) {
+    return;
+  }
   if (form.id === "login-form") {
     const intent = event.submitter?.value || "login";
     void (intent === "request" ? requestDevice(values) : login(values));
@@ -142,6 +154,7 @@ async function login({ username, password, displayName }) {
     state.screen = AuthScreen.AUTHENTICATED;
     state.notice = "设备验证成功。";
     await loadDeviceData();
+    await workspace?.activate();
     finishRequest({ focusHeading: true });
   } catch (error) {
     failRequest(error, "管理员名、密码或设备验证失败。", AuthScreen.LOGIN);
@@ -297,6 +310,7 @@ async function logout() {
   state.requests = [];
   state.dialog = null;
   state.screen = AuthScreen.LOGIN;
+  workspace?.deactivate();
   finishRequest({ focusHeading: true, keepMessages: true });
 }
 
@@ -364,6 +378,7 @@ function handleUnauthorized() {
   state.notice = "";
   state.error = "会话已失效，请重新登录。";
   state.fieldError = "";
+  workspace?.deactivate();
   render({ focusHeading: true });
 }
 
@@ -388,7 +403,9 @@ function togglePassword(button) {
 
 function render({ focusHeading = false } = {}) {
   if (!app) return;
-  document.title = TITLES[state.screen] || "周边团安全后台";
+  document.title = state.screen === AuthScreen.AUTHENTICATED
+    ? workspace?.getTitle() || TITLES[state.screen]
+    : TITLES[state.screen] || "周边团安全后台";
   let view;
   if (!state.ready) {
     view = renderStartupView();
@@ -399,7 +416,15 @@ function render({ focusHeading = false } = {}) {
   } else if (state.screen === AuthScreen.DEVICE_PENDING) {
     view = renderPendingDeviceView(state);
   } else if (state.screen === AuthScreen.AUTHENTICATED) {
-    view = renderAuthenticatedView(state);
+    view = workspace.renderView({
+      session: state.session,
+      devices: state.devices,
+      requests: state.requests,
+      deviceDialog: state.dialog,
+      deviceNotice: state.notice,
+      deviceError: state.error,
+      deviceBusy: state.busy
+    });
   } else {
     view = renderLoginView(state);
   }
@@ -408,8 +433,10 @@ function render({ focusHeading = false } = {}) {
   if (dialog && !dialog.open) {
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
-      state.dialog = null;
-      render();
+      if (!workspace?.closeDialog()) {
+        state.dialog = null;
+        render();
+      }
     }, { once: true });
     dialog.showModal();
   }
