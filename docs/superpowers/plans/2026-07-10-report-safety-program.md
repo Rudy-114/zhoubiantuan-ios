@@ -191,8 +191,8 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-06-admin-web.md`
 
-- [ ] Add authenticated case APIs, queue/detail/action views, device management, audit, and Playwright coverage.
-- [ ] Initialize the real admin account and enroll this device as root without exposing credentials or recovery codes in chat.
+- [x] Add authenticated case APIs, queue/detail/action views, device management, audit, and Playwright coverage.
+- [x] Initialize the real admin account and enroll this device as root without exposing credentials or recovery codes in chat.
 
 ### Task 7: Add Qwen Shadow Analysis
 
