@@ -4,11 +4,13 @@ import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
 import { createAdminAuthRouter } from "./admin/authRoutes.js";
+import { createAdminCaseRouter } from "./admin/caseRoutes.js";
+import { createAdminModerationRouter } from "./admin/moderationRoutes.js";
 import { PRIVACY_POLICY_PATHS, servePrivacyPolicy } from "./legal.js";
 import { logger } from "./logger.js";
 import { createRouter } from "./routes.js";
 
-export function createApp() {
+export function createApp({ adminCaseRouterOptions } = {}) {
   const app = express();
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
@@ -22,7 +24,13 @@ export function createApp() {
       next();
     },
     express.json({ limit: "256kb" }),
-    createAdminAuthRouter()
+    createAdminAuthRouter(),
+    createAdminCaseRouter(adminCaseRouterOptions),
+    createAdminModerationRouter(),
+    (req, res) => res.status(404).json({
+      error: `No admin route for ${req.method} ${req.path}`,
+      code: "admin_route_not_found"
+    })
   );
   app.use(cors());
   app.use(express.json({ limit: "2mb" }));
@@ -42,7 +50,7 @@ export function createApp() {
     } else if (isAdminRequest && error instanceof SyntaxError && status === 400) {
       apiCode = "admin_json_invalid";
       message = "管理员请求 JSON 无效";
-    } else if (isAdminRequest && status >= 500) {
+    } else if (isAdminRequest && status >= 500 && !apiCode) {
       message = "管理员服务暂时不可用";
       apiCode = "admin_internal_error";
     }

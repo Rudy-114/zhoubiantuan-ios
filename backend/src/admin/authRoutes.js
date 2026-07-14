@@ -509,10 +509,6 @@ export function createAdminAuthRouter() {
     }
   });
 
-  router.use((req, res) => res.status(404).json({
-    error: `No admin route for ${req.method} ${req.path}`,
-    code: "admin_route_not_found"
-  }));
   return router;
 }
 

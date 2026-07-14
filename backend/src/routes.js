@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import express from "express";
-import { hashPassword, requireAuth, signToken, verifyPassword } from "./auth.js";
+import { assertUnrestrictedUser, hashPassword, requireAuth, requireUnrestrictedUser, signToken, verifyPassword } from "./auth.js";
 import { loadBootstrap } from "./bootstrap.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
@@ -10,6 +10,7 @@ import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
+import { applyModerationDecision, moderationDecision } from "./moderation/decisionService.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { createUploadTarget, deleteObjects, signedReadUrl } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
@@ -466,7 +467,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/collections", requireAuth, async (req, res, next) => {
+  router.post("/collections", requireAuth, requireUnrestrictedUser, async (req, res, next) => {
     try {
       const collection = await createCollection(req.user.id, req.body);
       res.status(201).json({ collection });
@@ -498,7 +499,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/posts", requireAuth, async (req, res, next) => {
+  router.post("/posts", requireAuth, requireUnrestrictedUser, async (req, res, next) => {
     try {
       const title = trimmedString(req.body.title);
       if (!title) throw badRequest("请填写标题");
@@ -520,6 +521,7 @@ export function createRouter() {
         imageObjectKeys
       });
       const { post, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         const { rows } = await client.query(
           `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, image_object_keys, preview_image_object_keys, group_type,
@@ -614,7 +616,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/posts/:id/comments", requireAuth, async (req, res, next) => {
+  router.post("/posts/:id/comments", requireAuth, requireUnrestrictedUser, async (req, res, next) => {
     try {
       const body = trimmedString(req.body.body);
       const replyToID = trimmedString(req.body.replyToID);
@@ -641,6 +643,7 @@ export function createRouter() {
         text: body
       });
       const { comment, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         const { rows } = await client.query(
           "INSERT INTO comments (id, post_id, author_id, body, reply_to_id, status) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6) RETURNING *",
           [commentId, req.params.id, req.user.id, body, replyToID, moderation.status]
@@ -758,7 +761,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/users/:id/follow", requireAuth, async (req, res, next) => {
+  router.post("/users/:id/follow", requireAuth, requireUnrestrictedUser, async (req, res, next) => {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: true });
       if (syncEvents.length) {
@@ -858,7 +861,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/messages/threads/:id/messages", requireAuth, async (req, res, next) => {
+  router.post("/messages/threads/:id/messages", requireAuth, requireUnrestrictedUser, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
       const recipientUserID = trimmedString(req.body.recipientUserID);
@@ -894,6 +897,7 @@ export function createRouter() {
       }
 
       const { thread, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         const existingById = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
         let actualThreadId = threadId;
         if (existingById.rows[0]) {
@@ -1321,6 +1325,7 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
 async function setFollowState({ followerId, followingId, enabled }) {
   if (followerId === followingId) return [];
   return withTransaction(async (client) => {
+    if (enabled) await assertUnrestrictedUser(client, followerId);
     const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [followingId]);
     if (!target.rows[0]) return [];
     if (enabled) {
@@ -1575,34 +1580,37 @@ async function createCollection(userId, body) {
     ownerId: userId,
     text: publicContentModerationText(snapshot)
   });
-  const { rows } = await query(
-    `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     RETURNING *`,
-    [
-      collectionId,
-      userId,
-      name,
-      snapshot.wechat,
-      snapshot.qq,
-      snapshot.groupNumber,
-      snapshot.groupInfo,
-      deadline,
-      snapshot.defaultNote,
-      moderation.status
-    ]
-  );
-  if (moderation.status !== "active") {
-    await createModerationReview(null, {
-      targetType: "collection",
-      targetId: collectionId,
-      ownerId: userId,
-      result: moderation,
-      textSnapshot: publicContentModerationText(snapshot),
-      snapshot
-    });
-  }
-  return collectionToClient(rows[0], []);
+  return withTransaction(async (client) => {
+    await assertUnrestrictedUser(client, userId);
+    const { rows } = await client.query(
+      `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        collectionId,
+        userId,
+        name,
+        snapshot.wechat,
+        snapshot.qq,
+        snapshot.groupNumber,
+        snapshot.groupInfo,
+        deadline,
+        snapshot.defaultNote,
+        moderation.status
+      ]
+    );
+    if (moderation.status !== "active") {
+      await createModerationReview(client, {
+        targetType: "collection",
+        targetId: collectionId,
+        ownerId: userId,
+        result: moderation,
+        textSnapshot: publicContentModerationText(snapshot),
+        snapshot
+      });
+    }
+    return collectionToClient(rows[0], []);
+  });
 }
 
 async function updateCollection(userId, collectionId, body) {
@@ -1772,76 +1780,6 @@ function requireModerationAdmin(req, res, next) {
     return res.status(403).json({ error: "只有管理员可以访问审核后台" });
   }
   next();
-}
-
-function moderationDecision(value) {
-  const decision = String(value || "").trim();
-  switch (decision) {
-  case "approve":
-    return { decision, reviewStatus: "active", targetStatus: "active" };
-  case "reject":
-    return { decision, reviewStatus: "rejected", targetStatus: "rejected" };
-  case "hide":
-    return { decision, reviewStatus: "hidden", targetStatus: "hidden" };
-  case "remove":
-    return { decision, reviewStatus: "removed", targetStatus: "removed" };
-  case "ignore":
-    return { decision, reviewStatus: "ignored", targetStatus: null };
-  default:
-    throw badRequest("审核处理动作无效");
-  }
-}
-
-async function applyModerationDecision(client, review, decision) {
-  if (decision.decision === "ignore") return;
-  const snapshot = review.snapshot || {};
-  if (review.target_type === "post") {
-    await client.query("UPDATE posts SET status = $2, updated_at = now() WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (review.target_type === "comment") {
-    await client.query("UPDATE comments SET status = $2 WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (review.target_type === "collection") {
-    await client.query("UPDATE group_collections SET status = $2, updated_at = now() WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (decision.decision !== "approve") return;
-  if (review.target_type === "profileText") {
-    await client.query(
-      `UPDATE users
-       SET nickname = COALESCE($2, nickname), bio = COALESCE($3, bio),
-           red_book_id = COALESCE($4, red_book_id), gender = COALESCE($5, gender),
-           birthday = COALESCE($6, birthday), region = COALESCE($7, region),
-           avatar_symbol = COALESCE($8, avatar_symbol), avatar_tint = COALESCE($9, avatar_tint),
-           background_image_name = COALESCE($10, background_image_name), updated_at = now()
-       WHERE id = $1`,
-      [
-        review.owner_id,
-        snapshot.nickname,
-        snapshot.bio,
-        snapshot.redBookID,
-        snapshot.gender,
-        snapshot.birthday,
-        snapshot.region,
-        snapshot.avatarSymbol,
-        snapshot.avatarTint,
-        snapshot.backgroundImageName
-      ]
-    );
-    return;
-  }
-  if (review.target_type === "avatar") {
-    await client.query("UPDATE users SET avatar_object_key = $2, updated_at = now() WHERE id = $1", [review.owner_id, snapshot.avatarObjectKey || review.image_object_keys?.[0] || null]);
-    return;
-  }
-  if (review.target_type === "profileBackground") {
-    await client.query(
-      "UPDATE users SET background_object_key = $2, background_image_name = COALESCE($3, background_image_name), updated_at = now() WHERE id = $1",
-      [review.owner_id, snapshot.backgroundObjectKey || review.image_object_keys?.[0] || null, snapshot.backgroundImageName]
-    );
-  }
 }
 
 function moderationResponse(results) {

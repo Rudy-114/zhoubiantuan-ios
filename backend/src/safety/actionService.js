@@ -157,6 +157,10 @@ function validateCaseTarget(safetyCase, action) {
   if (safetyCase.subject_type !== action.targetType || safetyCase.subject_id !== action.targetId) {
     throw badRequest("安全操作目标必须与案件主体一致");
   }
+  if (action.actorType !== "admin" && (safetyCase.manual_hold ||
+      ["appealed", "resolved_no_action", "resolved_restored", "resolved_actioned"].includes(safetyCase.status))) {
+    throw conflict("人工处理中的案件不能执行自动安全操作", "manual_hold");
+  }
 }
 
 async function lockTarget(client, targetType, targetId) {
@@ -354,8 +358,9 @@ function optionalText(value, label, limit) {
   return requiredText(value, label, limit);
 }
 
-function conflict(message) {
+function conflict(message, apiCode) {
   const error = new Error(message);
   error.status = 409;
+  if (apiCode) error.apiCode = apiCode;
   return error;
 }
