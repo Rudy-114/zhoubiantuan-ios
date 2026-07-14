@@ -27,6 +27,16 @@ export async function signChallenge(identity, payload) {
   return bytesToBase64URL(new Uint8Array(signature));
 }
 
+export function canonicalChallengePayload({ challengeID, purpose, nonce, targetID = "" } = {}) {
+  const fields = [
+    challengeField(challengeID, 160, false),
+    challengeField(purpose, 40, false),
+    challengeField(nonce, 256, false),
+    challengeField(targetID, 160, true)
+  ];
+  return ["zbt-admin-v1", ...fields].join("\n");
+}
+
 async function loadOrCreateIdentity() {
   assertBrowserCrypto();
   const database = await openDatabase();
@@ -115,4 +125,13 @@ function bytesToBase64URL(bytes) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+}
+
+function challengeField(value, limit, optional) {
+  if (optional && value == null) return "";
+  if (typeof value !== "string" || (!optional && !value) ||
+      Array.from(value).length > limit || /[\r\n\u0000]/u.test(value)) {
+    throw new TypeError("挑战数据无效");
+  }
+  return value;
 }

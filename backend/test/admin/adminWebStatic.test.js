@@ -33,7 +33,14 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
     assert.match(css.headers.get("content-type") || "", /^text\/css/u);
 
     const sources = new Map();
-    for (const asset of ["deviceKeys.js", "api.js", "formatters.js"]) {
+    for (const asset of [
+      "deviceKeys.js",
+      "api.js",
+      "formatters.js",
+      "app.js",
+      "authViews.js",
+      "deviceViews.js"
+    ]) {
       const response = await fetch(`${baseUrl}/admin/${asset}`);
       assert.equal(response.status, 200, asset);
       assert.match(response.headers.get("content-type") || "", /javascript/u, asset);
@@ -44,6 +51,7 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
     assert.doesNotMatch(sources.get("deviceKeys.js"), /exportKey\([^)]*privateKey/u);
     assert.match(sources.get("api.js"), /credentials: "same-origin"/u);
     assert.doesNotMatch(sources.get("api.js"), /console\./u);
+    assert.doesNotMatch(sources.get("app.js"), /localStorage|sessionStorage|console\./u);
 
     const clientRoute = await fetch(`${baseUrl}/admin/cases/case-example`);
     assert.equal(clientRoute.status, 200);
