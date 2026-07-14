@@ -78,11 +78,12 @@ test("worker starts only after HTTP listen and AI-off case_received moves the ca
   await runtime.shutdown("test");
 });
 
-test("non-off case_received idempotently enqueues pending analyze_case without a provider handler", async () => {
+test("non-off runtime idempotently enqueues and handles analyze_case", async () => {
   let workerOptions;
   const jobs = new Map();
+  const analyses = [];
   const runtime = createRuntime({
-    safety: { enabled: true, aiMode: "shadow" },
+    safety: { enabled: true, aiMode: "enforce", autoActionsEnabled: true },
     startSafetyWorker(options) {
       workerOptions = options;
       return { stop: async () => {} };
@@ -90,22 +91,53 @@ test("non-off case_received idempotently enqueues pending analyze_case without a
     enqueueSafetyJob: async (_client, input) => {
       if (!jobs.has(input.uniqueKey)) jobs.set(input.uniqueKey, { ...input, status: "pending" });
       return jobs.get(input.uniqueKey);
+    },
+    analyzeSafetyCase: async (input) => {
+      analyses.push(input);
+      return { status: "completed", syncEvents: [] };
     }
   });
 
   await runtime.start({ port: 0, host: "127.0.0.1" });
-  await workerOptions.handlers.case_received({ case_id: "case-shadow" });
-  await workerOptions.handlers.case_received({ case_id: "case-shadow" });
-  assert.deepEqual([...jobs.values()], [{
-    type: "analyze_case",
-    caseId: "case-shadow",
-    uniqueKey: "analyze_case:case-shadow",
-    payload: {},
-    status: "pending"
-  }]);
-  assert.deepEqual(workerOptions.deferredJobTypes, ["analyze_case"]);
-  assert.equal(workerOptions.handlers.analyze_case, undefined);
+  const firstReceived = {
+    case_id: "case-shadow",
+    unique_key: "case_received:report-1",
+    payload: { reportID: "report-1" }
+  };
+  await workerOptions.handlers.case_received(firstReceived);
+  await workerOptions.handlers.case_received(firstReceived);
+  await workerOptions.handlers.case_received({
+    case_id: "case-shadow",
+    unique_key: "case_received:report-2",
+    payload: { reportID: "report-2" }
+  });
+  assert.deepEqual([...jobs.values()], [
+    {
+      type: "analyze_case",
+      caseId: "case-shadow",
+      uniqueKey: "analyze_case:report-1",
+      payload: {},
+      status: "pending"
+    },
+    {
+      type: "analyze_case",
+      caseId: "case-shadow",
+      uniqueKey: "analyze_case:report-2",
+      payload: {},
+      status: "pending"
+    }
+  ]);
+  assert.deepEqual(workerOptions.deferredJobTypes, []);
+  assert.equal(typeof workerOptions.handlers.analyze_case, "function");
   assert.equal(typeof workerOptions.handlers.review_revision, "function");
+  await workerOptions.handlers.analyze_case({ case_id: "case-shadow", payload: {} });
+  assert.deepEqual(analyses, [{
+    caseId: "case-shadow",
+    revisionId: null,
+    mode: "enforce",
+    aiConfig: undefined,
+    gatePassed: true
+  }]);
   await runtime.shutdown("test");
 });
 
@@ -170,6 +202,38 @@ test("review revision notifier failures are sanitized and do not fail durable re
     fields: { errorCode: "REVIEW_REVISION_NOTIFY_FAILED" }
   }]);
   assert.doesNotMatch(JSON.stringify(logs), /raw-notifier-secret|Bearer/);
+});
+
+test("review revision enqueues one revision analysis in the hard-safety transaction", async () => {
+  let committed = false;
+  const calls = [];
+  const handler = createReviewRevisionJobHandler({
+    aiMode: "shadow",
+    withTransaction: async (callback) => {
+      const result = await callback({ query: async () => ({}) });
+      committed = true;
+      return result;
+    },
+    reviewContentRevision: async () => ({
+      awaiting: "human_or_qwen",
+      syncEvents: []
+    }),
+    enqueueSafetyJob: async (_client, input) => {
+      calls.push({ committed, input });
+    },
+    notifySyncEvents: async () => {}
+  });
+
+  await handler({ case_id: "case-revision", payload: { revisionId: "revision-safe" } });
+  assert.deepEqual(calls, [{
+    committed: false,
+    input: {
+      type: "analyze_case",
+      caseId: "case-revision",
+      uniqueKey: "analyze_revision:revision-safe",
+      payload: { revisionId: "revision-safe" }
+    }
+  }]);
 });
 
 test("feature-on runtime wires review_revision through injected transaction and notifier", async () => {

@@ -33,6 +33,19 @@ export function evaluateSafetyPolicy(input = {}) {
     return manual("scope_expansion_rejected");
   }
   if (caseRecord.subject_type === "user") return manual("account_action_human_only");
+  if (input.hasValidRevision === true) {
+    const revisionSafe = qwenResult.category === caseRecord.category &&
+      qwenResult.riskLevel === "none" && qwenResult.recommendedAction === "no_action" &&
+      qwenResult.requiresHuman === false && qwenResult.evidence.length > 0 &&
+      isHardSafetyPass(input.hardSignal);
+    if (!revisionSafe) return manual("revision_requires_human");
+    return decision({
+      nextStatus: "manual_review",
+      proposedActions: [],
+      requiresHuman: false,
+      reasonCodes: ["revision_safe_to_publish"]
+    });
+  }
   if (caseRecord.category === "copyright_or_stolen_media") return manual("copyright_human_only");
 
   if (caseRecord.category === "invalid_contact") {
@@ -128,6 +141,13 @@ function isHighHardSignal(value) {
   const blocked = signal.outcome === "block" || signal.hasHighRisk === true ||
     signal.has_high_risk === true || summary.hasHighRisk === true || summary.has_high_risk === true;
   return highRisk && blocked;
+}
+
+function isHardSafetyPass(value) {
+  const signal = safeObject(value);
+  const hardSafety = safeObject(signal.hardSafety || signal.hard_safety);
+  return signal.outcome === "pass" && (signal.riskLevel === "none" || signal.risk_level === "none") &&
+    hardSafety.provider === "aliyun" && hardSafety.passed === true;
 }
 
 function validCaseRecord(value) {

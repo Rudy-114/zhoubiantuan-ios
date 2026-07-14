@@ -93,6 +93,7 @@ export async function submitSafetyReport(client, { reporterId, body } = {}) {
     contextEndMessageID: sourceEvidence.contextEndMessageId,
     retentionDeleteAt: sourceEvidence.retentionDeleteAt
   });
+  await advanceCaseEvidenceVersion(client, safetyCase.id);
   await createCaseEvent(client, {
     caseID: safetyCase.id,
     reporterID,
@@ -136,6 +137,9 @@ export async function supplementSafetyReport(client, { reportId, reporterId, bod
   if (report.status !== "pending" || TERMINAL_CASE_STATUSES.has(report.case_status)) {
     throw httpError(409, "举报已经结束，不能补充证据");
   }
+  if (!await lockOpenCaseByID(client, report.case_id)) {
+    throw httpError(409, "举报已经结束，不能补充证据");
+  }
 
   const objectKeys = assertOwnedObjectKeys(reporterID, input.objectKeys, ["report"]);
   await claimReportUploadsForAttachment(client, { ownerUserID: reporterID, objectKeys });
@@ -153,6 +157,7 @@ export async function supplementSafetyReport(client, { reportId, reporterId, bod
   });
   if (!inserted) return unchanged(report);
 
+  await advanceCaseEvidenceVersion(client, report.case_id);
   await client.query("UPDATE reports SET updated_at = now() WHERE id = $1", [report.id]);
   await createCaseEvent(client, {
     caseID: report.case_id,
@@ -204,6 +209,7 @@ async function addSourceSupplement(client, { report, reporterID, input, sourceEv
   });
   if (!inserted) return unchanged(report);
 
+  await advanceCaseEvidenceVersion(client, report.case_id);
   await client.query("UPDATE reports SET updated_at = now() WHERE id = $1", [report.id]);
   await createCaseEvent(client, {
     caseID: report.case_id,
@@ -263,6 +269,16 @@ async function lockOpenCaseByID(client, caseID) {
     [caseID]
   );
   return rows[0] || null;
+}
+
+async function advanceCaseEvidenceVersion(client, caseID) {
+  const result = await client.query(
+    `UPDATE safety_cases
+     SET updated_at = GREATEST(updated_at + interval '1 microsecond', clock_timestamp())
+     WHERE id = $1`,
+    [caseID]
+  );
+  if (result.rowCount !== 1) throw new Error("Safety case evidence version could not be advanced");
 }
 
 async function closeNonAggregatingPendingReports(client, reporterID, subject, reasonCode) {

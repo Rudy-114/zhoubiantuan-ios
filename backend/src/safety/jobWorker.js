@@ -1,20 +1,69 @@
-import { claimSafetyJobs, completeSafetyJob, failSafetyJob, releaseSafetyJob, sanitizeSafetyJobError } from "./jobQueue.js";
+import {
+  claimSafetyJobs,
+  completeSafetyJob,
+  enqueueSafetyJob,
+  failSafetyJob,
+  releaseSafetyJob,
+  sanitizeSafetyJobError
+} from "./jobQueue.js";
 import { logger } from "../logger.js";
+
+export function createAnalyzeCaseJobHandler({
+  analyzeSafetyCase,
+  notifySyncEvents,
+  eventLogger = logger
+} = {}) {
+  if (typeof analyzeSafetyCase !== "function") throw new TypeError("analyzeSafetyCase must be a function");
+  if (typeof notifySyncEvents !== "function") throw new TypeError("notifySyncEvents must be a function");
+  if (!eventLogger || typeof eventLogger.error !== "function") throw new TypeError("eventLogger must expose error");
+
+  return async function handleAnalyzeCaseJob(job) {
+    const caseId = requiredCaseId(job?.case_id);
+    const revisionId = optionalRevisionId(job?.payload?.revisionId);
+    const result = await analyzeSafetyCase({ caseId, revisionId });
+    if (result?.syncEvents?.length) {
+      try {
+        await notifySyncEvents(result.syncEvents);
+      } catch {
+        eventLogger.error("safety_worker.analyze_case_notify_failed", {
+          errorCode: "ANALYZE_CASE_NOTIFY_FAILED"
+        });
+      }
+    }
+    return result;
+  };
+}
 
 export function createReviewRevisionJobHandler({
   withTransaction,
   reviewContentRevision,
+  enqueueSafetyJob: enqueueJob = enqueueSafetyJob,
+  aiMode = "off",
   notifySyncEvents,
   eventLogger = logger
 } = {}) {
   if (typeof withTransaction !== "function") throw new TypeError("withTransaction must be a function");
   if (typeof reviewContentRevision !== "function") throw new TypeError("reviewContentRevision must be a function");
+  if (!["off", "shadow", "enforce"].includes(aiMode)) throw new TypeError("aiMode must be off, shadow, or enforce");
+  if (aiMode !== "off" && typeof enqueueJob !== "function") throw new TypeError("enqueueSafetyJob must be a function");
   if (typeof notifySyncEvents !== "function") throw new TypeError("notifySyncEvents must be a function");
   if (!eventLogger || typeof eventLogger.error !== "function") throw new TypeError("eventLogger must expose error");
 
   return async function handleReviewRevisionJob(job) {
     const revisionId = requiredRevisionId(job?.payload?.revisionId);
-    const result = await withTransaction((client) => reviewContentRevision(client, { revisionId }));
+    const result = await withTransaction(async (client) => {
+      const review = await reviewContentRevision(client, { revisionId });
+      if (aiMode !== "off" && review?.awaiting === "human_or_qwen") {
+        const caseId = requiredCaseId(job?.case_id);
+        await enqueueJob(client, {
+          type: "analyze_case",
+          caseId,
+          uniqueKey: `analyze_revision:${revisionId}`,
+          payload: { revisionId }
+        });
+      }
+      return review;
+    });
     if (result?.syncEvents?.length) {
       try {
         await notifySyncEvents(result.syncEvents);
@@ -139,6 +188,17 @@ function requiredRevisionId(value) {
     throw new TypeError("review_revision payload.revisionId must be a non-empty string of at most 160 characters");
   }
   return value.trim();
+}
+
+function requiredCaseId(value) {
+  if (typeof value !== "string" || !value.trim() || Array.from(value.trim()).length > 160) {
+    throw new TypeError("analyze_case case_id must be a non-empty string of at most 160 characters");
+  }
+  return value.trim();
+}
+
+function optionalRevisionId(value) {
+  return value == null ? null : requiredRevisionId(value);
 }
 
 function deferredTypes(value, handlers) {

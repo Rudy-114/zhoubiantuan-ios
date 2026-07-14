@@ -181,6 +181,36 @@ test("copyright reports always require human review and never declare automatic 
   assert.deepEqual(result, manual("copyright_human_only"));
 });
 
+test("accepts a corrected revision only after explicit Aliyun and Qwen safe passes", () => {
+  const input = baseInput({
+    caseRecord: caseRecord({ category: "copyright_or_stolen_media", status: "manual_review" }),
+    qwenResult: qwenResult({
+      category: "copyright_or_stolen_media",
+      riskLevel: "none",
+      confidence: 0.9,
+      recommendedAction: "no_action",
+      requiresHuman: false
+    }),
+    hardSignal: {
+      outcome: "pass",
+      riskLevel: "none",
+      hardSafety: { provider: "aliyun", passed: true }
+    },
+    hasValidRevision: true
+  });
+
+  assert.deepEqual(evaluateSafetyPolicy(input), {
+    nextStatus: "manual_review",
+    proposedActions: [],
+    requiresHuman: false,
+    reasonCodes: ["revision_safe_to_publish"]
+  });
+  assert.deepEqual(
+    evaluateSafetyPolicy({ ...input, hardSignal: { outcome: "pass", riskLevel: "none" } }),
+    manual("revision_requires_human")
+  );
+});
+
 test("appealed and manual-hold cases never produce automatic actions or restores", () => {
   for (const overrides of [{ status: "appealed" }, { manual_hold: true }]) {
     const result = evaluateSafetyPolicy(baseInput({ caseRecord: caseRecord(overrides) }));

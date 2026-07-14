@@ -3,6 +3,7 @@ import { validateQwenCaseResult } from "../schemas/qwenCaseResult.js";
 
 const FIXED_MODEL = "qwen3.7-plus-2026-05-26";
 const MAX_COMPLETION_TOKENS = 900;
+export const RAW_QWEN_CONTENT = Symbol("rawQwenContent");
 
 export class QwenCaseProvider {
   constructor({
@@ -76,14 +77,24 @@ export class QwenCaseProvider {
     const payload = await parseResponse(response);
     const rawContent = payload?.choices?.[0]?.message?.content;
     if (typeof rawContent !== "string" || !rawContent) {
-      throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: false });
+      throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: true });
+    }
+    const safeRequestId = requestId(response, payload);
+    let usage;
+    try {
+      usage = responseUsage(payload.usage);
+    } catch (error) {
+      throw withResponseContext(error, { rawContent, requestId: safeRequestId });
     }
 
     let candidate;
     try {
       candidate = JSON.parse(rawContent);
     } catch {
-      throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: false });
+      throw withResponseContext(
+        providerError("qwen_invalid_response", { retryable: false, billingUncertain: true }),
+        { rawContent, usage, requestId: safeRequestId }
+      );
     }
 
     let result;
@@ -92,16 +103,16 @@ export class QwenCaseProvider {
     } catch (error) {
       if (error?.code === "invalid_ai_result") {
         error.retryable = false;
-        error.billingUncertain = false;
-        throw error;
+        error.billingUncertain = true;
+        throw withResponseContext(error, { rawContent, usage, requestId: safeRequestId });
       }
-      throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: false });
+      throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: true });
     }
 
     return {
       result,
-      usage: normalizeUsage(payload.usage),
-      requestId: requestId(response, payload),
+      usage,
+      requestId: safeRequestId,
       rawContent
     };
   }
@@ -124,11 +135,11 @@ async function parseResponse(response) {
   try {
     return await response.json();
   } catch {
-    throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: false });
+    throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: true });
   }
 }
 
-function normalizeUsage(value) {
+function responseUsage(value) {
   const inputTokens = safeTokenCount(value?.prompt_tokens);
   const outputTokens = safeTokenCount(value?.completion_tokens);
   const totalTokens = value?.total_tokens == null
@@ -137,9 +148,21 @@ function normalizeUsage(value) {
   return { inputTokens, outputTokens, totalTokens };
 }
 
+function withResponseContext(error, { rawContent, usage, requestId }) {
+  if (usage !== undefined) error.usage = usage;
+  error.requestId = requestId;
+  Object.defineProperty(error, RAW_QWEN_CONTENT, {
+    value: rawContent,
+    enumerable: false,
+    configurable: false,
+    writable: false
+  });
+  return error;
+}
+
 function safeTokenCount(value) {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: false });
+    throw providerError("qwen_invalid_response", { retryable: false, billingUncertain: true });
   }
   return value;
 }

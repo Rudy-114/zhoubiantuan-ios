@@ -8,8 +8,9 @@ import { logger } from "./logger.js";
 import { deleteObject } from "./oss.js";
 import { startRateLimitEventPruner } from "./rateLimit.js";
 import { attachRealtime, notifySyncEvents } from "./realtime.js";
+import { analyzeSafetyCase } from "./safety/aiService.js";
 import { enqueueSafetyJob } from "./safety/jobQueue.js";
-import { createReviewRevisionJobHandler, startSafetyWorker } from "./safety/jobWorker.js";
+import { createAnalyzeCaseJobHandler, createReviewRevisionJobHandler, startSafetyWorker } from "./safety/jobWorker.js";
 import { cleanupRegisteredReportUpload, reportUploadKeyFromJob } from "./safety/reportUploadCleanup.js";
 import { reviewContentRevision } from "./safety/revisionService.js";
 import { startSyncEventPruner } from "./sync.js";
@@ -26,6 +27,7 @@ export function createSafetyServerRuntime({
   startSafetyWorker: startWorker = startSafetyWorker,
   withTransaction: transaction = withTransaction,
   enqueueSafetyJob: enqueueJob = enqueueSafetyJob,
+  analyzeSafetyCase: analyzeCase = analyzeSafetyCase,
   reviewContentRevision: reviewRevision = reviewContentRevision,
   notifySyncEvents: notifyEvents = notifySyncEvents,
   cleanupReportUpload: cleanupUpload = cleanupRegisteredReportUpload,
@@ -77,9 +79,25 @@ export function createSafetyServerRuntime({
           handlers.review_revision = createReviewRevisionJobHandler({
             withTransaction: transaction,
             reviewContentRevision: reviewRevision,
+            enqueueSafetyJob: enqueueJob,
+            aiMode: runtimeConfig.safety.aiMode,
             notifySyncEvents: notifyEvents,
             eventLogger
           });
+          if (runtimeConfig.safety.aiMode !== "off") {
+            handlers.analyze_case = createAnalyzeCaseJobHandler({
+              analyzeSafetyCase: ({ caseId, revisionId }) => analyzeCase({
+                caseId,
+                revisionId,
+                mode: runtimeConfig.safety.aiMode,
+                aiConfig: runtimeConfig.safetyAi,
+                gatePassed: runtimeConfig.safety.autoActionsEnabled === true
+              }),
+              notifySyncEvents: notifyEvents,
+              eventLogger
+            });
+            deferredJobTypes.splice(deferredJobTypes.indexOf("analyze_case"), 1);
+          }
         } else {
           deferredJobTypes.push("review_revision");
           deferredJobTypes.push("case_received");
@@ -161,7 +179,7 @@ export function createSafetyServerRuntime({
       await enqueueJob(client, {
         type: "analyze_case",
         caseId: job.case_id,
-        uniqueKey: `analyze_case:${job.case_id}`,
+        uniqueKey: analysisUniqueKey(job),
         payload: {}
       });
     });
@@ -191,6 +209,15 @@ export function createSafetyServerRuntime({
       }
     });
   }
+}
+
+function analysisUniqueKey(job) {
+  const reportId = job?.payload?.reportID;
+  if (typeof reportId !== "string" || !reportId.trim() || Array.from(reportId.trim()).length > 160 ||
+      /[\u0000-\u001F\u007F]/u.test(reportId)) {
+    throw new Error("Safety case_received report ID is required");
+  }
+  return `analyze_case:${reportId.trim()}`;
 }
 
 function cleanupStep(callback) {
