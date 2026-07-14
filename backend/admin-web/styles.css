@@ -745,6 +745,10 @@ button:disabled {
   animation: inspector-in var(--motion-fast) ease-out;
 }
 
+.mobile-inspector-page-title {
+  display: none;
+}
+
 @keyframes inspector-in {
   from { opacity: 0; transform: translateX(10px); }
   to { opacity: 1; transform: translateX(0); }
@@ -1224,6 +1228,19 @@ button:disabled {
     overflow: visible;
     padding: 20px 12px 64px;
     border-left: 0;
+  }
+
+  .mobile-inspector-page-title {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .decision-controls {

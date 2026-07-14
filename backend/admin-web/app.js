@@ -438,9 +438,35 @@ function render({ focusHeading = false } = {}) {
         render();
       }
     }, { once: true });
+    dialog.addEventListener("keydown", trapDialogFocus);
     dialog.showModal();
   }
-  if (focusHeading) queueMicrotask(() => view.querySelector("h1")?.focus());
+  if (focusHeading) {
+    queueMicrotask(() => [
+      view.querySelector(".mobile-inspector-page-title"),
+      view.querySelector(".case-inspector h2"),
+      ...view.querySelectorAll("h1")
+    ].find((heading) => heading?.getClientRects().length > 0)?.focus());
+  }
+}
+
+function trapDialogFocus(event) {
+  if (event.key !== "Tab") return;
+  const dialog = event.currentTarget;
+  const focusable = [...dialog.querySelectorAll(
+    "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])"
+  )].filter((element) => element.getClientRects().length > 0);
+  if (!focusable.length) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const activeIndex = focusable.indexOf(document.activeElement);
+  const shouldWrapBackward = event.shiftKey && activeIndex <= 0;
+  const shouldWrapForward = !event.shiftKey && (activeIndex < 0 || activeIndex === focusable.length - 1);
+  if (!shouldWrapBackward && !shouldWrapForward) return;
+  event.preventDefault();
+  (shouldWrapBackward ? focusable.at(-1) : focusable[0]).focus();
 }
 
 function safeMessage(error, fallback = "管理员服务暂时不可用。") {

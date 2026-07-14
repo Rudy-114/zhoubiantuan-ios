@@ -173,6 +173,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     active: false,
     route: WorkspaceRoute.OVERVIEW,
     selectedCaseID: "",
+    caseReturnRoute: restoredCaseReturnRoute(globalThis.history?.state?.workspaceCaseReturnRoute),
     filters: restoredFilters(globalThis.history?.state?.workspaceFilters),
     search: "",
     cases: [],
@@ -194,7 +195,8 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     listSequence: 0,
     detailSequence: 0,
     auditSequence: 0,
-    moderationSequence: 0
+    moderationSequence: 0,
+    countsSequence: 0
   };
 
   return {
@@ -205,7 +207,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     handleSubmit,
     handlePopState,
     closeDialog,
-    getTitle: () => `${routeTitle(state.route)} · 周边团安全后台`,
+    getTitle: () => `${routeTitle(displayRoute())} · 周边团安全后台`,
     getState: () => state
   };
 
@@ -215,6 +217,9 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     state.active = true;
     state.route = parsed.route;
     state.selectedCaseID = parsed.caseID;
+    state.caseReturnRoute = parsed.caseID
+      ? restoredCaseReturnRoute(globalThis.history?.state?.workspaceCaseReturnRoute)
+      : "";
     if (routeChanged || (!state.cases.length && !state.loading)) await loadRoute({ reset: true });
   }
 
@@ -222,6 +227,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     state.active = false;
     state.dialog = null;
     state.detail = null;
+    state.caseReturnRoute = "";
     state.revealMap = new Map();
     state.cases = [];
     state.counts = emptyCounts();
@@ -233,6 +239,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     state.detailSequence += 1;
     state.auditSequence += 1;
     state.moderationSequence += 1;
+    state.countsSequence += 1;
   }
 
   function renderView({ session, devices = [], requests = [], deviceDialog = null,
@@ -365,6 +372,9 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     const parsed = parseWorkspaceRoute(globalThis.location?.pathname);
     state.route = parsed.route;
     state.selectedCaseID = parsed.caseID;
+    state.caseReturnRoute = parsed.caseID
+      ? restoredCaseReturnRoute(globalThis.history?.state?.workspaceCaseReturnRoute)
+      : "";
     state.filters = restoredFilters(globalThis.history?.state?.workspaceFilters);
     state.dialog = null;
     state.mobileNavOpen = false;
@@ -382,6 +392,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     if (!Object.values(WorkspaceRoute).includes(route)) return;
     state.route = route;
     state.selectedCaseID = "";
+    state.caseReturnRoute = "";
     state.detail = null;
     state.revealMap = new Map();
     state.dialog = null;
@@ -392,7 +403,8 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     }
     globalThis.history?.pushState?.({
       ...(globalThis.history.state || {}),
-      workspaceFilters: state.filters
+      workspaceFilters: state.filters,
+      workspaceCaseReturnRoute: null
     }, "", workspacePath(route));
     await loadRoute({ reset: true });
   }
@@ -400,13 +412,19 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
   async function loadRoute({ reset }) {
     state.notice = "";
     state.error = "";
-    if (state.route === WorkspaceRoute.MODERATION) return loadModeration();
-    if (state.route === WorkspaceRoute.AUDIT) return loadAudit({ reset: true });
+    if (state.route === WorkspaceRoute.MODERATION) {
+      await Promise.all([loadWorkloadCounts(), loadModeration()]);
+      return;
+    }
+    if (state.route === WorkspaceRoute.AUDIT) {
+      await Promise.all([loadWorkloadCounts(), loadAudit({ reset: true })]);
+      return;
+    }
     if (state.route === WorkspaceRoute.DEVICES) {
       state.loading = true;
       requestRender();
       try {
-        await onLoadDevices?.();
+        await Promise.all([loadWorkloadCounts(), onLoadDevices?.()]);
       } catch (error) {
         state.error = messageFor(error, "设备列表加载失败。");
       } finally {
@@ -420,6 +438,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
   }
 
   async function loadCases({ reset = true } = {}) {
+    state.countsSequence += 1;
     const sequence = ++state.listSequence;
     const filters = filtersForRoute();
     const cursor = reset ? "" : state.nextCursor || "";
@@ -431,7 +450,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     try {
       const query = serializeCaseFilters(filters, {
         cursor,
-        limit: state.route === WorkspaceRoute.OVERVIEW ? 12 : 50
+        limit: displayRoute() === WorkspaceRoute.OVERVIEW ? 12 : 50
       });
       const payload = await api(`/admin/api/cases?${query}`);
       if (!isLatestRequest(state.listSequence, sequence)) return;
@@ -450,29 +469,54 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     }
   }
 
+  async function loadWorkloadCounts() {
+    const sequence = ++state.countsSequence;
+    try {
+      const payload = await api(`/admin/api/cases?${serializeCaseFilters({}, { limit: 1 })}`);
+      if (isLatestRequest(state.countsSequence, sequence)) {
+        state.counts = { ...emptyCounts(), ...(payload.counts || {}) };
+      }
+    } catch (error) {
+      if (isLatestRequest(state.countsSequence, sequence)) {
+        state.error = messageFor(error, "实时工作量加载失败。");
+      }
+    } finally {
+      if (isLatestRequest(state.countsSequence, sequence)) requestRender();
+    }
+  }
+
   async function openCase(caseID) {
     if (typeof caseID !== "string" || !caseID) return;
+    const returnRoute = state.selectedCaseID && state.caseReturnRoute
+      ? state.caseReturnRoute
+      : state.route;
     state.route = WorkspaceRoute.CASES;
     state.selectedCaseID = caseID;
+    state.caseReturnRoute = returnRoute;
     state.dialog = null;
     state.detail = state.detail?.id === caseID ? state.detail : null;
     globalThis.history?.pushState?.({
       ...(globalThis.history.state || {}),
-      workspaceFilters: state.filters
+      workspaceFilters: state.filters,
+      workspaceCaseReturnRoute: returnRoute
     }, "", workspacePath(WorkspaceRoute.CASES, caseID));
     requestRender();
     await loadCaseDetail(caseID);
   }
 
   function closeCase() {
+    const returnRoute = state.caseReturnRoute || WorkspaceRoute.CASES;
+    state.route = returnRoute;
     state.selectedCaseID = "";
+    state.caseReturnRoute = "";
     state.detail = null;
     state.dialog = null;
     state.revealMap = new Map();
     globalThis.history?.pushState?.({
       ...(globalThis.history.state || {}),
-      workspaceFilters: state.filters
-    }, "", workspacePath(WorkspaceRoute.CASES));
+      workspaceFilters: state.filters,
+      workspaceCaseReturnRoute: null
+    }, "", workspacePath(returnRoute));
     requestRender({ focusHeading: true });
   }
 
@@ -493,7 +537,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     } finally {
       if (isLatestRequest(state.detailSequence, sequence)) {
         state.loading = false;
-        requestRender();
+        requestRender({ focusHeading: true });
       }
     }
   }
@@ -636,14 +680,19 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
   }
 
   function filtersForRoute() {
+    const route = displayRoute();
     const base = { ...state.filters };
     delete base.status;
-    if (state.route === WorkspaceRoute.CORRECTIONS) return { ...base, status: "awaiting_correction", sort: "deadline" };
-    if (state.route === WorkspaceRoute.APPEALS) return { ...base, status: "appealed", sort: "oldest" };
-    if (state.route === WorkspaceRoute.AUTOMATIC) return { ...base, status: "resolved_actioned", sort: "newest" };
-    if (state.route === WorkspaceRoute.USER_RISK) return { ...base, status: "resolved_actioned", sort: "newest" };
-    if (state.route === WorkspaceRoute.OVERVIEW || state.route === WorkspaceRoute.AI_HEALTH) return { sort: "urgent" };
+    if (route === WorkspaceRoute.CORRECTIONS) return { ...base, status: "awaiting_correction", sort: "deadline" };
+    if (route === WorkspaceRoute.APPEALS) return { ...base, status: "appealed", sort: "oldest" };
+    if (route === WorkspaceRoute.AUTOMATIC) return { ...base, status: "resolved_actioned", sort: "newest" };
+    if (route === WorkspaceRoute.USER_RISK) return { ...base, status: "resolved_actioned", sort: "newest" };
+    if (route === WorkspaceRoute.OVERVIEW || route === WorkspaceRoute.AI_HEALTH) return { sort: "urgent" };
     return state.filters;
+  }
+
+  function displayRoute() {
+    return state.selectedCaseID && state.caseReturnRoute ? state.caseReturnRoute : state.route;
   }
 
   function reconcileCase(detail) {
@@ -691,12 +740,12 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     if (state.route === WorkspaceRoute.OVERVIEW) {
       return overviewView(state.cases, state.counts, state.loading);
     }
-    const copy = routeCopy(state.route);
+    const copy = routeCopy(displayRoute());
     return renderCaseWorkspace({
       ...copy,
       cases: state.cases,
       counts: state.counts,
-      filters: state.route === WorkspaceRoute.CASES ? state.filters : filtersForRoute(),
+      filters: displayRoute() === WorkspaceRoute.CASES ? state.filters : filtersForRoute(),
       search: state.search,
       nextCursor: state.nextCursor,
       detail: state.detail,
@@ -722,7 +771,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     for (const [route, label] of NAV_ITEMS) {
       const button = actionButton(label, "workspace-route", "nav-button");
       button.dataset.route = route;
-      if (route === state.route) button.setAttribute("aria-current", "page");
+      if (route === displayRoute()) button.setAttribute("aria-current", "page");
       nav.append(button);
     }
     const identity = element("p", "sidebar-identity");
@@ -862,6 +911,19 @@ function normalizeFilters(values) {
 
 function restoredFilters(value) {
   return normalizeFilters(value && typeof value === "object" && !Array.isArray(value) ? value : {});
+}
+
+function restoredCaseReturnRoute(value) {
+  const allowed = new Set([
+    WorkspaceRoute.OVERVIEW,
+    WorkspaceRoute.CASES,
+    WorkspaceRoute.AUTOMATIC,
+    WorkspaceRoute.CORRECTIONS,
+    WorkspaceRoute.APPEALS,
+    WorkspaceRoute.USER_RISK,
+    WorkspaceRoute.AI_HEALTH
+  ]);
+  return typeof value === "string" && allowed.has(value) ? value : "";
 }
 
 function safeHistoryFilters(value) {

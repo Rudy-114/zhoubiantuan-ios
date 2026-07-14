@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   caseMatchesSearch,
+  createWorkspaceController,
   dueLabel,
   isLatestRequest,
   parseWorkspaceRoute,
   revealedEvidence,
-  serializeCaseFilters
+  serializeCaseFilters,
+  WorkspaceRoute
 } from "../../admin-web/workspace.js";
 import { riskLabel, statusLabel } from "../../admin-web/formatters.js";
+import { availableCaseDecisions } from "../../admin-web/caseViews.js";
 
 test("serializes only supported case filters and appends an opaque cursor", () => {
   assert.equal(
@@ -70,4 +73,74 @@ test("never exposes raw evidence before an audited reveal response is present", 
     revealed: reveal.evidence,
     accessReason: reveal.reason
   });
+});
+
+test("loads workload counts when a non-case workspace route is opened directly", async () => {
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/admin/devices" }
+  });
+  let deviceLoads = 0;
+  const controller = createWorkspaceController({
+    api: async (path) => {
+      assert.equal(path, "/admin/api/cases?sort=urgent&limit=1");
+      return { cases: [], counts: { manual_review: 3, appealed: 2 }, nextCursor: null };
+    },
+    onRender: () => {},
+    onLoadDevices: async () => { deviceLoads += 1; }
+  });
+  try {
+    await controller.activate();
+    assert.equal(deviceLoads, 1);
+    assert.equal(controller.getState().counts.manual_review, 3);
+    assert.equal(controller.getState().counts.appealed, 2);
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+  }
+});
+
+test("offers only appeal settlement and independent account controls for an appealed case", () => {
+  assert.deepEqual(availableCaseDecisions({
+    status: "appealed",
+    subjectType: "post",
+    subjectOwnerID: "owner-1",
+    actions: [{ type: "hide_post", status: "applied", targetType: "post" }],
+    revisions: [{ status: "approved" }]
+  }), ["uphold_appeal", "overturn_appeal", "restrict_user"]);
+});
+
+test("keeps the originating specialized queue when a case inspector opens and closes", async () => {
+  const originalLocation = globalThis.location;
+  const originalHistory = globalThis.history;
+  const location = { pathname: "/admin/appeals" };
+  const history = {
+    state: {},
+    pushState(nextState, _title, url) {
+      this.state = nextState;
+      location.pathname = url;
+    }
+  };
+  Object.defineProperty(globalThis, "location", { configurable: true, value: location });
+  Object.defineProperty(globalThis, "history", { configurable: true, value: history });
+  const controller = createWorkspaceController({
+    api: async (path) => path.includes("/case-appeal")
+      ? { case: { id: "case-appeal" } }
+      : { cases: [{ id: "case-appeal" }], counts: {}, nextCursor: null },
+    onRender: () => {}
+  });
+  try {
+    await controller.activate();
+    controller.handleClick({ dataset: { action: "open-case", caseId: "case-appeal" } });
+    assert.equal(controller.getState().caseReturnRoute, WorkspaceRoute.APPEALS);
+    assert.equal(history.state.workspaceCaseReturnRoute, WorkspaceRoute.APPEALS);
+    controller.handleClick({ dataset: { action: "close-case" } });
+    assert.equal(location.pathname, "/admin/appeals");
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+    if (originalHistory === undefined) delete globalThis.history;
+    else Object.defineProperty(globalThis, "history", { configurable: true, value: originalHistory });
+  }
 });

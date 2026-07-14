@@ -152,6 +152,9 @@ export function renderCaseInspector({
   }
 
   const header = element("header", "inspector-header");
+  const mobilePageHeading = element("h1", "mobile-inspector-page-title");
+  mobilePageHeading.tabIndex = -1;
+  mobilePageHeading.textContent = "案件详情";
   const eyebrow = element("p", `risk-text risk-${detail.riskLevel}`);
   eyebrow.textContent = `${riskLabel(detail.riskLevel)}风险 · ${statusLabel(detail.status)}`;
   const heading = element("h2");
@@ -159,7 +162,7 @@ export function renderCaseInspector({
   heading.textContent = detail.subjectTitle;
   const identifier = element("p", "muted tabular");
   identifier.textContent = `${subjectLabel(detail.subjectType)} · ${detail.id}`;
-  header.append(eyebrow, heading, identifier);
+  header.append(mobilePageHeading, eyebrow, heading, identifier);
   inspector.append(header);
 
   inspector.append(detailSection("案件概况", summaryList([
@@ -388,16 +391,8 @@ function decisionDialog(detail, decision, busy) {
 
 function decisionControls(detail, busy) {
   const controls = element("div", "decision-controls");
-  const decisions = detail.status === "appealed"
-    ? ["uphold_appeal", "overturn_appeal"]
-    : ["no_action", "temporary_hide"];
-  if (["post", "collection"].includes(detail.subjectType)) {
-    decisions.push("request_correction", "permanent_remove");
-    if (detail.revisions?.some((revision) => revision.status === "approved")) decisions.push("approve_revision");
-    if (detail.actions?.some((action) => action.status === "applied")) decisions.push("restore");
-  }
-  if (detail.subjectOwnerID) decisions.push(isUserRestricted(detail) ? "restore_user" : "restrict_user");
-  for (const decision of [...new Set(decisions)]) {
+  const decisions = availableCaseDecisions(detail);
+  for (const decision of decisions) {
     const button = actionButton(DECISION_LABELS[decision], "open-case-decision",
       DESTRUCTIVE_DECISIONS.has(decision) ? "secondary-button danger-button" : "secondary-button");
     button.dataset.decision = decision;
@@ -405,6 +400,19 @@ function decisionControls(detail, busy) {
     controls.append(button);
   }
   return controls;
+}
+
+export function availableCaseDecisions(detail = {}) {
+  const decisions = detail.status === "appealed"
+    ? ["uphold_appeal", "overturn_appeal"]
+    : ["no_action", "temporary_hide"];
+  if (detail.status !== "appealed" && ["post", "collection"].includes(detail.subjectType)) {
+    decisions.push("request_correction", "permanent_remove");
+    if (detail.revisions?.some((revision) => revision.status === "approved")) decisions.push("approve_revision");
+    if (detail.actions?.some((action) => action.status === "applied")) decisions.push("restore");
+  }
+  if (detail.subjectOwnerID) decisions.push(isUserRestricted(detail) ? "restore_user" : "restrict_user");
+  return [...new Set(decisions)];
 }
 
 function isUserRestricted(detail) {
