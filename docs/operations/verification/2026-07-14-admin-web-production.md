@@ -126,3 +126,41 @@ continue. To roll back only the device-revocation runtime, restore
 `/opt/zbt-backend.pre-revoke-20260714-140122` and restart the service. The
 additive challenge-purpose constraint may safely remain because earlier code
 does not use the added value.
+
+## Consumer Admin Retirement Verification
+
+Before removing the legacy consumer authorization path, the production root
+device exercised every publication-review action through the isolated web
+console. The temporary data consisted only of one `.invalid` synthetic user,
+five synthetic posts, and five synthetic moderation reviews with a dedicated
+Stage 6 Task 7 prefix.
+
+| Web action | Review status | Synthetic post status |
+| --- | --- | --- |
+| Approve | `active` | `active` |
+| Reject | `rejected` | `rejected` |
+| Hide | `hidden` | `hidden` |
+| Remove | `removed` | `removed` |
+| Ignore signal | `ignored` | unchanged at `review` |
+
+All five records had a handled timestamp and the expected synthetic reason.
+The administrator audit page displayed five `moderation.review_decided`
+events with five distinct synthetic subjects. After verification, the
+synthetic user, posts, and moderation reviews were deleted transactionally;
+the five administrator audit events were retained, the three pre-existing
+pending reviews remained unchanged, and the temporary database tunnel was
+closed.
+
+Commit `b229b95` then removed the consumer iOS admin route and prototype views,
+the consumer moderation list/decision endpoints, and the `ADMIN_EMAILS`
+authorization contract. The isolated `/admin/api/moderation-reviews` API and
+web console remain available. Verification passed as follows:
+
+- Node tests: 92/92.
+- PostgreSQL integration tests: 195/195. The legacy consumer GET and POST
+  endpoints return HTTP 404 while the administrator API continues to pass.
+- Swift package tests: 27/27.
+- iPhone 17 Pro Debug simulator build: `BUILD SUCCEEDED`.
+- Hidden-file reference scan and `git diff --check`: clean.
+- Standards review: PASS with no P1/P2.
+- Specification review: PASS after removing the stale `ADMIN_EMAILS` example.
