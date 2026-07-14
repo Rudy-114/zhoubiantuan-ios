@@ -780,6 +780,7 @@ test("keeps reports open when an overturned appeal returns to an earlier correct
 test("fails evidence proxy requests safely for upstream errors, timeouts, and interrupted streams", async () => {
   let mode = "missing";
   const app = createApp({
+    adminWebEnabled: true,
     adminCaseRouterOptions: {
       evidenceTimeoutMs: 25,
       signObjectURL: () => "https://evidence.invalid/object",
@@ -840,6 +841,7 @@ test("fails evidence proxy requests safely for upstream errors, timeouts, and in
 test("keeps a committed admin decision successful when realtime notification fails", async () => {
   const logged = [];
   const app = createApp({
+    adminWebEnabled: true,
     adminCaseRouterOptions: {
       notifyEvents: async () => { throw new Error("synthetic notifier failure"); },
       eventLogger: { error: async (event, fields) => logged.push({ event, fields }) }
@@ -1093,7 +1095,7 @@ function assertNoKeys(value, forbidden) {
   for (const key of forbidden) assert.equal(serialized.includes(key), false, key);
 }
 
-async function withServer(callback, app = createApp()) {
+async function withServer(callback, app = createApp({ adminWebEnabled: true })) {
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);

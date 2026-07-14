@@ -49,7 +49,7 @@ test("admin API stays same-origin, no-store, size-bounded, and isolated from con
 });
 
 async function withServer(callback) {
-  const server = createApp().listen(0, "127.0.0.1");
+  const server = createApp({ adminWebEnabled: true }).listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);
     server.once("error", reject);

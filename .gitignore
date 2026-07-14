@@ -28,6 +28,12 @@ backend/node_modules/
 backend/.env
 backend/.npm-cache/
 
+# Disposable browser verification state
+.playwright/
+.playwright-cli/
+playwright-report/
+test-results/
+
 # Local secrets for backend/cloud credentials
 .project-secrets/
 

@@ -6,32 +6,46 @@ import morgan from "morgan";
 import { createAdminAuthRouter } from "./admin/authRoutes.js";
 import { createAdminCaseRouter } from "./admin/caseRoutes.js";
 import { createAdminModerationRouter } from "./admin/moderationRoutes.js";
+import { createAdminWebRouter } from "./admin/webRoutes.js";
+import { config } from "./config.js";
 import { PRIVACY_POLICY_PATHS, servePrivacyPolicy } from "./legal.js";
 import { logger } from "./logger.js";
 import { createRouter } from "./routes.js";
 
-export function createApp({ adminCaseRouterOptions } = {}) {
+export function createApp({
+  adminCaseRouterOptions,
+  adminWebEnabled = config.admin.webEnabled
+} = {}) {
   const app = express();
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   app.use(helmet());
   app.use(compression({ threshold: 1024 }));
   app.use(morgan("tiny"));
-  app.use(
-    "/admin/api",
-    (_req, res, next) => {
-      res.setHeader("Cache-Control", "no-store");
-      next();
-    },
-    express.json({ limit: "256kb" }),
-    createAdminAuthRouter(),
-    createAdminCaseRouter(adminCaseRouterOptions),
-    createAdminModerationRouter(),
-    (req, res) => res.status(404).json({
-      error: `No admin route for ${req.method} ${req.path}`,
-      code: "admin_route_not_found"
-    })
-  );
+  const noStore = (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  };
+  if (adminWebEnabled) {
+    app.use(
+      "/admin/api",
+      noStore,
+      express.json({ limit: "256kb" }),
+      createAdminAuthRouter(),
+      createAdminCaseRouter(adminCaseRouterOptions),
+      createAdminModerationRouter(),
+      (req, res) => res.status(404).json({
+        error: `No admin route for ${req.method} ${req.path}`,
+        code: "admin_route_not_found"
+      })
+    );
+  } else {
+    app.use("/admin/api", noStore, (_req, res) => res.status(404).json({
+      error: "管理员服务未启用",
+      code: "admin_disabled"
+    }));
+  }
+  app.use(createAdminWebRouter({ enabled: adminWebEnabled }));
   app.use(cors());
   app.use(express.json({ limit: "2mb" }));
   app.get(PRIVACY_POLICY_PATHS, servePrivacyPolicy);

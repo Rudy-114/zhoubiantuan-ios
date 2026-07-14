@@ -102,6 +102,7 @@ export const config = {
     contentRevisionBurstMaxMinute: positiveFiniteInteger("SAFETY_CONTENT_REVISION_BURST_MAX_MINUTE", 5)
   },
   admin: {
+    webEnabled: String(process.env.ADMIN_WEB_ENABLED || "false").toLowerCase() === "true",
     sessionCookieName: "zbt_admin_session",
     csrfCookieName: "zbt_admin_csrf",
     cookieSecure: nodeEnv === "production"
