@@ -30,7 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$PG_BINDIR/initdb" -D "$root/data" --auth=trust --no-locale >/dev/null
+"$PG_BINDIR/initdb" -D "$root/data" --auth=trust --no-locale \
+  --set max_connections=20 --set shared_buffers=16MB >/dev/null
 "$PG_BINDIR/pg_ctl" -D "$root/data" -o "-h 127.0.0.1 -p $port" -w start >/dev/null
 cluster_started=true
 "$PG_BINDIR/createdb" -h 127.0.0.1 -p "$port" "$database"
