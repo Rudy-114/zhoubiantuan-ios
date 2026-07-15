@@ -493,7 +493,7 @@ git commit -m "Add safety AI health and evaluation UI"
 **Interfaces:**
 - Script requires `--confirm-spend` and uses synthetic content only.
 
-- [ ] **Step 1: Implement a spend-guarded validation script**
+- [x] **Step 1: Implement a spend-guarded validation script**
 
 The script exits before loading provider when `--confirm-spend` is absent. With confirmation it builds one synthetic invalid-contact case, reserves against the configured budget, invokes fixed Qwen once, validates schema, prints only model, request ID, token counts, estimated cost, and pass/fail, then deletes or marks the synthetic run. It prints no key, prompt, evidence, or raw response.
 
