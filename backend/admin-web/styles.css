@@ -589,6 +589,11 @@ button:disabled {
   margin: var(--space-2) 0 0;
 }
 
+.content-heading > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .queue-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -623,7 +628,8 @@ button:disabled {
 }
 
 .case-table,
-.audit-table {
+.audit-table,
+.ai-progress-table {
   width: 100%;
   border-collapse: collapse;
   background: transparent;
@@ -632,7 +638,9 @@ button:disabled {
 .case-table th,
 .case-table td,
 .audit-table th,
-.audit-table td {
+.audit-table td,
+.ai-progress-table th,
+.ai-progress-table td {
   padding: 11px 10px;
   border-bottom: 1px solid var(--divider);
   text-align: left;
@@ -640,7 +648,8 @@ button:disabled {
 }
 
 .case-table th,
-.audit-table th {
+.audit-table th,
+.ai-progress-table th {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -928,41 +937,32 @@ button:disabled {
   margin: 2px 0 0;
 }
 
-.overview-brief,
-.health-summary {
+.overview-brief {
   display: flex;
   margin: 0 0 var(--space-6);
   border-top: 1px solid var(--divider);
   border-bottom: 1px solid var(--divider);
 }
 
-.overview-brief > div,
-.health-summary > div {
+.overview-brief > div {
   min-width: 150px;
   flex: 1;
   padding: var(--space-4);
   border-right: 1px solid var(--divider);
 }
 
-.overview-brief > div:last-child,
-.health-summary > div:last-child {
+.overview-brief > div:last-child {
   border-right: 0;
 }
 
-.overview-brief dt,
-.health-summary dt {
+.overview-brief dt {
   color: var(--muted);
 }
 
-.overview-brief dd,
-.health-summary dd {
+.overview-brief dd {
   margin: var(--space-1) 0;
   font-size: 28px;
   font-weight: 750;
-}
-
-.health-summary span {
-  display: block;
 }
 
 .overview-panel > h2 {
@@ -1037,6 +1037,158 @@ button:disabled {
   border-left: 3px solid var(--warning);
   background: var(--surface);
   color: var(--muted);
+}
+
+.ai-health-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 var(--space-6);
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.ai-health-summary > div {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-right: 1px solid var(--divider);
+}
+
+.ai-health-summary > div:nth-child(-n + 4) {
+  border-bottom: 1px solid var(--divider);
+}
+
+.ai-health-summary > div:nth-child(4n) {
+  border-right: 0;
+}
+
+.ai-health-summary dt,
+.ai-summary-list dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ai-health-summary dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.section-heading {
+  margin: 0 0 var(--space-3);
+}
+
+.ai-progress-table tbody tr:hover td {
+  background: var(--surface-muted);
+}
+
+.health-state {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.health-state-attention {
+  color: var(--danger);
+}
+
+.ai-comparison-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+
+.ai-comparison-column {
+  min-width: 0;
+  padding: var(--space-4) 0;
+}
+
+.ai-comparison-column:first-child {
+  padding-right: var(--space-4);
+  border-right: 1px solid var(--divider);
+}
+
+.ai-comparison-column:last-child {
+  padding-left: var(--space-4);
+}
+
+.ai-comparison-column h4,
+.ai-evaluation-result h4,
+.ai-evaluation-form h4 {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+}
+
+.ai-summary-list {
+  margin: 0;
+}
+
+.ai-summary-list > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 5px 0;
+}
+
+.ai-summary-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-evaluation-result,
+.ai-evaluation-form,
+.ai-evaluation-note {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--divider);
+}
+
+.ai-evaluation-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ai-evaluation-form > p {
+  margin: calc(-1 * var(--space-2)) 0 0;
+}
+
+.ai-boolean-field {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ai-boolean-field legend {
+  width: 100%;
+  margin-bottom: var(--space-1);
+  font-weight: 650;
+}
+
+.ai-boolean-field label,
+.ai-scope-check {
+  min-height: 44px;
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.ai-boolean-field input,
+.ai-scope-check input {
+  width: 20px;
+  min-height: 20px;
+  margin: 0;
+}
+
+.ai-scope-check {
+  width: fit-content;
+}
+
+.ai-notes-field textarea {
+  resize: vertical;
 }
 
 .device-management-panel .device-section:first-of-type {
@@ -1182,24 +1334,31 @@ button:disabled {
   .audit-table,
   .audit-table tbody,
   .audit-table tr,
-  .audit-table td {
+  .audit-table td,
+  .ai-progress-table,
+  .ai-progress-table tbody,
+  .ai-progress-table tr,
+  .ai-progress-table td {
     display: block;
     width: 100%;
   }
 
   .case-table thead,
-  .audit-table thead {
+  .audit-table thead,
+  .ai-progress-table thead {
     display: none;
   }
 
   .case-table tr,
-  .audit-table tr {
+  .audit-table tr,
+  .ai-progress-table tr {
     padding: var(--space-3) 0;
     border-bottom: 1px solid var(--divider);
   }
 
   .case-table td,
-  .audit-table td {
+  .audit-table td,
+  .ai-progress-table td {
     display: grid;
     grid-template-columns: 112px minmax(0, 1fr);
     gap: var(--space-3);
@@ -1208,7 +1367,8 @@ button:disabled {
   }
 
   .case-table td::before,
-  .audit-table td::before {
+  .audit-table td::before,
+  .ai-progress-table td::before {
     content: attr(data-label);
     color: var(--muted);
     font-size: 13px;
@@ -1251,14 +1411,44 @@ button:disabled {
     padding: var(--space-5);
   }
 
-  .overview-brief,
-  .health-summary {
+  .overview-brief {
     overflow-x: auto;
   }
 
-  .overview-brief > div,
-  .health-summary > div {
+  .overview-brief > div {
     min-width: 145px;
+  }
+
+  .ai-health-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-health-summary > div,
+  .ai-health-summary > div:nth-child(-n + 4) {
+    border-right: 1px solid var(--divider);
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .ai-health-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .ai-health-summary > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .ai-comparison-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-comparison-column:first-child {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .ai-comparison-column:last-child {
+    padding-left: 0;
+    border-top: 1px solid var(--divider);
   }
 
   .moderation-item {

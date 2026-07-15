@@ -42,6 +42,7 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
       "deviceViews.js",
       "workspace.js",
       "caseViews.js",
+      "aiViews.js",
       "moderationViews.js",
       "auditViews.js"
     ]) {

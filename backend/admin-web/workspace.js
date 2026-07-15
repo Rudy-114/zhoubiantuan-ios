@@ -1,11 +1,8 @@
 import { formatRelativeTime, riskLabel, statusLabel } from "./formatters.js";
 import { renderCaseWorkspace } from "./caseViews.js";
 import { renderModerationWorkspace } from "./moderationViews.js";
-import {
-  renderAIHealthWorkspace,
-  renderAuditWorkspace,
-  renderUserRiskWorkspace
-} from "./auditViews.js";
+import { renderAuditWorkspace, renderUserRiskWorkspace } from "./auditViews.js";
+import { renderAIHealthWorkspace } from "./aiViews.js";
 import { renderDeviceManagementPanel } from "./deviceViews.js";
 
 export const WorkspaceRoute = Object.freeze({
@@ -186,6 +183,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     auditEvents: [],
     auditEventType: "",
     auditNextCursor: null,
+    aiHealth: null,
     dialog: null,
     mobileNavOpen: false,
     loading: false,
@@ -195,6 +193,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     listSequence: 0,
     detailSequence: 0,
     auditSequence: 0,
+    aiHealthSequence: 0,
     moderationSequence: 0,
     countsSequence: 0
   };
@@ -235,9 +234,11 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     state.moderationReviews = [];
     state.auditEvents = [];
     state.auditNextCursor = null;
+    state.aiHealth = null;
     state.listSequence += 1;
     state.detailSequence += 1;
     state.auditSequence += 1;
+    state.aiHealthSequence += 1;
     state.moderationSequence += 1;
     state.countsSequence += 1;
   }
@@ -331,6 +332,10 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
       void loadAudit({ reset: false });
       return true;
     }
+    if (action === "refresh-ai-health") {
+      void loadAIHealth();
+      return true;
+    }
     return false;
   }
 
@@ -364,12 +369,17 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
       void loadAudit({ reset: true });
       return true;
     }
+    if (form.id === "ai-evaluation-form") {
+      void submitAIEvaluation(form, values);
+      return true;
+    }
     return false;
   }
 
   async function handlePopState() {
     if (!state.active) return;
     const parsed = parseWorkspaceRoute(globalThis.location?.pathname);
+    state.aiHealthSequence += 1;
     state.route = parsed.route;
     state.selectedCaseID = parsed.caseID;
     state.caseReturnRoute = parsed.caseID
@@ -390,6 +400,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
 
   async function navigate(route) {
     if (!Object.values(WorkspaceRoute).includes(route)) return;
+    state.aiHealthSequence += 1;
     state.route = route;
     state.selectedCaseID = "";
     state.caseReturnRoute = "";
@@ -418,6 +429,10 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     }
     if (state.route === WorkspaceRoute.AUDIT) {
       await Promise.all([loadWorkloadCounts(), loadAudit({ reset: true })]);
+      return;
+    }
+    if (state.route === WorkspaceRoute.AI_HEALTH) {
+      await Promise.all([loadWorkloadCounts(), loadAIHealth()]);
       return;
     }
     if (state.route === WorkspaceRoute.DEVICES) {
@@ -588,7 +603,11 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
             expectedVersion: state.detail.version
           };
       const payload = await api(path, { method: "POST", body });
-      state.detail = payload.case;
+      const aiComparison = state.detail.aiComparison;
+      state.detail = {
+        ...payload.case,
+        aiComparison: aiComparison ? { ...aiComparison, humanDecision: null } : aiComparison
+      };
       state.revealMap = new Map();
       reconcileCase(payload.case);
       state.dialog = null;
@@ -679,6 +698,67 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     }
   }
 
+  async function loadAIHealth() {
+    const sequence = ++state.aiHealthSequence;
+    state.loading = true;
+    state.error = "";
+    requestRender();
+    try {
+      const payload = await api("/admin/api/ai-health");
+      if (!isLatestRequest(state.aiHealthSequence, sequence)) return;
+      state.aiHealth = payload;
+    } catch (error) {
+      if (isLatestRequest(state.aiHealthSequence, sequence)) {
+        state.error = messageFor(error, "AI 健康状态加载失败。");
+      }
+    } finally {
+      if (isLatestRequest(state.aiHealthSequence, sequence)) {
+        state.loading = false;
+        requestRender({ focusHeading: true });
+      }
+    }
+  }
+
+  async function submitAIEvaluation(form, values) {
+    if (!state.detail || form.dataset.caseId !== state.detail.id ||
+        form.dataset.aiRunId !== state.detail.aiComparison?.run?.id) return;
+    const caseID = state.detail.id;
+    const aiRunID = form.dataset.aiRunId;
+    const isCurrentEvaluation = () => state.detail?.id === caseID &&
+      state.detail.aiComparison?.run?.id === aiRunID;
+    state.busy = true;
+    state.error = "";
+    requestRender();
+    try {
+      const payload = await api(
+        `/admin/api/cases/${encodeURIComponent(caseID)}/ai-evaluation`,
+        {
+          method: "POST",
+          body: {
+            aiRunID,
+            categoryCorrect: values.categoryCorrect === "true",
+            actionCorrect: values.actionCorrect === "true",
+            scopeExpansionError: values.scopeExpansionError === "on",
+            notes: String(values.notes || "").trim()
+          }
+        }
+      );
+      if (!isCurrentEvaluation()) return;
+      state.detail.aiComparison = {
+        ...state.detail.aiComparison,
+        evaluation: payload.evaluation
+      };
+      state.notice = "人工对比已保存；案件决定没有改变。";
+    } catch (error) {
+      if (isCurrentEvaluation()) {
+        state.error = messageFor(error, "人工对比保存失败。");
+      }
+    } finally {
+      state.busy = false;
+      requestRender();
+    }
+  }
+
   function filtersForRoute() {
     const route = displayRoute();
     const base = { ...state.filters };
@@ -723,7 +803,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
       return renderUserRiskWorkspace({ cases: state.cases, loading: state.loading, busy: state.busy });
     }
     if (state.route === WorkspaceRoute.AI_HEALTH) {
-      return renderAIHealthWorkspace({ counts: state.counts, loading: state.loading, busy: state.busy });
+      return renderAIHealthWorkspace({ health: state.aiHealth, loading: state.loading, busy: state.busy });
     }
     if (state.route === WorkspaceRoute.DEVICES) {
       return renderDeviceManagementPanel({

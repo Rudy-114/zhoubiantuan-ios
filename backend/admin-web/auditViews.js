@@ -48,28 +48,6 @@ export function renderUserRiskWorkspace({ cases = [], loading = false, busy = fa
   return section;
 }
 
-export function renderAIHealthWorkspace({ counts = {}, loading = false, busy = false } = {}) {
-  const section = element("section", "ai-health-panel");
-  section.append(contentHeader(
-    "AI 健康",
-    "AI 失败只改变分流方式，不自动放宽安全限制。失败案件应进入人工复核。",
-    "refresh-cases",
-    busy
-  ));
-  if (loading) section.setAttribute("aria-busy", "true");
-  const summary = element("dl", "health-summary");
-  summary.append(
-    metric("AI 分析失败", counts.ai_failed, "需要人工复核"),
-    metric("人工复核", counts.manual_review, "当前人工队列"),
-    metric("逾期整改", counts.overdue, "优先检查")
-  );
-  section.append(summary);
-  const note = element("p", "policy-note");
-  note.textContent = "服务端未向浏览器暴露供应商密钥、原始错误或模型配置；这里仅展示可操作的队列状态。";
-  section.append(note);
-  return section;
-}
-
 function auditToolbar(eventType, busy) {
   const form = element("form", "queue-toolbar compact-toolbar");
   form.id = "audit-filter-form";
@@ -136,18 +114,6 @@ function riskCase(item) {
   meta.textContent = `${formatCount(item.independentReporterCount)} 名独立举报人 · 处置更新于 ${formatRelativeTime(item.updatedAt)}`;
   article.append(heading, state, meta);
   return article;
-}
-
-function metric(label, value, note) {
-  const wrapper = element("div");
-  const dt = element("dt");
-  dt.textContent = label;
-  const dd = element("dd", "tabular");
-  dd.textContent = formatCount(value);
-  const copy = element("span", "muted");
-  copy.textContent = note;
-  wrapper.append(dt, dd, copy);
-  return wrapper;
 }
 
 function contentHeader(title, description, action, busy) {

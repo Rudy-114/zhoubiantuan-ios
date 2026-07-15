@@ -1,4 +1,5 @@
 import { formatCount, formatDateTime, formatRelativeTime, riskLabel, statusLabel } from "./formatters.js";
+import { renderCaseAIComparison } from "./aiViews.js";
 import {
   CASE_CATEGORIES,
   CASE_SORTS,
@@ -176,7 +177,7 @@ export function renderCaseInspector({
 
   inspector.append(detailSection("举报汇总", reportList(detail.reports)));
   inspector.append(detailSection("证据", evidenceList(detail, revealMap)));
-  inspector.append(detailSection("AI 建议", safeObjectView(detail.aiRecommendation, "暂无 AI 建议。")));
+  inspector.append(detailSection("AI 与人工对比", renderCaseAIComparison(detail, busy)));
   inspector.append(detailSection("时间线", timeline(detail.events)));
   inspector.append(detailSection("动作记录", actionList(detail.actions)));
   inspector.append(detailSection("整改与申诉", revisionAndAppeal(detail)));

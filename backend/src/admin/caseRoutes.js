@@ -3,6 +3,11 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { requireAdminCSRF, requireAdminSession } from "./adminMiddleware.js";
 import {
+  loadAdminAIHealth,
+  loadCaseAIComparison,
+  recordAdminAIEvaluation
+} from "./aiHealthService.js";
+import {
   authorizeAdminEvidenceObject,
   decideAdminCase,
   listAdminAuditEvents,
@@ -23,7 +28,8 @@ export function createAdminCaseRouter({
   eventLogger = logger,
   fetchObject,
   signObjectURL = signedReadUrl,
-  evidenceTimeoutMs = 10_000
+  evidenceTimeoutMs = 10_000,
+  aiHealthOptions
 } = {}) {
   const router = express.Router();
   const fetchEvidenceObject = fetchObject || ((...args) => globalThis.fetch(...args));
@@ -31,6 +37,15 @@ export function createAdminCaseRouter({
   router.get("/audit-events", requireAdminSession, async (req, res, next) => {
     try {
       const result = await withTransaction((client) => listAdminAuditEvents(client, req.query));
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/ai-health", requireAdminSession, async (_req, res, next) => {
+    try {
+      const result = await withTransaction((client) => loadAdminAIHealth(client, aiHealthOptions));
       res.json(result);
     } catch (error) {
       next(error);
@@ -48,8 +63,11 @@ export function createAdminCaseRouter({
 
   router.get("/cases/:caseId", requireAdminSession, async (req, res, next) => {
     try {
-      const safetyCase = await withTransaction((client) =>
-        loadAdminCaseDetail(client, req.params.caseId));
+      const safetyCase = await withTransaction(async (client) => {
+        const detail = await loadAdminCaseDetail(client, req.params.caseId);
+        const aiComparison = await loadCaseAIComparison(client, req.params.caseId);
+        return { ...detail, aiComparison };
+      });
       res.json({ case: safetyCase });
     } catch (error) {
       next(error);
@@ -132,6 +150,32 @@ export function createAdminCaseRouter({
           userAgent: req.headers["user-agent"]
         }));
         res.json({ evidence });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/cases/:caseId/ai-evaluation",
+    requireAdminSession,
+    requireAdminCSRF,
+    async (req, res, next) => {
+      try {
+        const evaluation = await withTransaction((client) => recordAdminAIEvaluation(client, {
+          caseId: req.params.caseId,
+          aiRunID: req.body?.aiRunID,
+          categoryCorrect: req.body?.categoryCorrect,
+          actionCorrect: req.body?.actionCorrect,
+          scopeExpansionError: req.body?.scopeExpansionError,
+          notes: req.body?.notes,
+          adminUserId: req.adminUser.id,
+          deviceId: req.adminDevice.id,
+          sessionId: req.adminSession.id,
+          ip: req.ip,
+          userAgent: req.headers["user-agent"]
+        }));
+        res.status(201).json({ evaluation });
       } catch (error) {
         next(error);
       }

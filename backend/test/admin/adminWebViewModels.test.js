@@ -101,6 +101,163 @@ test("loads workload counts when a non-case workspace route is opened directly",
   }
 });
 
+test("loads AI health directly and submits a typed human comparison", async () => {
+  const originalLocation = globalThis.location;
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { pathname: "/admin/ai-health" }
+  });
+  const requests = [];
+  const controller = createWorkspaceController({
+    api: async (path, options) => {
+      requests.push({ path, options });
+      if (path === "/admin/api/ai-health") return { mode: "shadow", metrics: { realEvaluations: 4 } };
+      if (path.startsWith("/admin/api/cases?")) return { cases: [], counts: {}, nextCursor: null };
+      if (path.includes("/ai-evaluation")) {
+        return { evaluation: { id: "evaluation-1", aiRunID: "run-1" } };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    },
+    onRender: () => {}
+  });
+  try {
+    await controller.activate();
+    assert.equal(controller.getState().aiHealth.metrics.realEvaluations, 4);
+    controller.getState().detail = {
+      id: "case-1",
+      aiComparison: { run: { id: "run-1" }, evaluation: null }
+    };
+    assert.equal(controller.handleSubmit({
+      id: "ai-evaluation-form",
+      dataset: { caseId: "case-1", aiRunId: "run-1" }
+    }, {
+      categoryCorrect: "true",
+      actionCorrect: "false",
+      scopeExpansionError: "on",
+      notes: "Needs a human action"
+    }), true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(requests.at(-1), {
+      path: "/admin/api/cases/case-1/ai-evaluation",
+      options: {
+        method: "POST",
+        body: {
+          aiRunID: "run-1",
+          categoryCorrect: true,
+          actionCorrect: false,
+          scopeExpansionError: true,
+          notes: "Needs a human action"
+        }
+      }
+    });
+    assert.equal(controller.getState().detail.aiComparison.evaluation.id, "evaluation-1");
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+  }
+});
+
+test("ignores a failed AI health request after navigating away", async () => {
+  const originalLocation = globalThis.location;
+  const originalHistory = globalThis.history;
+  const location = { pathname: "/admin/ai-health" };
+  const history = {
+    state: {},
+    pushState(nextState, _title, url) {
+      this.state = nextState;
+      location.pathname = url;
+    }
+  };
+  let rejectHealth;
+  const health = new Promise((_resolve, reject) => { rejectHealth = reject; });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: location });
+  Object.defineProperty(globalThis, "history", { configurable: true, value: history });
+  const controller = createWorkspaceController({
+    api: async (path) => {
+      if (path === "/admin/api/ai-health") return health;
+      if (path === "/admin/api/cases?sort=urgent&limit=1") {
+        return { cases: [], counts: {}, nextCursor: null };
+      }
+      if (path === "/admin/api/cases?sort=urgent&limit=12") {
+        return { cases: [], counts: {}, nextCursor: null };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    },
+    onRender: () => {}
+  });
+  try {
+    const activation = controller.activate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(controller.handleClick({
+      dataset: { action: "workspace-route", route: WorkspaceRoute.OVERVIEW }
+    }), true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectHealth(new Error("stale health failure"));
+    await activation;
+    assert.equal(controller.getState().route, WorkspaceRoute.OVERVIEW);
+    assert.equal(controller.getState().error, "");
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+    if (originalHistory === undefined) delete globalThis.history;
+    else Object.defineProperty(globalThis, "history", { configurable: true, value: originalHistory });
+  }
+});
+
+test("ignores a completed AI evaluation after leaving its case", async () => {
+  const originalLocation = globalThis.location;
+  const originalHistory = globalThis.history;
+  const location = { pathname: "/admin/cases/case-1" };
+  const history = {
+    state: {},
+    pushState(nextState, _title, url) {
+      this.state = nextState;
+      location.pathname = url;
+    }
+  };
+  let resolveEvaluation;
+  const evaluation = new Promise((resolve) => { resolveEvaluation = resolve; });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: location });
+  Object.defineProperty(globalThis, "history", { configurable: true, value: history });
+  const controller = createWorkspaceController({
+    api: async (path) => {
+      if (path === "/admin/api/cases/case-1") {
+        return {
+          case: {
+            id: "case-1",
+            aiComparison: { run: { id: "run-1" }, evaluation: null }
+          }
+        };
+      }
+      if (path === "/admin/api/cases/case-1/ai-evaluation") return evaluation;
+      if (path.startsWith("/admin/api/cases?")) return { cases: [], counts: {}, nextCursor: null };
+      throw new Error(`unexpected path: ${path}`);
+    },
+    onRender: () => {}
+  });
+  try {
+    await controller.activate();
+    assert.equal(controller.handleSubmit({
+      id: "ai-evaluation-form",
+      dataset: { caseId: "case-1", aiRunId: "run-1" }
+    }, {
+      categoryCorrect: "true",
+      actionCorrect: "true"
+    }), true);
+    controller.handleClick({ dataset: { action: "close-case" } });
+    resolveEvaluation({ evaluation: { id: "evaluation-1", aiRunID: "run-1" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(controller.getState().detail, null);
+    assert.equal(controller.getState().error, "");
+    assert.equal(controller.getState().notice, "");
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+    if (originalHistory === undefined) delete globalThis.history;
+    else Object.defineProperty(globalThis, "history", { configurable: true, value: originalHistory });
+  }
+});
+
 test("offers only appeal settlement and independent account controls for an appealed case", () => {
   assert.deepEqual(availableCaseDecisions({
     status: "appealed",
