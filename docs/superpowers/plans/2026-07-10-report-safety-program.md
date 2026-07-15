@@ -198,6 +198,8 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md`
 
+Status: implementation Tasks 1–8 are committed; Task 9 production shadow deployment and the separately approved paid validation call remain incomplete.
+
 - [ ] Add schema validation, prompt minimization, budget reservation, deterministic policy tests, fixtures, AI health, and shadow comparisons.
 - [ ] Keep the budget at zero until Rudy explicitly approves the single paid validation call.
 
