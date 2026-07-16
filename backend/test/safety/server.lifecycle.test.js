@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createReviewRevisionJobHandler } from "../../src/safety/jobWorker.js";
+import {
+  createMaintenanceJobHandlers,
+  createReviewRevisionJobHandler,
+  MAINTENANCE_JOB_TYPES,
+  startSafetyMaintenanceScheduler
+} from "../../src/safety/jobWorker.js";
 import { createSafetyServerRuntime } from "../../src/server.js";
 
 test("documents report upload and supplement abuse defaults with the final migration order", async () => {
@@ -41,10 +46,169 @@ test("feature-off runtime starts only the report upload cleanup worker", async (
   await runtime.start({ port: 0, host: "127.0.0.1" });
   try {
     assert.deepEqual(Object.keys(workerOptions?.handlers || {}), ["cleanup_report_upload"]);
-    assert.deepEqual(workerOptions?.deferredJobTypes, ["analyze_case", "review_revision", "case_received"]);
+    assert.deepEqual(workerOptions?.deferredJobTypes, [
+      "analyze_case",
+      "maintenance_correction_deadlines",
+      "maintenance_low_risk_cases",
+      "maintenance_evidence_retention",
+      "maintenance_audit_retention",
+      "delete_retained_evidence_objects",
+      "review_revision",
+      "case_received"
+    ]);
   } finally {
     await runtime.shutdown("test");
   }
+});
+
+test("maintenance scheduler enqueues one unique job per type at startup and each UTC hour", async () => {
+  const enqueued = [];
+  const cleared = [];
+  let intervalCallback;
+  let currentTime = new Date("2026-07-20T08:15:00.000Z");
+  const scheduler = startSafetyMaintenanceScheduler({
+    withTransaction: async (callback) => callback({ id: "client" }),
+    enqueueSafetyJob: async (client, input) => {
+      enqueued.push({ client, input });
+      return input;
+    },
+    now: () => currentTime,
+    setInterval(callback, milliseconds) {
+      assert.equal(milliseconds, 60 * 60 * 1000);
+      intervalCallback = callback;
+      return "maintenance-interval";
+    },
+    clearInterval(handle) { cleared.push(handle); },
+    eventLogger: { error() {} }
+  });
+
+  await scheduler.ready;
+  assert.deepEqual(enqueued.map(({ input }) => input), MAINTENANCE_JOB_TYPES.map((type) => ({
+    type,
+    uniqueKey: `${type}:2026-07-20T08`,
+    payload: { hour: "2026-07-20T08" }
+  })));
+
+  currentTime = new Date("2026-07-20T09:01:00.000Z");
+  intervalCallback();
+  await waitFor(() => enqueued.length === MAINTENANCE_JOB_TYPES.length * 2);
+  assert.deepEqual(
+    enqueued.slice(MAINTENANCE_JOB_TYPES.length).map(({ input }) => input.uniqueKey),
+    MAINTENANCE_JOB_TYPES.map((type) => `${type}:2026-07-20T09`)
+  );
+  await scheduler.stop();
+  assert.deepEqual(cleared, ["maintenance-interval"]);
+});
+
+test("evidence maintenance deletes objects only after commit and uses a global type lock", async () => {
+  let committed = false;
+  const calls = [];
+  const handlers = createMaintenanceJobHandlers({
+    withTransaction: async (callback) => {
+      const result = await callback({
+        query: async (sql, params) => {
+          calls.push(["lock", sql, params]);
+          return { rows: [{ locked: true }] };
+        }
+      });
+      committed = true;
+      return result;
+    },
+    processCorrectionDeadlines: async () => ({ processed: 0 }),
+    closeLowRiskCases: async () => ({ processed: 0 }),
+    clearExpiredEvidence: async () => ({ processed: 1, objectKeys: ["report/private-1.jpg"] }),
+    deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
+    deleteEvidenceObject: async (objectKey) => calls.push(["delete", objectKey, committed]),
+    eventLogger: { error() {} }
+  });
+
+  const result = await handlers.maintenance_evidence_retention({});
+
+  assert.deepEqual(result, { processed: 1, objectKeys: ["report/private-1.jpg"] });
+  assert.match(calls[0][1], /pg_try_advisory_xact_lock/);
+  assert.deepEqual(calls[0][2], ["safety-maintenance:maintenance_evidence_retention"]);
+  assert.deepEqual(calls[1], ["delete", "report/private-1.jpg", true]);
+});
+
+test("maintenance lock contention fails the lease so the worker can retry it", async () => {
+  let operationCalls = 0;
+  const handlers = createMaintenanceJobHandlers({
+    withTransaction: async (callback) => callback({
+      query: async () => ({ rows: [{ locked: false }] })
+    }),
+    processCorrectionDeadlines: async () => { operationCalls += 1; },
+    closeLowRiskCases: async () => ({ processed: 0 }),
+    clearExpiredEvidence: async () => ({ processed: 0, objectKeys: [] }),
+    deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
+    eventLogger: { error() {} }
+  });
+
+  await assert.rejects(
+    handlers.maintenance_correction_deadlines({}),
+    /maintenance lock is busy/
+  );
+  assert.equal(operationCalls, 0);
+});
+
+test("retained evidence object deletion stays retryable when OSS is unavailable", async () => {
+  let deleteCalls = 0;
+  const handlers = createMaintenanceJobHandlers({
+    withTransaction: async (callback) => callback({
+      query: async () => ({ rows: [{ locked: true }] })
+    }),
+    processCorrectionDeadlines: async () => ({ processed: 0 }),
+    closeLowRiskCases: async () => ({ processed: 0 }),
+    clearExpiredEvidence: async () => ({ processed: 0, objectKeys: [] }),
+    deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
+    deleteEvidenceObject: async () => {
+      deleteCalls += 1;
+      throw new Error("temporary OSS failure");
+    },
+    eventLogger: { error() {} }
+  });
+
+  await assert.rejects(
+    handlers.delete_retained_evidence_objects({
+      payload: { objectKeys: ["report/private-retry.jpg"] }
+    }),
+    /temporary OSS failure/
+  );
+  assert.equal(deleteCalls, 1);
+});
+
+test("feature-on runtime registers maintenance handlers and stops its scheduler", async () => {
+  let workerOptions;
+  let schedulerStarts = 0;
+  let schedulerStops = 0;
+  const runtime = createRuntime({
+    safety: { enabled: true, aiMode: "off" },
+    startSafetyWorker(options) {
+      workerOptions = options;
+      return { stop: async () => {} };
+    },
+    startSafetyMaintenanceScheduler() {
+      schedulerStarts += 1;
+      return {
+        ready: Promise.resolve(),
+        stop: async () => { schedulerStops += 1; }
+      };
+    }
+  });
+
+  await runtime.start({ port: 0, host: "127.0.0.1" });
+  assert.equal(schedulerStarts, 1);
+  assert.deepEqual(Object.keys(workerOptions.handlers).sort(), [
+    "case_received",
+    "cleanup_report_upload",
+    "delete_retained_evidence_objects",
+    "maintenance_audit_retention",
+    "maintenance_correction_deadlines",
+    "maintenance_evidence_retention",
+    "maintenance_low_risk_cases",
+    "review_revision"
+  ]);
+  await runtime.shutdown("test");
+  assert.equal(schedulerStops, 1);
 });
 
 test("worker starts only after HTTP listen and AI-off case_received moves the case to manual review", async () => {
@@ -473,6 +637,7 @@ function createRuntime({ safety = { enabled: true, aiMode: "off" }, events = [],
     withTransaction: async (callback) => callback({ query: async () => ({ rowCount: 1 }) }),
     enqueueSafetyJob: async () => {},
     startSafetyWorker: () => ({ stop: async () => {} }),
+    startSafetyMaintenanceScheduler: () => ({ ready: Promise.resolve(), stop: async () => {} }),
     markProcessExit() {},
     ...overrides
   });

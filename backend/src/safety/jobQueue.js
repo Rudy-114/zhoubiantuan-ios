@@ -122,7 +122,12 @@ export async function completeSafetyJob({ jobId, workerId, leaseAttempt } = {}) 
   const { rows } = await query(
     `UPDATE safety_jobs
      SET status = 'completed', completed_at = now(), locked_at = NULL, locked_by = NULL,
-         error_code = NULL, error_summary = NULL, updated_at = now()
+         error_code = NULL, error_summary = NULL,
+         payload = CASE
+           WHEN job_type = 'delete_retained_evidence_objects' THEN '{}'::jsonb
+           ELSE payload
+         END,
+         updated_at = now()
      WHERE id = $1 AND status = 'running' AND locked_by = $2 AND attempts = $3
      RETURNING *`,
     [safeJobId, safeWorkerId, safeLeaseAttempt]

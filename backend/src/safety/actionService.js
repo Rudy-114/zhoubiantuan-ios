@@ -157,10 +157,22 @@ function validateCaseTarget(safetyCase, action) {
   if (safetyCase.subject_type !== action.targetType || safetyCase.subject_id !== action.targetId) {
     throw badRequest("安全操作目标必须与案件主体一致");
   }
-  if (action.actorType !== "admin" && (safetyCase.manual_hold ||
-      ["appealed", "resolved_no_action", "resolved_restored", "resolved_actioned"].includes(safetyCase.status))) {
+  const terminalOrAppealed = ["appealed", "resolved_no_action", "resolved_restored", "resolved_actioned"].includes(safetyCase.status);
+  const heldWithoutDeadlineAuthority = safetyCase.manual_hold && !isCorrectionDeadlineAction(safetyCase, action);
+  if (action.actorType !== "admin" && (terminalOrAppealed || heldWithoutDeadlineAuthority)) {
     throw conflict("人工处理中的案件不能执行自动安全操作", "manual_hold");
   }
+}
+
+function isCorrectionDeadlineAction(safetyCase, action) {
+  return action.actorType === "system" &&
+    action.actionType === "suspend_collection" &&
+    action.targetType === "collection" &&
+    safetyCase.subject_type === "collection" &&
+    safetyCase.category === "invalid_contact" &&
+    safetyCase.status === "awaiting_correction" &&
+    Boolean(safetyCase.correction_due_at) &&
+    action.idempotencyKey === `deadline:suspend_collection:${safetyCase.id}`;
 }
 
 async function lockTarget(client, targetType, targetId) {

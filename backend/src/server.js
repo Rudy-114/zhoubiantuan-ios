@@ -10,12 +10,24 @@ import { startRateLimitEventPruner } from "./rateLimit.js";
 import { attachRealtime, notifySyncEvents } from "./realtime.js";
 import { analyzeSafetyCase } from "./safety/aiService.js";
 import { enqueueSafetyJob } from "./safety/jobQueue.js";
-import { createAnalyzeCaseJobHandler, createReviewRevisionJobHandler, startSafetyWorker } from "./safety/jobWorker.js";
+import {
+  createAnalyzeCaseJobHandler,
+  createMaintenanceJobHandlers,
+  createReviewRevisionJobHandler,
+  MAINTENANCE_JOB_TYPES,
+  RETAINED_EVIDENCE_DELETE_JOB_TYPE,
+  startSafetyMaintenanceScheduler,
+  startSafetyWorker
+} from "./safety/jobWorker.js";
 import { cleanupRegisteredReportUpload, reportUploadKeyFromJob } from "./safety/reportUploadCleanup.js";
 import { reviewContentRevision } from "./safety/revisionService.js";
 import { startSyncEventPruner } from "./sync.js";
 
-const DEFERRED_SAFETY_JOB_TYPES = ["analyze_case"];
+const DEFERRED_SAFETY_JOB_TYPES = [
+  "analyze_case",
+  ...MAINTENANCE_JOB_TYPES,
+  RETAINED_EVIDENCE_DELETE_JOB_TYPE
+];
 
 export function createSafetyServerRuntime({
   app = createApp(),
@@ -25,6 +37,7 @@ export function createSafetyServerRuntime({
   startRateLimitEventPruner: startRateLimitPruner = startRateLimitEventPruner,
   startSyncEventPruner: startSyncPruner = startSyncEventPruner,
   startSafetyWorker: startWorker = startSafetyWorker,
+  startSafetyMaintenanceScheduler: startMaintenanceScheduler = startSafetyMaintenanceScheduler,
   withTransaction: transaction = withTransaction,
   enqueueSafetyJob: enqueueJob = enqueueSafetyJob,
   analyzeSafetyCase: analyzeCase = analyzeSafetyCase,
@@ -32,6 +45,7 @@ export function createSafetyServerRuntime({
   notifySyncEvents: notifyEvents = notifySyncEvents,
   cleanupReportUpload: cleanupUpload = cleanupRegisteredReportUpload,
   deleteReportUpload: deleteUpload = deleteObject,
+  deleteEvidenceObject: deleteEvidence = deleteObject,
   pool: databasePool = pool,
   logger: eventLogger = logger,
   clearInterval: clearPruner = clearInterval,
@@ -50,6 +64,7 @@ export function createSafetyServerRuntime({
   let signalCleanup = null;
   let signalFailureHandled = false;
   let safetyWorker = null;
+  let maintenanceScheduler = null;
 
   return {
     server,
@@ -75,6 +90,14 @@ export function createSafetyServerRuntime({
         const handlers = { cleanup_report_upload: handleCleanupReportUpload };
         const deferredJobTypes = [...DEFERRED_SAFETY_JOB_TYPES];
         if (runtimeConfig.safety.enabled) {
+          Object.assign(handlers, createMaintenanceJobHandlers({
+            withTransaction: transaction,
+            deleteEvidenceObject: deleteEvidence,
+            eventLogger
+          }));
+          for (const jobType of [...MAINTENANCE_JOB_TYPES, RETAINED_EVIDENCE_DELETE_JOB_TYPE]) {
+            deferredJobTypes.splice(deferredJobTypes.indexOf(jobType), 1);
+          }
           handlers.case_received = handleCaseReceived;
           handlers.review_revision = createReviewRevisionJobHandler({
             withTransaction: transaction,
@@ -98,6 +121,12 @@ export function createSafetyServerRuntime({
             });
             deferredJobTypes.splice(deferredJobTypes.indexOf("analyze_case"), 1);
           }
+          maintenanceScheduler = startMaintenanceScheduler({
+            withTransaction: transaction,
+            enqueueSafetyJob: enqueueJob,
+            eventLogger
+          });
+          await maintenanceScheduler.ready;
         } else {
           deferredJobTypes.push("review_revision");
           deferredJobTypes.push("case_received");
@@ -127,12 +156,19 @@ export function createSafetyServerRuntime({
       await listenSettledPromise;
       const httpClosed = cleanupStep(() => closeServer(server));
       const workerStopped = cleanupStep(() => safetyWorker?.stop());
+      const maintenanceStopped = cleanupStep(() => maintenanceScheduler?.stop());
       const prunersCleared = cleanupStep(() => {
         clearPruner(rateLimitPruner);
         clearPruner(syncEventPruner);
       });
       const realtimeClosed = cleanupStep(() => realtimeHub.close());
-      const results = await Promise.allSettled([httpClosed, workerStopped, prunersCleared, realtimeClosed]);
+      const results = await Promise.allSettled([
+        httpClosed,
+        workerStopped,
+        maintenanceStopped,
+        prunersCleared,
+        realtimeClosed
+      ]);
       const poolResult = await Promise.allSettled([cleanupStep(() => databasePool.end())]);
       const failed = [...results, ...poolResult].find((result) => result.status === "rejected");
       lifecycle = "stopped";
