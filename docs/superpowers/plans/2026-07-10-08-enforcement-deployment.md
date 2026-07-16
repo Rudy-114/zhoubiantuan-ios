@@ -274,15 +274,15 @@ git commit -m "Document safety system operations"
 **Interfaces:**
 - REQUIRED SUB-SKILL: `superpowers:requesting-code-review`.
 
-- [ ] **Step 1: Request review against the design and plan**
+- [x] **Step 1: Request review against the design and plan**
 
 Review from the pre-feature checkpoint through current HEAD for: spec coverage, auth bypass, privacy leaks, SQL concurrency, action idempotency, scope expansion, migration safety, client retry behavior, admin accessibility, provider spend, and rollback.
 
-- [ ] **Step 2: Address every critical/high finding test-first**
+- [x] **Step 2: Address every critical/high finding test-first**
 
 Use `superpowers:receiving-code-review` for feedback. Reproduce each accepted defect with a failing test, implement the smallest fix, rerun focused/full tests, and make one focused commit per independent issue.
 
-- [ ] **Step 3: Record accepted residual risks**
+- [x] **Step 3: Record accepted residual risks**
 
 Only document risks that cannot be removed without changing the approved scope, such as real-case shadow evidence requiring elapsed production usage. Do not relabel unfinished implementation as residual risk.
 
