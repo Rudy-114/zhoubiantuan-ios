@@ -147,9 +147,12 @@ export async function analyzeSafetyCase({
 }
 
 async function loadAnalysisContext(client, { caseId, revisionId, now }) {
-  const caseResult = await client.query("SELECT * FROM safety_cases WHERE id = $1 FOR UPDATE", [caseId]);
-  const caseRecord = caseResult.rows[0];
-  if (!caseRecord) throw analysisError("safety_case_not_found");
+  const caseResult = await client.query(
+    "SELECT *, updated_at::text AS case_version_exact FROM safety_cases WHERE id = $1 FOR UPDATE",
+    [caseId]
+  );
+  if (!caseResult.rows[0]) throw analysisError("safety_case_not_found");
+  const { case_version_exact: caseVersion, ...caseRecord } = caseResult.rows[0];
 
   const reports = await client.query(
     `SELECT reason_code, reported_field, detail, created_at
@@ -209,7 +212,7 @@ async function loadAnalysisContext(client, { caseId, revisionId, now }) {
 
   return {
     caseRecord,
-    caseVersion: isoDate(caseRecord.updated_at),
+    caseVersion,
     revision,
     report: {
       reasonCode: reports.rows[0]?.reason_code || caseRecord.category,
@@ -367,8 +370,8 @@ async function completeSuccessfulRun(client, {
   if (apply) {
     await lockSafetyTarget(client, context.caseRecord.subject_type, context.caseRecord.subject_id);
   }
-  const current = await lockCurrentCase(client, context.caseRecord.id);
-  const stale = isoDate(current.updated_at) !== context.caseVersion;
+  const current = await lockCurrentCase(client, context.caseRecord.id, context.caseVersion);
+  const stale = current.version_matches !== true;
   await client.query(
     `UPDATE safety_ai_runs
      SET status = 'completed', hard_signal = $2::jsonb, parsed_result = $3::jsonb,
@@ -507,8 +510,14 @@ async function moveCaseToManualIfCurrent(client, context, now) {
   );
 }
 
-async function lockCurrentCase(client, caseId) {
-  const result = await client.query("SELECT * FROM safety_cases WHERE id = $1 FOR UPDATE", [caseId]);
+async function lockCurrentCase(client, caseId, caseVersion) {
+  const result = await client.query(
+    `SELECT *, updated_at = $2::timestamptz AS version_matches
+     FROM safety_cases
+     WHERE id = $1
+     FOR UPDATE`,
+    [caseId, caseVersion]
+  );
   if (!result.rows[0]) throw analysisError("safety_case_not_found");
   return result.rows[0];
 }
@@ -683,10 +692,6 @@ function validDate(value) {
 function aiMode(value) {
   if (!["off", "shadow", "enforce"].includes(value)) throw new TypeError("mode must be off, shadow, or enforce");
   return value;
-}
-
-function isoDate(value) {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 function safeObject(value) {

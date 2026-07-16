@@ -108,6 +108,29 @@ test("zero budget records a blocked run before loading or invoking any provider"
   assert.equal((await pool.query("SELECT status FROM safety_cases WHERE id = 'case-ai'")).rows[0].status, "manual_review");
 });
 
+test("zero budget moves a case with a PostgreSQL microsecond timestamp to manual review", async () => {
+  await seedPostCase({ category: "other" });
+  await pool.query(
+    "UPDATE safety_cases SET updated_at = '2026-07-14T08:00:00.000531Z' WHERE id = 'case-ai'"
+  );
+
+  const result = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: { ...AI_CONFIG, monthlyBudgetCny: 0 },
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => ({ analyze: async () => assert.fail("provider must not run") }),
+    now: NOW
+  });
+
+  assert.equal(result.status, "budget_blocked");
+  assert.equal(
+    (await pool.query("SELECT status FROM safety_cases WHERE id = 'case-ai'")).rows[0].status,
+    "manual_review"
+  );
+});
+
 test("stores hard signals and proposals but applies nothing in shadow mode", async () => {
   await seedPostCase({ category: "suspected_scam" });
   const provider = {
