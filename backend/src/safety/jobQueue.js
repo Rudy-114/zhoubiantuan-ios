@@ -1,7 +1,6 @@
 import { query, withTransaction } from "../db.js";
 
-export const SAFETY_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
-const STALE_LOCK_INTERVAL = `${SAFETY_JOB_STALE_AFTER_MS} milliseconds`;
+const STALE_LOCK_INTERVAL = "5 minutes";
 const REPORT_UPLOAD_REACTIVATION_INTERVAL = "24 hours";
 const REPORT_UPLOAD_JOB_RETENTION_INTERVAL = "30 days";
 const ERROR_CODE = "SAFETY_JOB_FAILED";

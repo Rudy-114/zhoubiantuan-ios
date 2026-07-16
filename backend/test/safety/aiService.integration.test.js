@@ -628,7 +628,7 @@ test("a retryable provider failure permits a fresh audited run for the same evid
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_ai_usage")).rows[0].count, 2);
 });
 
-test("a reclaimed job settles an interrupted running attempt before retrying", async () => {
+test("an unbound retry cannot reclaim another running attempt by evidence hash", async () => {
   await seedPostCase({ category: "other" });
   const interrupted = await analyze({
     provider: {
@@ -654,65 +654,47 @@ test("a reclaimed job settles an interrupted running attempt before retrying", a
      WHERE ai_run_id = $1`,
     [interruptedRun.id]
   );
-  const interruptedReservation = (await pool.query(
-    "SELECT reserved_cny::float8 AS reserved_cny FROM safety_ai_usage WHERE ai_run_id = $1",
-    [interruptedRun.id]
-  )).rows[0];
+  await enqueueSafetyJob({
+    type: "analyze_case",
+    caseId: "case-ai",
+    uniqueKey: "analyze-case-unbound-retry"
+  });
+  const [firstLease] = await claimSafetyJobs({ limit: 1, workerId: "unbound-first-lease" });
+  await failSafetyJob({
+    jobId: firstLease.id,
+    workerId: "unbound-first-lease",
+    leaseAttempt: firstLease.attempts,
+    error: new Error("synthetic pre-bind failure")
+  });
+  await pool.query("UPDATE safety_jobs SET run_at = now() - interval '1 second' WHERE id = $1", [firstLease.id]);
+  const [retryLease] = await claimSafetyJobs({ limit: 1, workerId: "unbound-retry-lease" });
+  assert.equal(retryLease.payload.currentAiRunId, undefined);
 
-  const stillWithinLease = await analyzeSafetyCase({
+  const result = await analyzeSafetyCase({
     caseId: "case-ai",
     mode: "shadow",
     aiConfig: AI_CONFIG,
     withTransaction: transaction,
     moderation: passModeration,
-    providerFactory: () => assert.fail("a fresh concurrent run must not be replaced"),
+    providerFactory: () => assert.fail("an unbound retry must not replace another run"),
+    jobId: retryLease.id,
+    jobAttempt: retryLease.attempts,
     recoverInterruptedRun: true,
-    now: new Date(NOW.getTime() + (5 * 60 * 1000) - 1)
-  });
-  assert.equal(stillWithinLease.status, "running");
-
-  let recoveryProviderCalls = 0;
-  const recovered = await analyzeSafetyCase({
-    caseId: "case-ai",
-    mode: "shadow",
-    aiConfig: AI_CONFIG,
-    withTransaction: transaction,
-    moderation: passModeration,
-    providerFactory: () => ({
-      analyze: async () => {
-        recoveryProviderCalls += 1;
-        return providerOutput(validResult());
-      }
-    }),
-    recoverInterruptedRun: true,
-    now: new Date(NOW.getTime() + (5 * 60 * 1000) + 1)
+    now: new Date(NOW.getTime() + (6 * 60 * 1000))
   });
 
-  assert.equal(recovered.status, "completed");
-  assert.equal(recoveryProviderCalls, 1);
+  assert.equal(result.status, "running");
   assert.deepEqual(
     (await pool.query(
       "SELECT status, retryable, error_code FROM safety_ai_runs WHERE id = $1",
       [interruptedRun.id]
     )).rows[0],
-    { status: "failed", retryable: true, error_code: "qwen_provider_interrupted" }
+    { status: "running", retryable: false, error_code: null }
   );
-  assert.deepEqual(
-    (await pool.query(
-      `SELECT status, reserved_cny::float8 AS reserved_cny, actual_cny::float8 AS actual_cny
-       FROM safety_ai_usage WHERE ai_run_id = $1`,
-      [interruptedRun.id]
-    )).rows[0],
-    {
-      status: "settled",
-      reserved_cny: interruptedReservation.reserved_cny,
-      actual_cny: interruptedReservation.reserved_cny
-    }
-  );
-  assert.equal(
-    (await pool.query("SELECT count(*)::int AS count FROM safety_ai_runs WHERE status = 'completed'")).rows[0].count,
-    1
-  );
+  assert.equal((await pool.query(
+    "SELECT status FROM safety_ai_usage WHERE ai_run_id = $1",
+    [interruptedRun.id]
+  )).rows[0].status, "reserved");
 });
 
 test("a normal retry immediately recovers the running attempt bound to its job lease", async () => {
@@ -804,6 +786,143 @@ test("a normal retry immediately recovers the running attempt bound to its job l
     (await pool.query("SELECT status FROM safety_ai_runs WHERE id = $1", [currentRunId])).rows[0].status,
     "completed"
   );
+});
+
+test("a late provider success cannot mutate a case after its job lease is reclaimed", async () => {
+  await seedPostCase({ category: "suspected_scam" });
+  await enqueueSafetyJob({
+    type: "analyze_case",
+    caseId: "case-ai",
+    uniqueKey: "analyze-case-lost-lease"
+  });
+  const [firstLease] = await claimSafetyJobs({ limit: 1, workerId: "late-first-lease" });
+  let signalProviderStarted;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  let releaseProvider;
+  const providerRelease = new Promise((resolve) => { releaseProvider = resolve; });
+  let gateCalls = 0;
+  let actionCalls = 0;
+  const analysis = analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "enforce",
+    automaticActionsEnabled: true,
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: async () => ({
+      outcome: "block",
+      riskLevel: "high",
+      source: "textAgent",
+      reason: "Synthetic hard signal"
+    }),
+    providerFactory: () => ({
+      analyze: async () => {
+        signalProviderStarted();
+        await providerRelease;
+        return providerOutput(validResult({
+          category: "suspected_scam",
+          riskLevel: "high",
+          confidence: 0.99,
+          recommendedAction: "hide_content_temporarily"
+        }));
+      }
+    }),
+    assertEnforcementAllowed: async () => {
+      gateCalls += 1;
+      return { passed: true };
+    },
+    applyAction: async () => {
+      actionCalls += 1;
+      return { syncEvents: [] };
+    },
+    jobId: firstLease.id,
+    jobAttempt: firstLease.attempts,
+    now: NOW
+  });
+  await providerStarted;
+
+  await pool.query(
+    "UPDATE safety_jobs SET locked_at = now() - interval '6 minutes' WHERE id = $1",
+    [firstLease.id]
+  );
+  const [reclaimedLease] = await claimSafetyJobs({ limit: 1, workerId: "late-reclaimed-lease" });
+  assert.equal(reclaimedLease.attempts, 2);
+  releaseProvider();
+  const result = await analysis;
+
+  assert.deepEqual(
+    {
+      status: result.status,
+      reason: result.reason,
+      retryable: result.retryable,
+      providerCalled: result.providerCalled
+    },
+    {
+      status: "failed",
+      reason: "safety_job_lease_lost",
+      retryable: true,
+      providerCalled: true
+    }
+  );
+  assert.equal(gateCalls, 0);
+  assert.equal(actionCalls, 0);
+  assert.deepEqual(
+    (await pool.query("SELECT status, retryable, error_code FROM safety_ai_runs")).rows[0],
+    { status: "failed", retryable: true, error_code: "safety_job_lease_lost" }
+  );
+  assert.equal((await pool.query("SELECT status FROM safety_ai_usage")).rows[0].status, "settled");
+  assert.equal((await pool.query("SELECT status FROM safety_cases WHERE id = 'case-ai'")).rows[0].status, "received");
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_actions")).rows[0].count, 0);
+});
+
+test("a late provider failure cannot move a case after its job lease is reclaimed", async () => {
+  await seedPostCase({ category: "other" });
+  await enqueueSafetyJob({
+    type: "analyze_case",
+    caseId: "case-ai",
+    uniqueKey: "analyze-case-lost-failure-lease"
+  });
+  const [firstLease] = await claimSafetyJobs({ limit: 1, workerId: "failure-first-lease" });
+  let signalProviderStarted;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  let releaseProvider;
+  const providerRelease = new Promise((resolve) => { releaseProvider = resolve; });
+  const analysis = analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => ({
+      analyze: async () => {
+        signalProviderStarted();
+        await providerRelease;
+        throw providerError("qwen_timeout", { retryable: true, billingUncertain: true });
+      }
+    }),
+    jobId: firstLease.id,
+    jobAttempt: firstLease.attempts,
+    now: NOW
+  });
+  await providerStarted;
+
+  await pool.query(
+    "UPDATE safety_jobs SET locked_at = now() - interval '6 minutes' WHERE id = $1",
+    [firstLease.id]
+  );
+  const [reclaimedLease] = await claimSafetyJobs({ limit: 1, workerId: "failure-reclaimed-lease" });
+  assert.equal(reclaimedLease.attempts, 2);
+  releaseProvider();
+  const result = await analysis;
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.reason, "safety_job_lease_lost");
+  assert.equal(result.retryable, true);
+  assert.deepEqual(
+    (await pool.query("SELECT status, retryable, error_code FROM safety_ai_runs")).rows[0],
+    { status: "failed", retryable: true, error_code: "safety_job_lease_lost" }
+  );
+  assert.equal((await pool.query("SELECT status FROM safety_ai_usage")).rows[0].status, "settled");
+  assert.equal((await pool.query("SELECT status FROM safety_cases WHERE id = 'case-ai'")).rows[0].status, "received");
 });
 
 test("worker persists only generic job errors when orchestration throws unexpectedly", async () => {

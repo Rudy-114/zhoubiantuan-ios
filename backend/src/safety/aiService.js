@@ -5,7 +5,6 @@ import { reviewSubmission } from "../moderation/index.js";
 import { applySafetyAction } from "./actionService.js";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "./budgetService.js";
 import { assertAutomaticActionsAllowed } from "./enforcementGate.js";
-import { SAFETY_JOB_STALE_AFTER_MS } from "./jobQueue.js";
 import { evaluateSafetyPolicy } from "./policyEngine.js";
 import { buildQwenCaseMessages, hashCaseEvidence } from "./promptBuilder.js";
 import { independentReporterCount } from "./reportAbuseService.js";
@@ -138,6 +137,8 @@ export async function analyzeSafetyCase({
       context,
       error: providerError("qwen_not_configured", { retryable: false, billingUncertain: false }),
       aiConfig: safeAiConfig,
+      jobId: safeJobId,
+      jobAttempt: safeJobAttempt,
       now: safeNow
     });
   }
@@ -156,6 +157,8 @@ export async function analyzeSafetyCase({
       context,
       error,
       aiConfig: safeAiConfig,
+      jobId: safeJobId,
+      jobAttempt: safeJobAttempt,
       now: safeNow
     });
   }
@@ -177,6 +180,8 @@ export async function analyzeSafetyCase({
     hardSignal,
     providerOutput,
     policy,
+    jobId: safeJobId,
+    jobAttempt: safeJobAttempt,
     automaticActionsEnabled: automaticActionsEnabled === true,
     assertEnforcementAllowed,
     applyAction,
@@ -325,11 +330,7 @@ async function prepareAiRun(client, {
     [context.caseRecord.id, aiConfig.model, aiConfig.promptVersion, aiConfig.policyVersion, evidenceHash]
   );
   if (existing.rows[0]) {
-    if (recoverInterruptedRun && !interruptedRunId && interruptedRunIsStale(existing.rows[0], now)) {
-      await reconcileInterruptedRun(client, existing.rows[0], now);
-    } else {
-      return { kind: existing.rows[0].status === "completed" ? "cached" : "existing", run: existing.rows[0] };
-    }
+    return { kind: existing.rows[0].status === "completed" ? "cached" : "existing", run: existing.rows[0] };
   }
 
   const runId = `sair-${randomUUID()}`;
@@ -375,18 +376,22 @@ async function prepareAiRun(client, {
 }
 
 async function assertCurrentJobLease(client, { jobId, jobAttempt, interruptedRunId }) {
-  if (jobId == null) return;
+  if (await currentJobLeaseMatches(client, { jobId, jobAttempt, currentAiRunId: interruptedRunId })) return;
+  throw analysisError("safety_job_lease_lost");
+}
+
+async function currentJobLeaseMatches(client, { jobId, jobAttempt, currentAiRunId }) {
+  if (jobId == null) return true;
   const lease = await client.query(
-    `SELECT payload->>'currentAiRunId' AS current_ai_run_id
+    `SELECT status, attempts, payload->>'currentAiRunId' AS current_ai_run_id
      FROM safety_jobs
-     WHERE id = $1 AND status = 'running' AND attempts = $2
+     WHERE id = $1
      FOR UPDATE`,
-    [jobId, jobAttempt]
+    [jobId]
   );
-  if (!lease.rows[0]) throw analysisError("safety_job_lease_lost");
-  if (interruptedRunId != null && lease.rows[0].current_ai_run_id !== interruptedRunId) {
-    throw analysisError("safety_job_run_mismatch");
-  }
+  const row = lease.rows[0];
+  return row?.status === "running" && Number(row.attempts) === jobAttempt &&
+    (currentAiRunId == null || row.current_ai_run_id === currentAiRunId);
 }
 
 async function reconcileBoundInterruptedRun(client, {
@@ -442,13 +447,6 @@ async function reconcileInterruptedRun(client, run, now) {
   );
 }
 
-function interruptedRunIsStale(run, now) {
-  if (run.status !== "running") return false;
-  const startedAt = new Date(run.started_at || run.created_at);
-  return !Number.isNaN(startedAt.getTime()) &&
-    startedAt.getTime() <= now.getTime() - SAFETY_JOB_STALE_AFTER_MS;
-}
-
 async function findCompletedRunForCurrentEvidence(client, { context, aiConfig }) {
   const candidates = await client.query(
     `SELECT * FROM safety_ai_runs
@@ -474,12 +472,27 @@ async function completeSuccessfulRun(client, {
   hardSignal,
   providerOutput,
   policy,
+  jobId,
+  jobAttempt,
   automaticActionsEnabled,
   assertEnforcementAllowed,
   applyAction,
   publishRevision,
   now
 }) {
+  const leaseCurrent = await currentJobLeaseMatches(client, {
+    jobId,
+    jobAttempt,
+    currentAiRunId: runId
+  });
+  if (!leaseCurrent) {
+    return closeLostLeaseSuccessfulRun(client, {
+      runId,
+      providerOutput,
+      aiConfig,
+      now
+    });
+  }
   await settleAiBudget(client, {
     aiRunId: runId,
     inputTokens: providerOutput.usage.inputTokens,
@@ -626,18 +639,51 @@ async function completeSuccessfulRun(client, {
   };
 }
 
+async function closeLostLeaseSuccessfulRun(client, { runId, providerOutput, aiConfig, now }) {
+  const run = await client.query(
+    "SELECT status FROM safety_ai_runs WHERE id = $1 FOR UPDATE",
+    [runId]
+  );
+  if (!run.rows[0]) throw analysisError("safety_ai_run_not_found");
+  if (run.rows[0].status === "running") {
+    await settleAiBudget(client, {
+      aiRunId: runId,
+      inputTokens: providerOutput.usage.inputTokens,
+      outputTokens: providerOutput.usage.outputTokens,
+      inputCnyPerMillion: aiConfig.inputCnyPerMillion,
+      outputCnyPerMillion: aiConfig.outputCnyPerMillion,
+      now
+    });
+    await markRunLostLease(client, runId, now);
+  }
+  return lostLeaseResult();
+}
+
 async function finishProviderFailure({
   withTransaction,
   runId,
   context,
   error,
   aiConfig,
+  jobId,
+  jobAttempt,
   now
 }) {
   const errorCode = safeProviderErrorCode(error);
   const runStatus = ["invalid_ai_result", "qwen_invalid_response"].includes(errorCode) ? "invalid" : "failed";
   const retryable = runStatus === "failed" && error?.retryable === true;
   return withTransaction(async (client) => {
+    const leaseCurrent = await currentJobLeaseMatches(client, {
+      jobId,
+      jobAttempt,
+      currentAiRunId: runId
+    });
+    const run = await client.query(
+      "SELECT status FROM safety_ai_runs WHERE id = $1 FOR UPDATE",
+      [runId]
+    );
+    if (!run.rows[0]) throw analysisError("safety_ai_run_not_found");
+    if (run.rows[0].status !== "running") return lostLeaseResult();
     if (validUsage(error?.usage)) {
       await settleAiBudget(client, {
         aiRunId: runId,
@@ -658,6 +704,10 @@ async function finishProviderFailure({
     } else {
       await releaseAiBudget(client, { aiRunId: runId, now });
     }
+    if (!leaseCurrent) {
+      await markRunLostLease(client, runId, now);
+      return lostLeaseResult();
+    }
     await client.query(
       `UPDATE safety_ai_runs
        SET status = $2, raw_response = $3, error_code = $4,
@@ -668,6 +718,26 @@ async function finishProviderFailure({
     await moveCaseToManualIfCurrent(client, context, now);
     return { status: runStatus, reason: errorCode, providerCalled: true, retryable };
   });
+}
+
+async function markRunLostLease(client, runId, now) {
+  await client.query(
+    `UPDATE safety_ai_runs
+     SET status = 'failed', retryable = true, error_code = 'safety_job_lease_lost',
+         raw_response = '', completed_at = $2
+     WHERE id = $1 AND status = 'running'`,
+    [runId, now]
+  );
+}
+
+function lostLeaseResult() {
+  return {
+    status: "failed",
+    reason: "safety_job_lease_lost",
+    providerCalled: true,
+    retryable: true,
+    syncEvents: []
+  };
 }
 
 async function moveCaseToManualIfCurrent(client, context, now) {
