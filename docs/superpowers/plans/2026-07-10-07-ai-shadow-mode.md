@@ -547,6 +547,17 @@ passed, and AI health showed actual/budget CNY 0.0021/0.0000. Because the
 privacy-safe retained artifact has no raw response or validator paths, the exact
 schema mismatch is not reproducible; Step 6 remains incomplete.
 
+Rudy subsequently authorized further fixed-model synthetic diagnostic calls
+under a hard cumulative CNY 1.000000 cap (including the settled CNY 0.002080)
+and confirmed the privacy-safe public seams. A test-first local follow-up now
+adds an explicit `--diagnostic-attempt --hard-cap-cny=1` mode, lifetime
+cross-month reservations, settlement-overrun rejection, completed-run duplicate
+blocking, and allowlisted validator paths without values or raw content. Node
+146/146 and PostgreSQL 221/221 pass; independent Standards and Spec re-review
+both report no remaining P1/P2. This diagnostic change is not deployed and no
+new provider call has occurred. See
+`docs/operations/verification/2026-07-16-qwen-diagnostic-preflight.md`.
+
 - [ ] **Step 6: Begin real shadow comparisons**
 
 Leave automatic actions disabled. For each real case, AI records a proposal and the admin records comparison after their decision. Do not enable enforcement in this phase.

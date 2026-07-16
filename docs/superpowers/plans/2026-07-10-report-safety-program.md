@@ -201,11 +201,12 @@ RealtimeConnectionState
 Status: implementation Tasks 1–8 and Task 9's zero-budget production deployment
 are complete. The separately authorized one-call validation executed once and
 settled CNY 0.002080, but failed the closed schema and was not retried. Production
-budget is zero; a diagnosable validation result and real shadow comparisons
-remain incomplete.
+budget is zero. Privacy-safe diagnostic support and a lifetime CNY 1 cap now
+pass local Node 146/146 and PostgreSQL 221/221 verification but are not deployed;
+a diagnosable production result and real shadow comparisons remain incomplete.
 
 - [ ] Add schema validation, prompt minimization, budget reservation, deterministic policy tests, fixtures, AI health, and shadow comparisons.
-- [ ] Keep the budget at zero until Rudy explicitly approves the single paid validation call.
+- [x] Keep the budget at zero until Rudy explicitly approves the single paid validation call.
 
 ### Task 8: Harden, Gate, and Finish Production Rollout
 

@@ -99,7 +99,12 @@ test("classifies 429 and rejects malformed or schema-invalid provider responses"
         usage: usage()
       }),
       code: "invalid_ai_result",
-      retryable: false
+      retryable: false,
+      validationIssues: [{
+        instancePath: "/recommendedAction",
+        keyword: "enum",
+        schemaPath: "#/properties/recommendedAction/enum"
+      }]
     }
   ];
 
@@ -119,6 +124,10 @@ test("classifies 429 and rejects malformed or schema-invalid provider responses"
         assert.equal(serialized.includes("secret provider payload"), false);
         assert.equal(serialized.includes("response-secret-key"), false);
         assert.equal(serialized.includes("restrict_user"), false);
+        if (item.validationIssues) {
+          assert.deepEqual(error.validationIssues, item.validationIssues);
+          assert.equal(Object.isFrozen(error.validationIssues), true);
+        }
         return true;
       }
     );

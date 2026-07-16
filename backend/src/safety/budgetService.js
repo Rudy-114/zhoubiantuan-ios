@@ -13,6 +13,9 @@ export async function reserveAiBudget(client, input = {}) {
   if (monthlyBudgetCny === 0) {
     return { ok: false, reason: "budget_disabled", monthKey };
   }
+  const totalBudgetCny = input.totalBudgetCny == null
+    ? null
+    : nonNegativeMoney(input.totalBudgetCny, "totalBudgetCny");
 
   const aiRunId = requiredId(input.aiRunId);
   const inputRate = nonNegativeMoney(input.inputCnyPerMillion, "inputCnyPerMillion");
@@ -24,6 +27,7 @@ export async function reserveAiBudget(client, input = {}) {
     ((estimatedInputTokens * inputRate) + (maxCompletionTokens * outputRate)) / MONEY_SCALE
   );
 
+  if (totalBudgetCny != null) await lockTotalBudget(client);
   await lockMonth(client, monthKey);
   const existing = await client.query(
     `SELECT month_key, reserved_cny, actual_cny, status
@@ -39,6 +43,29 @@ export async function reserveAiBudget(client, input = {}) {
       estimatedInputTokens,
       maxCompletionTokens
     });
+  }
+
+  if (totalBudgetCny != null) {
+    const totalSpend = await client.query(
+      `SELECT COALESCE(sum(
+         CASE status
+           WHEN 'reserved' THEN reserved_cny
+           WHEN 'settled' THEN COALESCE(actual_cny, reserved_cny)
+           ELSE 0
+         END
+       ), 0) AS committed_cny
+       FROM safety_ai_usage`
+    );
+    const committedTotalCny = Number(totalSpend.rows[0].committed_cny);
+    if (committedTotalCny + reservedCny > totalBudgetCny) {
+      return {
+        ok: false,
+        reason: "budget_total_exceeded",
+        monthKey,
+        reservedCny,
+        committedTotalCny
+      };
+    }
   }
 
   const spend = await client.query(
@@ -106,6 +133,9 @@ export async function settleAiBudget(client, input = {}) {
       ((inputTokens * nonNegativeMoney(input.inputCnyPerMillion, "inputCnyPerMillion")) +
        (outputTokens * nonNegativeMoney(input.outputCnyPerMillion, "outputCnyPerMillion"))) / MONEY_SCALE
     );
+  if (actualCny > Number(usage.reserved_cny)) {
+    throw budgetError("actual_exceeds_reservation");
+  }
 
   await client.query(
     `UPDATE safety_ai_usage
@@ -154,6 +184,10 @@ async function lockMonth(client, monthKey) {
     "SELECT pg_advisory_xact_lock(hashtext('safety-ai-budget:' || $1::text))",
     [monthKey]
   );
+}
+
+async function lockTotalBudget(client) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('safety-ai-budget:total'))");
 }
 
 async function loadUsage(client, aiRunId, { forUpdate = false } = {}) {

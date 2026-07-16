@@ -10,6 +10,54 @@ const PROVIDER_ATTEMPT_STATUSES = Object.freeze([
   "invalid",
   "failed"
 ]);
+const DIAGNOSTIC_BLOCKING_STATUSES = Object.freeze(["reserved", "running", "completed"]);
+const SAFE_VALIDATION_KEYWORDS = new Set([
+  "additionalProperties",
+  "enum",
+  "maximum",
+  "maxItems",
+  "maxLength",
+  "minimum",
+  "minLength",
+  "required",
+  "type"
+]);
+const SAFE_VALIDATION_SCHEMA_PATHS = new Set([
+  "#/type",
+  "#/additionalProperties",
+  "#/required",
+  "#/properties/category/enum",
+  "#/properties/subjectType/enum",
+  "#/properties/impactScope/enum",
+  "#/properties/riskLevel/enum",
+  "#/properties/confidence/type",
+  "#/properties/confidence/minimum",
+  "#/properties/confidence/maximum",
+  "#/properties/evidence/type",
+  "#/properties/evidence/maxItems",
+  "#/properties/evidence/items/type",
+  "#/properties/evidence/items/additionalProperties",
+  "#/properties/evidence/items/required",
+  "#/properties/evidence/items/properties/source/enum",
+  "#/properties/evidence/items/properties/fact/type",
+  "#/properties/evidence/items/properties/fact/minLength",
+  "#/properties/evidence/items/properties/fact/maxLength",
+  "#/properties/recommendedAction/enum",
+  "#/properties/requiresHuman/type",
+  "#/properties/summary/type",
+  "#/properties/summary/minLength",
+  "#/properties/summary/maxLength"
+]);
+const SAFE_TOP_LEVEL_INSTANCE_PATHS = new Set([
+  "/category",
+  "/subjectType",
+  "/impactScope",
+  "/riskLevel",
+  "/confidence",
+  "/recommendedAction",
+  "/requiresHuman",
+  "/summary"
+]);
 const KNOWN_FAILURE_CODES = new Set([
   "invalid_ai_result",
   "qwen_invalid_response",
@@ -25,18 +73,20 @@ export async function runValidateQwen({
   stdout = process.stdout,
   loadRuntime = loadValidationRuntime
 } = {}) {
-  parseValidationArguments(argv);
+  const options = parseValidationArguments(argv);
   if (!stdout || typeof stdout.write !== "function") {
     throw new TypeError("stdout must be writable");
   }
 
   let runtime;
   try {
-    runtime = await loadRuntime();
+    runtime = await loadRuntime(options);
     if (!runtime || typeof runtime.validateOnce !== "function") {
       throw new TypeError("validation runtime is invalid");
     }
-    const summary = publicValidationSummary(await runtime.validateOnce());
+    const summary = publicValidationSummary(await runtime.validateOnce(), {
+      includeValidationIssues: options.diagnosticAttempt === true
+    });
     stdout.write(`${JSON.stringify(summary)}\n`);
     return summary;
   } finally {
@@ -52,18 +102,29 @@ export function parseValidationArguments(argv) {
       "拒绝执行：真实 Qwen 验证需要显式传入 --confirm-spend"
     );
   }
-  if (argv.length !== 1 || argv[0] !== "--confirm-spend") {
-    throw cliError(
-      "invalid_validation_arguments",
-      "用法：node backend/scripts/validate-qwen.js --confirm-spend"
-    );
+  if (argv.length === 1 && argv[0] === "--confirm-spend") {
+    return Object.freeze({ confirmSpend: true });
   }
-  return { confirmSpend: true };
+  if (argv.length === 3 &&
+      argv[0] === "--confirm-spend" &&
+      argv[1] === "--diagnostic-attempt" &&
+      argv[2].startsWith("--hard-cap-cny=")) {
+    const hardCapCny = Number(argv[2].slice("--hard-cap-cny=".length));
+    if (Number.isFinite(hardCapCny) && hardCapCny > 0 && hardCapCny <= 1) {
+      return Object.freeze({ confirmSpend: true, diagnosticAttempt: true, hardCapCny });
+    }
+  }
+  throw cliError(
+    "invalid_validation_arguments",
+    "用法：node backend/scripts/validate-qwen.js --confirm-spend [--diagnostic-attempt --hard-cap-cny=1]"
+  );
 }
 
 export async function validateQwenOnce({
   mode,
   autoActionsEnabled,
+  diagnosticAttempt = false,
+  totalBudgetCny,
   aiConfig,
   withTransaction,
   reserveBudget,
@@ -77,6 +138,12 @@ export async function validateQwenOnce({
   now = new Date()
 } = {}) {
   assertValidationMode(mode, autoActionsEnabled);
+  if (typeof diagnosticAttempt !== "boolean") {
+    throw new TypeError("diagnosticAttempt must be boolean");
+  }
+  const safeTotalBudgetCny = diagnosticAttempt
+    ? normalizeDiagnosticTotalBudget(totalBudgetCny)
+    : null;
   const safeConfig = normalizeValidationConfig(aiConfig);
   const safeNow = validDate(now);
   assertDependencies({
@@ -113,7 +180,12 @@ export async function validateQwenOnce({
          AND policy_version = $3
          AND status = ANY($4::text[])
        LIMIT 1`,
-      [safeConfig.model, safeConfig.promptVersion, safeConfig.policyVersion, PROVIDER_ATTEMPT_STATUSES]
+      [
+        safeConfig.model,
+        safeConfig.promptVersion,
+        safeConfig.policyVersion,
+        diagnosticAttempt ? DIAGNOSTIC_BLOCKING_STATUSES : PROVIDER_ATTEMPT_STATUSES
+      ]
     );
     if (previous.rows[0]) throw validationError("validation_already_attempted");
 
@@ -146,6 +218,7 @@ export async function validateQwenOnce({
       aiRunId: runId,
       messages,
       monthlyBudgetCny: safeConfig.monthlyBudgetCny,
+      ...(safeTotalBudgetCny == null ? {} : { totalBudgetCny: safeTotalBudgetCny }),
       inputCnyPerMillion: safeConfig.inputCnyPerMillion,
       outputCnyPerMillion: safeConfig.outputCnyPerMillion,
       maxCompletionTokens: MAX_COMPLETION_TOKENS,
@@ -164,7 +237,11 @@ export async function validateQwenOnce({
     return { ready: true };
   });
 
-  if (!prepared.ready) return emptySummary(safeConfig.model);
+  if (!prepared.ready) {
+    return publicValidationSummary(emptySummary(safeConfig.model), {
+      includeValidationIssues: diagnosticAttempt
+    });
+  }
 
   let output;
   let result;
@@ -194,6 +271,7 @@ export async function validateQwenOnce({
       withTransaction,
       settleBudget,
       releaseBudget,
+      includeValidationIssues: diagnosticAttempt,
       now: safeNow
     });
   }
@@ -224,7 +302,10 @@ export async function validateQwenOnce({
     inputTokens: output.usage.inputTokens,
     outputTokens: output.usage.outputTokens,
     estimatedCostCny: settled.actualCny,
-    pass: passed
+    pass: passed,
+    validationIssues: []
+  }, {
+    includeValidationIssues: diagnosticAttempt
   });
 }
 
@@ -235,6 +316,7 @@ async function finishFailedValidation({
   withTransaction,
   settleBudget,
   releaseBudget,
+  includeValidationIssues,
   now
 }) {
   const usage = validUsage(error?.usage) ? error.usage : null;
@@ -281,7 +363,10 @@ async function finishFailedValidation({
     inputTokens: usage?.inputTokens || 0,
     outputTokens: usage?.outputTokens || 0,
     estimatedCostCny: failure.cost,
-    pass: false
+    pass: false,
+    validationIssues: error?.validationIssues
+  }, {
+    includeValidationIssues
   });
 }
 
@@ -358,6 +443,13 @@ function normalizeValidationConfig(value) {
   return normalized;
 }
 
+function normalizeDiagnosticTotalBudget(value) {
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw validationError("validation_total_budget_invalid");
+  }
+  return value;
+}
+
 function isOfficialValidationBaseUrl(value) {
   try {
     const url = new URL(value);
@@ -374,12 +466,12 @@ function isOfficialValidationBaseUrl(value) {
   }
 }
 
-function publicValidationSummary(value) {
+function publicValidationSummary(value, { includeValidationIssues = false } = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("validation summary must be an object");
   }
   if (value.model !== FIXED_MODEL) throw new TypeError("validation summary model is invalid");
-  return {
+  const summary = {
     model: FIXED_MODEL,
     requestId: safeRequestId(value.requestId),
     inputTokens: nonNegativeInteger(value.inputTokens, "inputTokens"),
@@ -387,6 +479,36 @@ function publicValidationSummary(value) {
     estimatedCostCny: nonNegativeNumber(value.estimatedCostCny, "estimatedCostCny"),
     pass: value.pass === true
   };
+  if (includeValidationIssues) {
+    summary.validationIssues = safeValidationIssues(value.validationIssues);
+  }
+  return summary;
+}
+
+function safeValidationIssues(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 20).flatMap((issue) => {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) return [];
+    const instancePath = boundedDiagnosticString(issue.instancePath, 200);
+    const keyword = boundedDiagnosticString(issue.keyword, 80);
+    const schemaPath = boundedDiagnosticString(issue.schemaPath, 240);
+    if (instancePath == null || keyword == null || schemaPath == null) return [];
+    if (!safeValidationInstancePath(instancePath) ||
+        !SAFE_VALIDATION_KEYWORDS.has(keyword) ||
+        !SAFE_VALIDATION_SCHEMA_PATHS.has(schemaPath)) return [];
+    return [{ instancePath, keyword, schemaPath }];
+  });
+}
+
+function safeValidationInstancePath(value) {
+  return value === "" ||
+    SAFE_TOP_LEVEL_INSTANCE_PATHS.has(value) ||
+    /^\/evidence(?:\/(?:0|[1-9]\d*)(?:\/(?:source|fact))?)?$/u.test(value);
+}
+
+function boundedDiagnosticString(value, maxLength) {
+  if (typeof value !== "string" || Array.from(value).length > maxLength) return null;
+  return value;
 }
 
 function emptySummary(model) {
@@ -489,7 +611,7 @@ function validationError(code) {
   return error;
 }
 
-async function loadValidationRuntime() {
+async function loadValidationRuntime(options = {}) {
   const [
     { config },
     { pool, withTransaction },
@@ -505,13 +627,20 @@ async function loadValidationRuntime() {
     import("../src/safety/providers/qwenCaseProvider.js"),
     import("../src/safety/schemas/qwenCaseResult.js")
   ]);
+  const diagnosticAttempt = options.diagnosticAttempt === true;
+  const hardCapCny = diagnosticAttempt
+    ? normalizeDiagnosticTotalBudget(options.hardCapCny)
+    : null;
 
   return {
     validateOnce: () => validateQwenOnce({
       mode: config.safety.aiMode,
       autoActionsEnabled: config.safety.autoActionsEnabled,
+      diagnosticAttempt,
+      ...(hardCapCny == null ? {} : { totalBudgetCny: hardCapCny }),
       aiConfig: {
         ...config.safetyAi,
+        ...(hardCapCny == null ? {} : { monthlyBudgetCny: hardCapCny }),
         maxCompletionTokens: MAX_COMPLETION_TOKENS
       },
       withTransaction,

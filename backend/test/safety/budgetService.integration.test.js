@@ -13,7 +13,9 @@ test.beforeEach(async () => {
     "run-concurrent-b",
     "run-settle",
     "run-release",
-    "run-uncertain"
+    "run-uncertain",
+    "run-total-prior",
+    "run-total-next"
   ]);
 });
 
@@ -68,6 +70,67 @@ test("serializes concurrent reservations so only one can cross a near-cap budget
   assert.equal(usage.rows[0].status, "reserved");
   assert.ok(Number(usage.rows[0].reserved_cny) > 0.45);
   assert.ok(Number(usage.rows[0].reserved_cny) < 0.7);
+});
+
+test("serializes different-month reservations against one total cap", async () => {
+  const input = {
+    messages: [{ role: "user", content: "same bounded diagnostic evidence" }],
+    monthlyBudgetCny: 1,
+    totalBudgetCny: 0.7,
+    inputCnyPerMillion: 1,
+    outputCnyPerMillion: 500,
+    maxCompletionTokens: 900
+  };
+
+  const [first, second] = await Promise.all([
+    transaction((client) => reserveAiBudget(client, {
+      ...input,
+      aiRunId: "run-concurrent-a",
+      now: NOW
+    })),
+    transaction((client) => reserveAiBudget(client, {
+      ...input,
+      aiRunId: "run-concurrent-b",
+      now: new Date("2026-08-01T08:00:00.000Z")
+    }))
+  ]);
+
+  const results = [first, second];
+  assert.equal(results.filter((result) => result.ok).length, 1);
+  assert.equal(results.filter((result) => result.reason === "budget_total_exceeded").length, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_ai_usage")).rows[0].count, 1);
+});
+
+test("blocks a reservation when prior-month committed spend plus the maximum would exceed a total cap", async () => {
+  await pool.query(
+    `INSERT INTO safety_ai_usage (
+       id, ai_run_id, month_key, reserved_cny, actual_cny, status, created_at, settled_at
+     ) VALUES ('usage-total-prior', 'run-total-prior', '2026-06', 0.995, 0.995,
+               'settled', $1, $1)`,
+    [new Date("2026-06-30T08:00:00.000Z")]
+  );
+
+  const reservation = await transaction((client) => reserveAiBudget(client, {
+    aiRunId: "run-total-next",
+    messages: [{ role: "user", content: "bounded diagnostic evidence" }],
+    monthlyBudgetCny: 1,
+    totalBudgetCny: 1,
+    inputCnyPerMillion: 2,
+    outputCnyPerMillion: 8,
+    maxCompletionTokens: 900,
+    now: NOW
+  }));
+
+  assert.equal(reservation.ok, false);
+  assert.equal(reservation.reason, "budget_total_exceeded");
+  assert.equal(reservation.committedTotalCny, 0.995);
+  assert.ok(reservation.reservedCny > 0.0072);
+  assert.equal(
+    (await pool.query(
+      "SELECT count(*)::int AS count FROM safety_ai_usage WHERE ai_run_id = 'run-total-next'"
+    )).rows[0].count,
+    0
+  );
 });
 
 test("reuses only same-month reservations that still cover the current maximum estimate", async () => {
@@ -194,6 +257,43 @@ test("settles an uncertain provider timeout at the full reservation", async () =
   );
   assert.equal(usage.rows[0].status, "settled");
   assert.equal(Number(usage.rows[0].actual_cny), Number(usage.rows[0].reserved_cny));
+});
+
+test("rejects token-derived settlement above the reserved maximum", async () => {
+  const reservation = await transaction((client) => reserveAiBudget(client, {
+    aiRunId: "run-total-next",
+    messages: [{ role: "user", content: "bounded evidence" }],
+    monthlyBudgetCny: 1,
+    totalBudgetCny: 1,
+    inputCnyPerMillion: 2,
+    outputCnyPerMillion: 8,
+    maxCompletionTokens: 900,
+    now: NOW
+  }));
+
+  await assert.rejects(
+    transaction((client) => settleAiBudget(client, {
+      aiRunId: "run-total-next",
+      inputTokens: 100,
+      outputTokens: 100_000,
+      inputCnyPerMillion: 2,
+      outputCnyPerMillion: 8,
+      now: NOW
+    })),
+    (error) => error?.code === "invalid_ai_budget" &&
+      error.reason === "actual_exceeds_reservation"
+  );
+
+  assert.equal(reservation.ok, true);
+  assert.deepEqual((await pool.query(
+    `SELECT status, actual_cny, reserved_cny::text
+     FROM safety_ai_usage
+     WHERE ai_run_id = 'run-total-next'`
+  )).rows[0], {
+    status: "reserved",
+    actual_cny: null,
+    reserved_cny: reservation.reservedCny.toFixed(6)
+  });
 });
 
 async function seedRuns(runIds) {

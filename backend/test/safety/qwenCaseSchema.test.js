@@ -71,6 +71,81 @@ test("does not coerce provider values into the approved contract", () => {
   }
 });
 
+test("reports only frozen schema locations without provider values", () => {
+  const privateProviderValue = "private-provider-value-must-not-escape";
+  let failure;
+
+  try {
+    validateQwenCaseResult(clone({
+      ...validResult,
+      confidence: privateProviderValue
+    }));
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(failure?.code, "invalid_ai_result");
+  assert.deepEqual(failure.validationIssues, [{
+    instancePath: "/confidence",
+    keyword: "type",
+    schemaPath: "#/properties/confidence/type"
+  }]);
+  assert.equal(Object.isFrozen(failure.validationIssues), true);
+  assert.equal(Object.isFrozen(failure.validationIssues[0]), true);
+  assert.deepEqual(Object.keys(failure.validationIssues[0]).sort(), [
+    "instancePath",
+    "keyword",
+    "schemaPath"
+  ]);
+  assert.equal(JSON.stringify(failure.validationIssues).includes(privateProviderValue), false);
+});
+
+test("identifies a missing approved field through its safe instance path", () => {
+  let failure;
+
+  try {
+    validateQwenCaseResult(without(validResult, "summary"));
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(failure?.code, "invalid_ai_result");
+  assert.deepEqual(failure.validationIssues, [{
+    instancePath: "/summary",
+    keyword: "required",
+    schemaPath: "#/required"
+  }]);
+});
+
+test("reports whitespace-only normalized fields without retaining their values", () => {
+  let failure;
+
+  try {
+    validateQwenCaseResult(clone({
+      ...validResult,
+      evidence: [{ source: "report_detail", fact: "   " }],
+      summary: "   "
+    }));
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(failure?.code, "invalid_ai_result");
+  assert.deepEqual(failure.validationIssues, [
+    {
+      instancePath: "/summary",
+      keyword: "minLength",
+      schemaPath: "#/properties/summary/minLength"
+    },
+    {
+      instancePath: "/evidence/0/fact",
+      keyword: "minLength",
+      schemaPath: "#/properties/evidence/items/properties/fact/minLength"
+    }
+  ]);
+  assert.equal(JSON.stringify(failure.validationIssues).includes("   "), false);
+});
+
 function without(value, key) {
   const copy = clone(value);
   delete copy[key];

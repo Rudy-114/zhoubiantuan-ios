@@ -93,6 +93,68 @@ test("reserves, calls once, validates, settles, and marks one synthetic run", as
   assert.equal(providerCalls, 1);
 });
 
+test("diagnostic mode retries after a settled invalid run and keeps only safe schema locations", async () => {
+  let providerCalls = 0;
+  const dependencies = validationDependencies({
+    providerFactory: () => ({
+      async analyze() {
+        providerCalls += 1;
+        return {
+          result: providerCalls === 1
+            ? { ...validInvalidContactResult(), confidence: "private-provider-value" }
+            : validInvalidContactResult(),
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          requestId: `synthetic-diagnostic-${providerCalls}`,
+          rawContent: "private synthetic provider content must not persist"
+        };
+      }
+    })
+  });
+
+  const first = await validateQwenOnce({
+    mode: "shadow",
+    autoActionsEnabled: false,
+    diagnosticAttempt: true,
+    totalBudgetCny: 1,
+    aiConfig: AI_CONFIG,
+    now: NOW,
+    ...dependencies
+  });
+  const second = await validateQwenOnce({
+    mode: "shadow",
+    autoActionsEnabled: false,
+    diagnosticAttempt: true,
+    totalBudgetCny: 1,
+    aiConfig: AI_CONFIG,
+    now: new Date(NOW.getTime() + 1_000),
+    ...dependencies
+  });
+
+  assert.equal(first.pass, false);
+  assert.deepEqual(first.validationIssues, [{
+    instancePath: "/confidence",
+    keyword: "type",
+    schemaPath: "#/properties/confidence/type"
+  }]);
+  assert.equal(JSON.stringify(first).includes("private-provider-value"), false);
+  assert.equal(second.pass, true);
+  assert.deepEqual(second.validationIssues, []);
+  assert.equal(providerCalls, 2);
+  assert.deepEqual((await pool.query(
+    `SELECT status, raw_response, error_code
+     FROM safety_ai_runs
+     ORDER BY created_at, id`
+  )).rows, [
+    { status: "invalid", raw_response: "", error_code: "invalid_ai_result" },
+    { status: "completed", raw_response: "", error_code: null }
+  ]);
+  assert.equal(Number((await pool.query(
+    `SELECT COALESCE(sum(actual_cny), 0)::text AS total
+     FROM safety_ai_usage
+     WHERE status = 'settled'`
+  )).rows[0].total), 0.001);
+});
+
 test("concurrent confirmed attempts construct and call the provider exactly once", async () => {
   let providerFactoryCalls = 0;
   let providerCalls = 0;

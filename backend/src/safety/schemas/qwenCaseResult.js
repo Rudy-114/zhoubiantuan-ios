@@ -69,16 +69,40 @@ const ajv = new Ajv({
   useDefaults: false
 });
 const validate = ajv.compile(qwenCaseResultSchema);
+const REQUIRED_FIELD_NAMES = new Set([
+  "category",
+  "subjectType",
+  "impactScope",
+  "riskLevel",
+  "confidence",
+  "evidence",
+  "recommendedAction",
+  "requiresHuman",
+  "summary",
+  "source",
+  "fact"
+]);
 
 export function validateQwenCaseResult(value) {
-  if (!validate(value)) throw invalidAiResult();
+  if (!validate(value)) throw invalidAiResult(validate.errors);
 
   const evidence = value.evidence.map((item) => ({
     source: item.source,
     fact: item.fact.trim()
   }));
   if (!value.summary.trim() || evidence.some((item) => !item.fact)) {
-    throw invalidAiResult();
+    throw invalidAiResult([
+      ...(!value.summary.trim() ? [{
+        instancePath: "/summary",
+        keyword: "minLength",
+        schemaPath: "#/properties/summary/minLength"
+      }] : []),
+      ...evidence.flatMap((item, index) => item.fact ? [] : [{
+        instancePath: `/evidence/${index}/fact`,
+        keyword: "minLength",
+        schemaPath: "#/properties/evidence/items/properties/fact/minLength"
+      }])
+    ]);
   }
 
   return deepFreeze({
@@ -94,10 +118,23 @@ export function validateQwenCaseResult(value) {
   });
 }
 
-function invalidAiResult() {
+function invalidAiResult(issues = []) {
   const error = new Error("AI result failed validation");
   error.code = "invalid_ai_result";
+  error.validationIssues = Object.freeze(issues.map((issue) => Object.freeze({
+    instancePath: diagnosticInstancePath(issue),
+    keyword: issue.keyword,
+    schemaPath: issue.schemaPath
+  })));
   return error;
+}
+
+function diagnosticInstancePath(issue) {
+  const missingField = issue?.keyword === "required" ? issue.params?.missingProperty : null;
+  if (REQUIRED_FIELD_NAMES.has(missingField)) {
+    return `${issue.instancePath}/${missingField}`;
+  }
+  return issue.instancePath;
 }
 
 function deepFreeze(value) {

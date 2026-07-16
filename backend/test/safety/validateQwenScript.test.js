@@ -40,6 +40,54 @@ test("rejects unknown arguments before loading provider or configuration", async
   assert.equal(runtimeLoads, 0);
 });
 
+test("passes an explicit diagnostic attempt and one-yuan hard cap into the runtime", async () => {
+  const stdout = outputBuffer();
+  let runtimeOptions;
+
+  await runValidateQwen({
+    argv: ["--confirm-spend", "--diagnostic-attempt", "--hard-cap-cny=1"],
+    stdout,
+    loadRuntime: async (options) => {
+      runtimeOptions = options;
+      return {
+        validateOnce: async () => ({
+          model: "qwen3.7-plus-2026-05-26",
+          requestId: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          estimatedCostCny: 0,
+          pass: false
+        })
+      };
+    }
+  });
+
+  assert.deepEqual(runtimeOptions, {
+    confirmSpend: true,
+    diagnosticAttempt: true,
+    hardCapCny: 1
+  });
+  assert.equal(Object.isFrozen(runtimeOptions), true);
+});
+
+test("rejects a diagnostic cap above one yuan before loading the runtime", async () => {
+  let runtimeLoads = 0;
+
+  await assert.rejects(
+    runValidateQwen({
+      argv: ["--confirm-spend", "--diagnostic-attempt", "--hard-cap-cny=1.000001"],
+      stdout: outputBuffer(),
+      loadRuntime: async () => {
+        runtimeLoads += 1;
+        return { validateOnce: async () => assert.fail("validation must not run") };
+      }
+    }),
+    (error) => error?.code === "invalid_validation_arguments" && error.safeToDisplay === true
+  );
+
+  assert.equal(runtimeLoads, 0);
+});
+
 test("prints only the allowlisted validation summary and closes the runtime", async () => {
   const stdout = outputBuffer();
   let closes = 0;
@@ -70,6 +118,70 @@ test("prints only the allowlisted validation summary and closes the runtime", as
   assert.equal(stdout.text(), `${JSON.stringify(expected)}\n`);
   assert.equal(stdout.text().includes("must-not-print"), false);
   assert.equal(closes, 1);
+});
+
+test("prints only allowlisted schema locations in diagnostic mode", async () => {
+  const stdout = outputBuffer();
+  const expected = {
+    model: "qwen3.7-plus-2026-05-26",
+    requestId: "diagnostic-request-1",
+    inputTokens: 288,
+    outputTokens: 188,
+    estimatedCostCny: 0.00208,
+    pass: false,
+    validationIssues: [{
+      instancePath: "/confidence",
+      keyword: "type",
+      schemaPath: "#/properties/confidence/type"
+    }]
+  };
+
+  const result = await runValidateQwen({
+    argv: ["--confirm-spend", "--diagnostic-attempt", "--hard-cap-cny=1"],
+    stdout,
+    loadRuntime: async () => ({
+      validateOnce: async () => ({
+        ...expected,
+        validationIssues: [{
+          ...expected.validationIssues[0],
+          message: "private provider value",
+          value: "private provider value"
+        }],
+        rawResponse: "private provider response"
+      })
+    })
+  });
+
+  assert.deepEqual(result, expected);
+  assert.equal(stdout.text(), `${JSON.stringify(expected)}\n`);
+  assert.equal(stdout.text().includes("private provider"), false);
+});
+
+test("drops diagnostic locations that are not part of the fixed schema", async () => {
+  const stdout = outputBuffer();
+
+  const result = await runValidateQwen({
+    argv: ["--confirm-spend", "--diagnostic-attempt", "--hard-cap-cny=1"],
+    stdout,
+    loadRuntime: async () => ({
+      validateOnce: async () => ({
+        model: "qwen3.7-plus-2026-05-26",
+        requestId: "diagnostic-request-unsafe",
+        inputTokens: 1,
+        outputTokens: 1,
+        estimatedCostCny: 0.00001,
+        pass: false,
+        validationIssues: [{
+          instancePath: "/private-provider-value",
+          keyword: "private-provider-value",
+          schemaPath: "#/private-provider-value"
+        }]
+      })
+    })
+  });
+
+  assert.deepEqual(result.validationIssues, []);
+  assert.equal(stdout.text().includes("private-provider-value"), false);
 });
 
 test("closes the runtime when validation fails before producing a summary", async () => {
@@ -271,6 +383,66 @@ test("an uncertain provider failure settles conservatively and returns no privat
   assert.equal(queries.some(({ params }) => params.includes("qwen_timeout")), true);
 });
 
+test("a diagnostic schema failure settles usage and returns only safe locations", async () => {
+  const queries = [];
+  const ids = [
+    "00000000-0000-4000-8000-000000000031",
+    "00000000-0000-4000-8000-000000000032",
+    "00000000-0000-4000-8000-000000000033"
+  ];
+  const summary = await validateQwenOnce({
+    mode: "shadow",
+    autoActionsEnabled: false,
+    diagnosticAttempt: true,
+    totalBudgetCny: 1,
+    aiConfig: aiConfig(),
+    randomUUIDImpl: () => ids.shift(),
+    withTransaction: fakeTransaction(queries),
+    reserveBudget: async () => ({ ok: true, reservedCny: 0.01 }),
+    settleBudget: async () => ({ ok: true, actualCny: 0.00208 }),
+    releaseBudget: async () => assert.fail("billed schema failure must settle"),
+    buildMessages: () => [{ role: "user", content: "synthetic bounded evidence" }],
+    hashEvidence: () => "synthetic-evidence-hash",
+    validateResult: () => {
+      const error = new Error("private validation detail");
+      error.code = "invalid_ai_result";
+      error.validationIssues = [{
+        instancePath: "/confidence",
+        keyword: "type",
+        schemaPath: "#/properties/confidence/type",
+        message: "private provider value"
+      }];
+      throw error;
+    },
+    providerFactory: () => ({
+      async analyze() {
+        return {
+          result: { confidence: "private provider value" },
+          usage: { inputTokens: 288, outputTokens: 188, totalTokens: 476 },
+          requestId: "diagnostic-request-2",
+          rawContent: "private raw response"
+        };
+      }
+    })
+  });
+
+  assert.deepEqual(summary, {
+    model: "qwen3.7-plus-2026-05-26",
+    requestId: "diagnostic-request-2",
+    inputTokens: 288,
+    outputTokens: 188,
+    estimatedCostCny: 0.00208,
+    pass: false,
+    validationIssues: [{
+      instancePath: "/confidence",
+      keyword: "type",
+      schemaPath: "#/properties/confidence/type"
+    }]
+  });
+  assert.equal(JSON.stringify(summary).includes("private"), false);
+  assert.equal(queries.some(({ text }) => text.includes("raw_response = ''")), true);
+});
+
 test("a prior synthetic provider attempt blocks a second construction", async () => {
   let providerFactoryCalls = 0;
 
@@ -297,6 +469,132 @@ test("a prior synthetic provider attempt blocks a second construction", async ()
   assert.equal(providerFactoryCalls, 0);
 });
 
+test("diagnostic mode allows a new attempt after a prior invalid run", async () => {
+  let providerFactoryCalls = 0;
+  let providerCalls = 0;
+  const ids = [
+    "00000000-0000-4000-8000-000000000041",
+    "00000000-0000-4000-8000-000000000042",
+    "00000000-0000-4000-8000-000000000043"
+  ];
+
+  const summary = await validateQwenOnce({
+    mode: "shadow",
+    autoActionsEnabled: false,
+    diagnosticAttempt: true,
+    totalBudgetCny: 1,
+    aiConfig: aiConfig(),
+    randomUUIDImpl: () => ids.shift(),
+    withTransaction: fakeTransaction([], { previousStatus: "invalid" }),
+    reserveBudget: async (_client, input) => {
+      assert.equal(input.totalBudgetCny, 1);
+      return { ok: true, reservedCny: 0.01 };
+    },
+    settleBudget: async () => ({ ok: true, actualCny: 0.0005 }),
+    releaseBudget: async () => assert.fail("successful diagnostic must settle"),
+    buildMessages: () => [{ role: "user", content: "synthetic bounded evidence" }],
+    hashEvidence: () => "synthetic-evidence-hash",
+    validateResult: (value) => value,
+    providerFactory: () => {
+      providerFactoryCalls += 1;
+      return {
+        async analyze() {
+          providerCalls += 1;
+          return {
+            result: validInvalidContactResult(),
+            usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+            requestId: "diagnostic-retry-1"
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(summary.pass, true);
+  assert.deepEqual(summary.validationIssues, []);
+  assert.equal(providerFactoryCalls, 1);
+  assert.equal(providerCalls, 1);
+});
+
+test("diagnostic mode blocks while a prior attempt is still active", async () => {
+  let providerFactoryCalls = 0;
+
+  await assert.rejects(
+    validateQwenOnce({
+      mode: "shadow",
+      autoActionsEnabled: false,
+      diagnosticAttempt: true,
+      totalBudgetCny: 1,
+      aiConfig: aiConfig(),
+      withTransaction: fakeTransaction([], { previousStatus: "running" }),
+      reserveBudget: async () => assert.fail("active attempt must not reserve"),
+      settleBudget: async () => assert.fail("active attempt must not settle"),
+      releaseBudget: async () => assert.fail("active attempt must not release"),
+      buildMessages: () => [{ role: "user", content: "synthetic bounded evidence" }],
+      hashEvidence: () => "synthetic-evidence-hash",
+      validateResult: (value) => value,
+      providerFactory: () => {
+        providerFactoryCalls += 1;
+        return { analyze: async () => assert.fail("provider must not run") };
+      }
+    }),
+    (error) => error?.code === "validation_already_attempted"
+  );
+
+  assert.equal(providerFactoryCalls, 0);
+});
+
+test("diagnostic mode blocks another paid attempt after a completed run", async () => {
+  let providerFactoryCalls = 0;
+
+  await assert.rejects(
+    validateQwenOnce({
+      mode: "shadow",
+      autoActionsEnabled: false,
+      diagnosticAttempt: true,
+      totalBudgetCny: 1,
+      aiConfig: aiConfig(),
+      withTransaction: fakeTransaction([], { previousStatus: "completed" }),
+      reserveBudget: async () => assert.fail("completed attempt must not reserve"),
+      settleBudget: async () => assert.fail("completed attempt must not settle"),
+      releaseBudget: async () => assert.fail("completed attempt must not release"),
+      buildMessages: () => [{ role: "user", content: "synthetic bounded evidence" }],
+      hashEvidence: () => "synthetic-evidence-hash",
+      validateResult: (value) => value,
+      providerFactory: () => {
+        providerFactoryCalls += 1;
+        return { analyze: async () => assert.fail("provider must not run") };
+      }
+    }),
+    (error) => error?.code === "validation_already_attempted"
+  );
+
+  assert.equal(providerFactoryCalls, 0);
+});
+
+test("diagnostic mode rejects a missing or above-one-yuan total cap before database work", async () => {
+  for (const totalBudgetCny of [undefined, 1.000001]) {
+    await assert.rejects(
+      validateQwenOnce({
+        mode: "shadow",
+        autoActionsEnabled: false,
+        diagnosticAttempt: true,
+        totalBudgetCny,
+        aiConfig: aiConfig(),
+        withTransaction: async () => assert.fail("invalid total cap must not touch the database"),
+        reserveBudget: async () => assert.fail("invalid total cap must not reserve"),
+        settleBudget: async () => assert.fail("invalid total cap must not settle"),
+        releaseBudget: async () => assert.fail("invalid total cap must not release"),
+        buildMessages: () => assert.fail("invalid total cap must not build evidence"),
+        hashEvidence: () => assert.fail("invalid total cap must not hash evidence"),
+        validateResult: (value) => value,
+        providerFactory: () => assert.fail("invalid total cap must not construct provider")
+      }),
+      (error) => error?.code === "validation_total_budget_invalid"
+    );
+  }
+});
+
 function outputBuffer() {
   const chunks = [];
   return {
@@ -310,13 +608,14 @@ function outputBuffer() {
   };
 }
 
-function fakeTransaction(queries, { previousAttempt = false } = {}) {
+function fakeTransaction(queries, { previousAttempt = false, previousStatus } = {}) {
+  const status = previousStatus || (previousAttempt ? "invalid" : null);
   const client = {
     release() {},
     async query(text, params = []) {
       queries.push({ text, params });
       if (text.includes("FROM safety_ai_runs") && text.includes("is_synthetic = true")) {
-        return { rows: previousAttempt ? [{ id: "prior-run" }] : [] };
+        return { rows: status && params[3].includes(status) ? [{ id: "prior-run" }] : [] };
       }
       return { rows: [] };
     }
