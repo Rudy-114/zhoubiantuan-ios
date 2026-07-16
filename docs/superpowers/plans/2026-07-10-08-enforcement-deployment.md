@@ -330,19 +330,19 @@ Expected: no secret-value matches; staged files contain only intentional source/
 **Interfaces:**
 - Uses the release checklist and established private SSH environment variables.
 
-- [ ] **Step 1: Announce and confirm mutable production steps**
+- [x] **Step 1: Announce and confirm mutable production steps**
 
 List exact migrations not yet applied, service restart count, flags, backup/snapshot state, disposable test data, and rollback commands. Paid validation remains separately confirmed from Phase 7.
 
-- [ ] **Step 2: Deploy in approved order**
+- [x] **Step 2: Deploy in approved order**
 
 Verify staged source has no secrets, sync without `.env`/tests/artifacts unless required, install locked dependencies, migrate, restart, and check service active/restart count/log errors.
 
-- [ ] **Step 3: Run public and authenticated smoke**
+- [x] **Step 3: Run public and authenticated smoke**
 
 Verify health, privacy, feed, login, bootstrap, sync, public WebSocket, admin login/root signature, one disposable report, case appearance, human no-action decision, owner/reporter status, and audit. Remove disposable rows through supported cleanup/admin paths.
 
-- [ ] **Step 4: Verify production safety mode**
+- [x] **Step 4: Verify production safety mode**
 
 Required initial state:
 
@@ -354,7 +354,7 @@ enforcement gate: closed until 30 real comparisons
 automatic account actions: 0
 ```
 
-- [ ] **Step 5: Drill reversible rollback without an incident**
+- [x] **Step 5: Drill reversible rollback without an incident**
 
 On a disposable case, apply and roll back a temporary action, verify state/events/audit. Toggle automatic actions off if not already, verify report intake continues. Do not drop tables or erase evidence.
 
