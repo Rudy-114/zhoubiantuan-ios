@@ -627,6 +627,93 @@ test("a retryable provider failure permits a fresh audited run for the same evid
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_ai_usage")).rows[0].count, 2);
 });
 
+test("a reclaimed job settles an interrupted running attempt before retrying", async () => {
+  await seedPostCase({ category: "other" });
+  const interrupted = await analyze({
+    provider: {
+      analyze: async () => {
+        throw providerError("qwen_timeout", { retryable: true, billingUncertain: true });
+      }
+    }
+  });
+  assert.equal(interrupted.status, "failed");
+
+  const interruptedRun = (await pool.query("SELECT id FROM safety_ai_runs")).rows[0];
+  await pool.query(
+    `UPDATE safety_ai_runs
+     SET status = 'running', retryable = false, error_code = NULL,
+         raw_response = '', input_tokens = 0, output_tokens = 0,
+         estimated_cost_cny = 0, completed_at = NULL
+     WHERE id = $1`,
+    [interruptedRun.id]
+  );
+  await pool.query(
+    `UPDATE safety_ai_usage
+     SET status = 'reserved', actual_cny = NULL, settled_at = NULL
+     WHERE ai_run_id = $1`,
+    [interruptedRun.id]
+  );
+  const interruptedReservation = (await pool.query(
+    "SELECT reserved_cny::float8 AS reserved_cny FROM safety_ai_usage WHERE ai_run_id = $1",
+    [interruptedRun.id]
+  )).rows[0];
+
+  const stillWithinLease = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => assert.fail("a fresh concurrent run must not be replaced"),
+    recoverInterruptedRun: true,
+    now: new Date(NOW.getTime() + (5 * 60 * 1000) - 1)
+  });
+  assert.equal(stillWithinLease.status, "running");
+
+  let recoveryProviderCalls = 0;
+  const recovered = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => ({
+      analyze: async () => {
+        recoveryProviderCalls += 1;
+        return providerOutput(validResult());
+      }
+    }),
+    recoverInterruptedRun: true,
+    now: new Date(NOW.getTime() + (5 * 60 * 1000) + 1)
+  });
+
+  assert.equal(recovered.status, "completed");
+  assert.equal(recoveryProviderCalls, 1);
+  assert.deepEqual(
+    (await pool.query(
+      "SELECT status, retryable, error_code FROM safety_ai_runs WHERE id = $1",
+      [interruptedRun.id]
+    )).rows[0],
+    { status: "failed", retryable: true, error_code: "qwen_provider_interrupted" }
+  );
+  assert.deepEqual(
+    (await pool.query(
+      `SELECT status, reserved_cny::float8 AS reserved_cny, actual_cny::float8 AS actual_cny
+       FROM safety_ai_usage WHERE ai_run_id = $1`,
+      [interruptedRun.id]
+    )).rows[0],
+    {
+      status: "settled",
+      reserved_cny: interruptedReservation.reserved_cny,
+      actual_cny: interruptedReservation.reserved_cny
+    }
+  );
+  assert.equal(
+    (await pool.query("SELECT count(*)::int AS count FROM safety_ai_runs WHERE status = 'completed'")).rows[0].count,
+    1
+  );
+});
+
 test("worker persists only generic job errors when orchestration throws unexpectedly", async () => {
   await seedPostCase({ category: "other" });
   await pool.query(

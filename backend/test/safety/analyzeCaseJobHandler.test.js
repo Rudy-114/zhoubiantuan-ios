@@ -37,3 +37,22 @@ test("retryable AI failures fail the durable job while settled failures complete
   });
   assert.equal((await settledHandler({ case_id: "case-settled", payload: {} })).retryable, false);
 });
+
+test("a reclaimed durable job requests interrupted-run recovery", async () => {
+  const analyses = [];
+  const handler = createAnalyzeCaseJobHandler({
+    analyzeSafetyCase: async (input) => {
+      analyses.push(input);
+      return { status: "completed", syncEvents: [] };
+    },
+    notifySyncEvents: async () => {}
+  });
+
+  await handler({ case_id: "case-first", attempts: 1, payload: {} });
+  await handler({ case_id: "case-reclaimed", attempts: 2, payload: { revisionId: "revision-1" } });
+
+  assert.deepEqual(analyses, [
+    { caseId: "case-first", revisionId: null, recoverInterruptedRun: false },
+    { caseId: "case-reclaimed", revisionId: "revision-1", recoverInterruptedRun: true }
+  ]);
+});

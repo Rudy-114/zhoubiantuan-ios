@@ -110,9 +110,10 @@ export function createSafetyServerRuntime({
           });
           if (runtimeConfig.safety.aiMode !== "off") {
             handlers.analyze_case = createAnalyzeCaseJobHandler({
-              analyzeSafetyCase: ({ caseId, revisionId }) => analyzeCase({
+              analyzeSafetyCase: ({ caseId, revisionId, recoverInterruptedRun }) => analyzeCase({
                 caseId,
                 revisionId,
+                recoverInterruptedRun,
                 mode: runtimeConfig.safety.aiMode,
                 aiConfig: runtimeConfig.safetyAi,
                 automaticActionsEnabled: runtimeConfig.safety.autoActionsEnabled === true

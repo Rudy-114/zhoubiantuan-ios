@@ -5,6 +5,7 @@ import { reviewSubmission } from "../moderation/index.js";
 import { applySafetyAction } from "./actionService.js";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "./budgetService.js";
 import { assertAutomaticActionsAllowed } from "./enforcementGate.js";
+import { SAFETY_JOB_STALE_AFTER_MS } from "./jobQueue.js";
 import { evaluateSafetyPolicy } from "./policyEngine.js";
 import { buildQwenCaseMessages, hashCaseEvidence } from "./promptBuilder.js";
 import { independentReporterCount } from "./reportAbuseService.js";
@@ -42,12 +43,14 @@ export async function analyzeSafetyCase({
   publishRevision = publishApprovedRevision,
   automaticActionsEnabled = config.safety.autoActionsEnabled,
   assertEnforcementAllowed = assertAutomaticActionsAllowed,
+  recoverInterruptedRun = false,
   now = new Date()
 } = {}) {
   const safeCaseId = requiredId(caseId, "caseId");
   const safeRevisionId = revisionId == null ? null : requiredId(revisionId, "revisionId");
   const safeMode = aiMode(mode);
   const safeNow = validDate(now);
+  if (typeof recoverInterruptedRun !== "boolean") throw new TypeError("recoverInterruptedRun must be boolean");
   const safeAiConfig = normalizeAiConfig(aiConfig);
   if (typeof withTransaction !== "function") throw new TypeError("withTransaction must be a function");
   if (typeof moderation !== "function") throw new TypeError("moderation must be a function");
@@ -88,6 +91,7 @@ export async function analyzeSafetyCase({
     evidenceHash,
     hardSignal,
     messages,
+    recoverInterruptedRun,
     now: safeNow
   }));
   if (prepared.kind === "cached") return cachedResult(prepared.run);
@@ -278,6 +282,7 @@ async function prepareAiRun(client, {
   evidenceHash,
   hardSignal,
   messages,
+  recoverInterruptedRun,
   now
 }) {
   const existing = await client.query(
@@ -291,7 +296,11 @@ async function prepareAiRun(client, {
     [context.caseRecord.id, aiConfig.model, aiConfig.promptVersion, aiConfig.policyVersion, evidenceHash]
   );
   if (existing.rows[0]) {
-    return { kind: existing.rows[0].status === "completed" ? "cached" : "existing", run: existing.rows[0] };
+    if (recoverInterruptedRun && interruptedRunIsStale(existing.rows[0], now)) {
+      await reconcileInterruptedRun(client, existing.rows[0], now);
+    } else {
+      return { kind: existing.rows[0].status === "completed" ? "cached" : "existing", run: existing.rows[0] };
+    }
   }
 
   const runId = `sair-${randomUUID()}`;
@@ -333,6 +342,36 @@ async function prepareAiRun(client, {
   }
   await client.query("UPDATE safety_ai_runs SET status = 'running' WHERE id = $1", [runId]);
   return { kind: "ready", runId, reservation };
+}
+
+async function reconcileInterruptedRun(client, run, now) {
+  const usage = await client.query(
+    "SELECT status FROM safety_ai_usage WHERE ai_run_id = $1",
+    [run.id]
+  );
+  if (usage.rows[0]?.status === "reserved") {
+    await settleAiBudget(client, {
+      aiRunId: run.id,
+      inputTokens: 0,
+      outputTokens: 0,
+      uncertain: true,
+      now
+    });
+  }
+  await client.query(
+    `UPDATE safety_ai_runs
+     SET status = 'failed', retryable = true,
+         error_code = 'qwen_provider_interrupted', raw_response = '', completed_at = $2
+     WHERE id = $1 AND status = 'running'`,
+    [run.id, now]
+  );
+}
+
+function interruptedRunIsStale(run, now) {
+  if (run.status !== "running") return false;
+  const startedAt = new Date(run.started_at || run.created_at);
+  return !Number.isNaN(startedAt.getTime()) &&
+    startedAt.getTime() <= now.getTime() - SAFETY_JOB_STALE_AFTER_MS;
 }
 
 async function findCompletedRunForCurrentEvidence(client, { context, aiConfig }) {
