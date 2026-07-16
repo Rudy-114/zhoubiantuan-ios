@@ -50,3 +50,12 @@ CDN 源站建议指向 OSS Bucket 的公网读域名，缓存规则至少覆盖�
 - `message/*`
 
 验收方式：调用 `/api/posts` 或 `/api/bootstrap` 后，确认返回的 `remoteImageURLs`、`avatarURL`、`backgroundURL`、私信 `imageURL` 域名是 CDN 域名，而不是 API 域名。
+
+## 举报与审核安全系统
+
+后端包含服务端范围判定的举报入口、不可变证据、案件与幂等操作、内容更正与申诉、持久化任务、隔离的设备签名审核后台，以及受预算和运行时门禁约束的 AI shadow/enforce 流程。集合级限制只影响集合的有效可见性或联系方式展示，不会改写子帖自己的审核状态。
+
+所有新能力默认关闭：案件入口、AI、自动操作和审核后台必须分阶段启用；生产回滚优先关闭自动操作和 AI、保留审计数据，再按需恢复运行目录和 Nginx。数据库 down migration 仅用于本地迁移测试，不是常规生产回滚手段。
+
+- 运维、架构、保留策略、上线顺序、回滚和事故处理：[Safety System Operations Runbook](docs/operations/safety-system.md)
+- 每次上线或回滚使用的核对表：[Safety Release Checklist](docs/operations/verification/safety-release-checklist.md)
