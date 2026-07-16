@@ -15,6 +15,9 @@ import { validateQwenCaseResult } from "./schemas/qwenCaseResult.js";
 import { lockSafetyTarget } from "./safetyTargetLock.js";
 
 const RAW_RESPONSE_LIMIT = 20_000;
+const HUMAN_AUTHORITY_STATUSES = new Set([
+  "appealed", "resolved_no_action", "resolved_restored", "resolved_actioned"
+]);
 const KNOWN_PROVIDER_ERRORS = new Set([
   "invalid_ai_result",
   "qwen_fixture_invalid",
@@ -382,13 +385,16 @@ async function completeSuccessfulRun(client, {
   });
   const staleCase = current.version_matches !== true;
   const staleRun = run.version_matches !== true || run.status_matches !== true;
+  const humanAuthorityHold = current.manual_hold === true || HUMAN_AUTHORITY_STATUSES.has(current.status);
   let gateOpen = false;
   let completionReason = staleCase
     ? "stale_case_version"
     : staleRun
       ? "stale_run_version"
       : null;
-  if (!completionReason && wantsAutomaticActions) {
+  if (!completionReason && wantsAutomaticActions && humanAuthorityHold) {
+    completionReason = "manual_hold";
+  } else if (!completionReason && wantsAutomaticActions) {
     try {
       await assertEnforcementAllowed(client, {
         ai: aiConfig,
@@ -485,7 +491,9 @@ async function completeSuccessfulRun(client, {
     }
   }
   if (!revisionPublished) {
-    const operationalStatus = gateOpen ? policy.nextStatus : "manual_review";
+    const operationalStatus = humanAuthorityHold
+      ? current.status
+      : gateOpen ? policy.nextStatus : "manual_review";
     await client.query(
       "UPDATE safety_cases SET status = $2, updated_at = $3 WHERE id = $1",
       [current.id, operationalStatus, now]

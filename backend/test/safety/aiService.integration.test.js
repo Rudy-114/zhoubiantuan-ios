@@ -348,6 +348,53 @@ test("stores hard signals and proposals but applies nothing in shadow mode", asy
   assert.equal(safetyCase.rows[0].ai_recommendation.mode, "shadow");
 });
 
+test("preserves a human terminal state and never opens the automatic-action gate", async () => {
+  await seedPostCase({ category: "suspected_scam" });
+  await pool.query(
+    `UPDATE safety_cases
+     SET status = 'resolved_actioned', manual_hold = true, resolved_at = $2
+     WHERE id = $1`,
+    ["case-ai", NOW]
+  );
+  let gateCalls = 0;
+  const result = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "enforce",
+    automaticActionsEnabled: true,
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: async () => ({
+      outcome: "block",
+      status: "rejected",
+      riskLevel: "high",
+      source: "textAgent",
+      reason: "Synthetic high-risk signal"
+    }),
+    providerFactory: () => ({
+      analyze: async () => providerOutput(validResult({
+        category: "suspected_scam",
+        riskLevel: "high",
+        confidence: 0.99,
+        recommendedAction: "hide_content_temporarily"
+      }))
+    }),
+    assertEnforcementAllowed: async () => {
+      gateCalls += 1;
+      return { passed: true };
+    },
+    now: NOW
+  });
+
+  assert.equal(result.reason, "manual_hold");
+  assert.equal(result.applied, false);
+  assert.equal(gateCalls, 0);
+  const safetyCase = await pool.query(
+    "SELECT status, manual_hold FROM safety_cases WHERE id = 'case-ai'"
+  );
+  assert.deepEqual(safetyCase.rows[0], { status: "resolved_actioned", manual_hold: true });
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_actions")).rows[0].count, 0);
+});
+
 test("releases database locks across provider work and stores stale results without changing the case", async () => {
   await seedPostCase({ category: "suspected_scam" });
   const provider = {
