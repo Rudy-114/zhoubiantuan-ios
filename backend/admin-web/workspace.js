@@ -203,6 +203,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     deactivate,
     renderView,
     handleClick,
+    handleKeyDown,
     handleSubmit,
     handlePopState,
     closeDialog,
@@ -262,7 +263,7 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     if (!action) return false;
     if (action === "toggle-workspace-nav") {
       state.mobileNavOpen = !state.mobileNavOpen;
-      requestRender();
+      requestRender({ focusNavToggle: true });
       return true;
     }
     if (action === "workspace-route") {
@@ -348,11 +349,21 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     return false;
   }
 
+  function handleKeyDown(event) {
+    if (event?.key !== "Escape" || !state.mobileNavOpen || state.dialog) return false;
+    state.mobileNavOpen = false;
+    requestRender({ focusNavToggle: true });
+    return true;
+  }
+
   function handleSubmit(form, values) {
     if (form.id === "case-filter-form") {
+      if (state.selectedCaseID && state.caseReturnRoute === WorkspaceRoute.OVERVIEW) {
+        state.caseReturnRoute = WorkspaceRoute.CASES;
+      }
       state.filters = normalizeFilters(values);
       state.search = String(values.search || "").trim();
-      saveFilters(state.filters);
+      saveFilters(state.filters, state.caseReturnRoute);
       void loadCases({ reset: true });
       return true;
     }
@@ -829,7 +840,12 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
 
   function reconcileCase(detail) {
     const index = state.cases.findIndex((item) => item.id === detail.id);
-    if (index >= 0) state.cases.splice(index, 1, listItemFromDetail(detail));
+    if (index < 0) return;
+    const filters = filtersForRoute();
+    const matches = ["status", "subjectType", "category", "riskLevel"]
+      .every((field) => !filters[field] || detail[field] === filters[field]);
+    if (matches) state.cases.splice(index, 1, listItemFromDetail(detail));
+    else state.cases.splice(index, 1);
   }
 
   function routeContent(context) {
@@ -924,8 +940,8 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     return shell;
   }
 
-  function requestRender({ focusHeading = false } = {}) {
-    onRender({ focusHeading });
+  function requestRender(options = {}) {
+    onRender(options);
   }
 }
 
@@ -1067,11 +1083,17 @@ function safeHistoryFilters(value) {
   }
 }
 
-function saveFilters(filters) {
-  globalThis.history?.replaceState?.({
+function saveFilters(filters, caseReturnRoute = "") {
+  const nextState = {
     ...(globalThis.history.state || {}),
     workspaceFilters: filters
-  }, "", globalThis.location?.pathname || "/admin/cases");
+  };
+  if (caseReturnRoute) nextState.workspaceCaseReturnRoute = caseReturnRoute;
+  globalThis.history?.replaceState?.(
+    nextState,
+    "",
+    globalThis.location?.pathname || "/admin/cases"
+  );
 }
 
 function listItemFromDetail(detail) {

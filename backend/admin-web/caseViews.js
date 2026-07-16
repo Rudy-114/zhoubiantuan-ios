@@ -51,6 +51,30 @@ const REPORT_ABUSE_REASON_LABELS = Object.freeze({
   other: "其他"
 });
 
+const REVISION_COMPARISON_FIELDS = Object.freeze([
+  ["title", "标题"],
+  ["name", "名称"],
+  ["description", "说明"],
+  ["groupInfo", "拉群说明"],
+  ["defaultNote", "默认说明"],
+  ["categoryTags", "分类"],
+  ["fandomTags", "作品标签"],
+  ["price", "价格"],
+  ["deposit", "定金"],
+  ["condition", "成团条件"],
+  ["deadline", "截止时间"],
+  ["contactWechat", "微信"],
+  ["contactQQ", "QQ"],
+  ["contactGroupNumber", "QQ群号"]
+]);
+
+const REVISION_COMPARISON_BEFORE_ALIASES = Object.freeze({
+  defaultNote: Object.freeze(["defaultNote", "collectionDefaultNote"]),
+  contactWechat: Object.freeze(["contactWechat", "wechat"]),
+  contactQQ: Object.freeze(["contactQQ", "qq"]),
+  contactGroupNumber: Object.freeze(["contactGroupNumber", "groupNumber"])
+});
+
 const DESTRUCTIVE_DECISIONS = new Set([
   "permanent_remove", "restore", "uphold_appeal", "overturn_appeal", "restrict_user", "restore_user"
 ]);
@@ -187,7 +211,7 @@ export function renderCaseInspector({
   inspector.append(detailSection("AI 与人工对比", renderCaseAIComparison(detail, busy)));
   inspector.append(detailSection("时间线", timeline(detail.events)));
   inspector.append(detailSection("动作记录", actionList(detail.actions)));
-  inspector.append(detailSection("整改与申诉", revisionAndAppeal(detail)));
+  inspector.append(detailSection("整改与申诉", revisionAndAppeal(detail, revealMap)));
   inspector.append(detailSection("关联案件", relatedCases(detail.relatedCases)));
   inspector.append(detailSection("人工决定", decisionControls(detail, busy), "decision-section"));
   if (dialog?.kind === "evidence") inspector.append(evidenceDialog(detail, dialog.evidence, busy));
@@ -538,9 +562,29 @@ function actionList(actions = []) {
   return list;
 }
 
-function revisionAndAppeal(detail) {
+export function revisionComparisonRows(beforeSnapshot, afterSnapshot) {
+  const before = plainObject(beforeSnapshot);
+  const after = plainObject(afterSnapshot);
+  return REVISION_COMPARISON_FIELDS.flatMap(([field, label]) => {
+    if (!Object.hasOwn(after, field)) return [];
+    const beforeFields = REVISION_COMPARISON_BEFORE_ALIASES[field] || [field];
+    const beforeField = beforeFields.find((candidate) => Object.hasOwn(before, candidate));
+    const beforeValue = comparisonValue(beforeField ? before[beforeField] : undefined);
+    const afterValue = comparisonValue(after[field]);
+    return [{
+      field,
+      label,
+      before: beforeValue,
+      after: afterValue,
+      changed: beforeValue !== afterValue
+    }];
+  });
+}
+
+function revisionAndAppeal(detail, revealMap) {
   const container = element("div", "stack-list");
   if (!detail.revisions?.length && !detail.appeal) return emptyState("没有整改版本或申诉。" );
+  const originalSnapshot = revealedOriginalRevisionSnapshot(detail, revealMap);
   for (const revision of detail.revisions || []) {
     const item = element("div", "subsection-row");
     const title = element("strong");
@@ -548,6 +592,15 @@ function revisionAndAppeal(detail) {
     const meta = element("span", "muted");
     meta.textContent = formatDateTime(revision.createdAt);
     item.append(title, meta);
+    if (originalSnapshot) {
+      item.append(revisionComparisonTable(
+        revisionComparisonRows(originalSnapshot, revision.snapshot)
+      ));
+    } else {
+      const locked = element("p", "muted");
+      locked.textContent = "先填写理由并查看原始证据，才能显示整改前后对比。";
+      item.append(locked);
+    }
     container.append(item);
   }
   if (detail.appeal) {
@@ -560,6 +613,73 @@ function revisionAndAppeal(detail) {
     container.append(item);
   }
   return container;
+}
+
+export function revealedOriginalRevisionSnapshot(detail, revealMap) {
+  if (!(revealMap instanceof Map)) return null;
+  for (const evidence of detail.evidence || []) {
+    if (!evidenceCanRepresentSubject(evidence.type, detail.subjectType)) continue;
+    const snapshot = revealMap.get(evidence.id)?.evidence?.structuredSnapshot;
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) continue;
+    if (snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)) {
+      return snapshot.source;
+    }
+    return snapshot;
+  }
+  return null;
+}
+
+function evidenceCanRepresentSubject(evidenceType, subjectType) {
+  const canonicalType = typeof evidenceType === "string"
+    ? evidenceType.replace(/_snapshot$/u, "")
+    : "";
+  return canonicalType === subjectType ||
+    (subjectType === "collection" && canonicalType === "post");
+}
+
+function revisionComparisonTable(rows) {
+  if (!rows.length) return emptyState("当前版本没有可比较的白名单字段。" );
+  const wrapper = element("div", "table-scroll revision-comparison");
+  const table = element("table", "case-table revision-table");
+  const caption = element("caption", "visually-hidden");
+  caption.textContent = "整改前后对比";
+  const head = element("thead");
+  const headRow = element("tr");
+  for (const label of ["字段", "整改前", "提交内容"]) {
+    const cell = element("th");
+    cell.scope = "col";
+    cell.textContent = label;
+    headRow.append(cell);
+  }
+  head.append(headRow);
+  const body = element("tbody");
+  for (const row of rows) {
+    const tableRow = element("tr", row.changed ? "is-changed" : "");
+    tableRow.append(
+      tableCell("字段", `${row.label}${row.changed ? "（已更改）" : "（未更改）"}`),
+      tableCell("整改前", row.before),
+      tableCell("提交内容", row.after)
+    );
+    body.append(tableRow);
+  }
+  table.append(caption, head, body);
+  wrapper.append(table);
+  return wrapper;
+}
+
+function plainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function comparisonValue(value) {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) {
+    const items = value.filter((item) => ["string", "number", "boolean"].includes(typeof item));
+    return items.length ? items.map(String).join("、") : "—";
+  }
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (["string", "number"].includes(typeof value)) return String(value);
+  return "—";
 }
 
 function relatedCases(cases = []) {

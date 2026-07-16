@@ -57,6 +57,8 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
     assert.match(sources.get("api.js"), /credentials: "same-origin"/u);
     assert.doesNotMatch(sources.get("api.js"), /console\./u);
     assert.doesNotMatch(sources.get("app.js"), /localStorage|sessionStorage|console\./u);
+    assert.match(sources.get("app.js"), /globalThis\.addEventListener\("keydown", handleKeyDown\)/u);
+    assert.match(sources.get("app.js"), /view\.querySelector\("\.nav-toggle"\)\?\.focus\(\)/u);
     assert.match(sources.get("aiViews.js"), /执行闸门/u);
     assert.match(sources.get("aiViews.js"), /运行版本一致/u);
     assert.match(sources.get("aiViews.js"), /夹具版本一致/u);

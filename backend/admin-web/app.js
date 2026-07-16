@@ -57,9 +57,15 @@ if (app) {
   app.replaceChildren(renderStartupView());
   app.addEventListener("click", handleClick);
   app.addEventListener("submit", handleSubmit);
+  globalThis.addEventListener("keydown", handleKeyDown);
   globalThis.addEventListener("admin:unauthorized", handleUnauthorized);
   globalThis.addEventListener("popstate", () => void workspace?.handlePopState());
   void start();
+}
+
+function handleKeyDown(event) {
+  if (state.screen !== AuthScreen.AUTHENTICATED || !workspace?.handleKeyDown(event)) return;
+  event.preventDefault();
 }
 
 async function start() {
@@ -442,7 +448,7 @@ function togglePassword(button) {
   input.focus();
 }
 
-function render({ focusHeading = false } = {}) {
+function render({ focusHeading = false, focusNavToggle = false } = {}) {
   if (!app) return;
   document.title = state.screen === AuthScreen.AUTHENTICATED
     ? workspace?.getTitle() || TITLES[state.screen]
@@ -488,6 +494,8 @@ function render({ focusHeading = false } = {}) {
       view.querySelector(".case-inspector h2"),
       ...view.querySelectorAll("h1")
     ].find((heading) => heading?.getClientRects().length > 0)?.focus());
+  } else if (focusNavToggle) {
+    queueMicrotask(() => view.querySelector(".nav-toggle")?.focus());
   }
 }
 

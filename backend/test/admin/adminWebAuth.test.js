@@ -1,6 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AdminAPIError, adminFetch } from "../../admin-web/api.js";
 import { canonicalChallengePayload } from "../../admin-web/deviceKeys.js";
+
+test("surfaces structured admin API errors as readable messages", async () => {
+  const originalLocation = globalThis.location;
+  const originalFetch = globalThis.fetch;
+  globalThis.location = { origin: "https://admin.example" };
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: {
+      code: "TEMPORARY_UNAVAILABLE",
+      message: "AI 健康状态暂时不可用"
+    }
+  }), {
+    status: 503,
+    headers: { "content-type": "application/json" }
+  });
+
+  try {
+    await assert.rejects(
+      adminFetch("/admin/api/ai-health"),
+      (error) => {
+        assert.equal(error instanceof AdminAPIError, true);
+        assert.equal(error.message, "AI 健康状态暂时不可用");
+        assert.equal(error.code, "TEMPORARY_UNAVAILABLE");
+        assert.equal(error.status, 503);
+        return true;
+      }
+    );
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else globalThis.location = originalLocation;
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("builds the exact browser challenge payload expected by the server", () => {
   assert.equal(

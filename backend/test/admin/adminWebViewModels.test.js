@@ -11,7 +11,11 @@ import {
   WorkspaceRoute
 } from "../../admin-web/workspace.js";
 import { riskLabel, statusLabel } from "../../admin-web/formatters.js";
-import { availableCaseDecisions } from "../../admin-web/caseViews.js";
+import {
+  availableCaseDecisions,
+  revealedOriginalRevisionSnapshot,
+  revisionComparisonRows
+} from "../../admin-web/caseViews.js";
 
 test("serializes only supported case filters and appends an opaque cursor", () => {
   assert.equal(
@@ -32,6 +36,23 @@ test("rejects stale async responses by request sequence", () => {
   assert.equal(isLatestRequest(4, 4), true);
   assert.equal(isLatestRequest(5, 4), false);
   assert.equal(isLatestRequest(3, 4), false);
+});
+
+test("closes an open mobile navigation drawer with Escape", () => {
+  const renders = [];
+  const controller = createWorkspaceController({
+    api: async () => ({ cases: [], counts: {}, nextCursor: null }),
+    onRender: (options) => { renders.push(options); }
+  });
+
+  assert.equal(controller.handleClick({ dataset: { action: "toggle-workspace-nav" } }), true);
+  assert.equal(controller.getState().mobileNavOpen, true);
+  assert.equal(controller.handleKeyDown({ key: "Escape" }), true);
+  assert.equal(controller.getState().mobileNavOpen, false);
+  assert.deepEqual(renders, [
+    { focusNavToggle: true },
+    { focusNavToggle: true }
+  ]);
 });
 
 test("maps workspace paths without placing filter or credential state in URLs", () => {
@@ -321,6 +342,94 @@ test("offers only appeal settlement and independent account controls for an appe
   }), ["uphold_appeal", "overturn_appeal", "restrict_user"]);
 });
 
+test("selects and unwraps the revealed source evidence for a correction comparison", () => {
+  const detail = {
+    subjectType: "post",
+    evidence: [
+      { id: "collection-evidence", type: "collection" },
+      { id: "post-evidence", type: "post_snapshot" }
+    ]
+  };
+  const revealMap = new Map([
+    ["collection-evidence", {
+      evidence: { structuredSnapshot: { source: { name: "其他合集" } } }
+    }],
+    ["post-evidence", {
+      evidence: {
+        structuredSnapshot: {
+          source: {
+            title: "合成待整改内容",
+            wechat: "old-wechat",
+            report: { detail: "must stay hidden" }
+          },
+          report: { detail: "must stay hidden" }
+        }
+      }
+    }]
+  ]);
+
+  assert.deepEqual(revealedOriginalRevisionSnapshot(detail, revealMap), {
+    title: "合成待整改内容",
+    wechat: "old-wechat",
+    report: { detail: "must stay hidden" }
+  });
+});
+
+test("uses post evidence for a collection-scoped shared-field correction", () => {
+  const detail = {
+    subjectType: "collection",
+    evidence: [{ id: "shared-post-evidence", type: "post" }]
+  };
+  const revealMap = new Map([["shared-post-evidence", {
+    evidence: {
+      structuredSnapshot: {
+        source: {
+          title: "子帖子标题",
+          wechat: "old-wechat",
+          collectionDefaultNote: "old-note"
+        },
+        report: { reportedField: "contact_wechat" }
+      }
+    }
+  }]]);
+
+  const before = revealedOriginalRevisionSnapshot(detail, revealMap);
+  assert.deepEqual(revisionComparisonRows(before, {
+    name: "合集名称",
+    contactWechat: "new-wechat",
+    defaultNote: "new-note"
+  }), [
+    { field: "name", label: "名称", before: "—", after: "合集名称", changed: true },
+    { field: "defaultNote", label: "默认说明", before: "old-note", after: "new-note", changed: true },
+    { field: "contactWechat", label: "微信", before: "old-wechat", after: "new-wechat", changed: true }
+  ]);
+});
+
+test("builds a privacy-allowlisted correction comparison with legacy contact aliases", () => {
+  assert.deepEqual(revisionComparisonRows(
+    {
+      title: "合成待整改内容",
+      wechat: "old-wechat",
+      groupInfo: "合集继承的拉群说明",
+      deadline: "2030-01-01T00:00:00.000Z",
+      state: "awaiting_correction",
+      report: { detail: "must stay hidden" }
+    },
+    {
+      title: "合成整改版标题",
+      description: "虚构整改版说明",
+      categoryTags: ["虚构整改"],
+      contactWechat: "new-wechat",
+      imageObjectKeys: ["must-not-render"]
+    }
+  ), [
+    { field: "title", label: "标题", before: "合成待整改内容", after: "合成整改版标题", changed: true },
+    { field: "description", label: "说明", before: "—", after: "虚构整改版说明", changed: true },
+    { field: "categoryTags", label: "分类", before: "—", after: "虚构整改", changed: true },
+    { field: "contactWechat", label: "微信", before: "old-wechat", after: "new-wechat", changed: true }
+  ]);
+});
+
 test("keeps the originating specialized queue when a case inspector opens and closes", async () => {
   const originalLocation = globalThis.location;
   const originalHistory = globalThis.history;
@@ -347,6 +456,95 @@ test("keeps the originating specialized queue when a case inspector opens and cl
     assert.equal(history.state.workspaceCaseReturnRoute, WorkspaceRoute.APPEALS);
     controller.handleClick({ dataset: { action: "close-case" } });
     assert.equal(location.pathname, "/admin/appeals");
+  } finally {
+    if (originalLocation === undefined) delete globalThis.location;
+    else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });
+    if (originalHistory === undefined) delete globalThis.history;
+    else Object.defineProperty(globalThis, "history", { configurable: true, value: originalHistory });
+  }
+});
+
+test("applies explicit queue filters from an overview case inspector", async () => {
+  const originalLocation = globalThis.location;
+  const originalHistory = globalThis.history;
+  const location = { pathname: "/admin" };
+  const history = {
+    state: {},
+    pushState(nextState, _title, url) {
+      this.state = nextState;
+      location.pathname = url;
+    },
+    replaceState(nextState, _title, url) {
+      this.state = nextState;
+      location.pathname = url;
+    }
+  };
+  const requests = [];
+  Object.defineProperty(globalThis, "location", { configurable: true, value: location });
+  Object.defineProperty(globalThis, "history", { configurable: true, value: history });
+  const controller = createWorkspaceController({
+    api: async (path) => {
+      requests.push(path);
+      if (path === "/admin/api/cases/case-urgent") {
+        return {
+          case: {
+            id: "case-urgent",
+            status: "manual_review",
+            riskLevel: "urgent",
+            subjectType: "post",
+            category: "harassment_or_abuse"
+          }
+        };
+      }
+      if (path === "/admin/api/cases/case-urgent/decision") {
+        return {
+          case: {
+            id: "case-urgent",
+            status: "resolved_no_action",
+            riskLevel: "urgent",
+            subjectType: "post",
+            category: "harassment_or_abuse"
+          }
+        };
+      }
+      return {
+        cases: [{
+          id: "case-urgent",
+          status: "manual_review",
+          riskLevel: "urgent",
+          subjectType: "post",
+          category: "harassment_or_abuse"
+        }],
+        counts: {},
+        nextCursor: null
+      };
+    },
+    onRender: () => {}
+  });
+  try {
+    await controller.activate();
+    controller.handleClick({ dataset: { action: "open-case", caseId: "case-urgent" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(controller.handleSubmit({ id: "case-filter-form" }, {
+      status: "manual_review",
+      riskLevel: "urgent",
+      sort: "urgent",
+      search: ""
+    }), true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests.at(-1),
+      "/admin/api/cases?status=manual_review&riskLevel=urgent&sort=urgent&limit=50");
+    assert.equal(controller.getState().caseReturnRoute, WorkspaceRoute.CASES);
+    assert.equal(history.state.workspaceCaseReturnRoute, WorkspaceRoute.CASES);
+
+    assert.equal(controller.handleSubmit({
+      id: "case-decision-form",
+      dataset: { caseId: "case-urgent", decision: "no_action" }
+    }, { reason: "reviewed" }), true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(controller.getState().cases.length, 0);
   } finally {
     if (originalLocation === undefined) delete globalThis.location;
     else Object.defineProperty(globalThis, "location", { configurable: true, value: originalLocation });

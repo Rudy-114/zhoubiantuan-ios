@@ -59,9 +59,20 @@ export async function adminFetch(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new AdminAPIError(payload?.error || "管理员请求失败", {
+    const responseError = payload?.error;
+    const message = typeof responseError === "string"
+      ? responseError
+      : typeof responseError?.message === "string" && responseError.message
+        ? responseError.message
+        : "管理员请求失败";
+    const code = typeof payload?.code === "string" && payload.code
+      ? payload.code
+      : typeof responseError?.code === "string" && responseError.code
+        ? responseError.code
+        : "admin_request_failed";
+    throw new AdminAPIError(message, {
       status: response.status,
-      code: payload?.code || "admin_request_failed"
+      code
     });
   }
   return payload;
