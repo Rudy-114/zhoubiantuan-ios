@@ -56,6 +56,17 @@ node scripts/validate-qwen.js \
 No diagnostic code has been deployed and no new paid call has occurred. Before
 the first production deployment of this change:
 
+The final read-only baseline confirmed the production service active/running,
+`shadow`, automatic actions disabled, monthly budget zero, CNY 2/CNY 8 rates,
+the fixed model/prompt/policy versions, a present API key without reading it,
+and the official DashScope host. Lifetime committed spend was CNY 0.002080;
+there were zero active synthetic runs, zero completed synthetic validations,
+one prior invalid synthetic validation, and zero real cases, actions, or AI
+evaluations. Public health and `/admin` returned 200, while unauthenticated AI
+health returned 401. Remote and local validation-script checksums differed,
+independently confirming this diagnostic commit was not deployed. The check
+performed no restart, environment change, database write, or provider call.
+
 1. Confirm service health and the authenticated AI health page, production
    `shadow` mode, automatic actions disabled, budget zero, fixed versions, and
    no active synthetic validation run.
