@@ -346,7 +346,7 @@ try {
          correction_due_at = NULL,
          model_version = '',
          prompt_version = '',
-         policy_version = 'safety-policy-v1',
+         policy_version = 'safety-policy-v2',
          resolved_at = NULL,
          updated_at = now()
        WHERE (

@@ -10,7 +10,7 @@ const NOW = new Date("2026-07-14T08:00:00.000Z");
 const AI_CONFIG = Object.freeze({
   model: "qwen3.7-plus-2026-05-26",
   promptVersion: "safety-case-prompt-v1",
-  policyVersion: "safety-policy-v1",
+  policyVersion: "safety-policy-v2",
   monthlyBudgetCny: 10,
   inputCnyPerMillion: 2,
   outputCnyPerMillion: 6,
@@ -78,6 +78,71 @@ test("shadow recommendations never advance the live workflow without their actio
   assert.equal(safetyCase.rows[0].status, "manual_review");
   assert.equal(safetyCase.rows[0].correction_due_at, null);
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_actions")).rows[0].count, 0);
+});
+
+test("invalid and restricted reporter clues cannot trigger the invalid-contact threshold", async () => {
+  await seedCollectionCase();
+  await pool.query(
+    `UPDATE reports
+     SET status = 'invalid', detail = 'INVALIDATED PRIVATE CLUE'
+     WHERE id = 'report-ai-2'`
+  );
+  await pool.query(
+    `INSERT INTO safety_evidence (
+       id, case_id, report_id, client_request_id, evidence_type,
+       text_snapshot, structured_snapshot, object_keys, created_at
+     ) VALUES (
+       'evidence-ai-invalid', 'case-ai', 'report-ai-2', 'request-ai-invalid',
+       'report_supplement', 'INVALIDATED PRIVATE EVIDENCE', '{}'::jsonb,
+       ARRAY[]::text[], $1
+     )`,
+    [NOW]
+  );
+  await pool.query(
+    `INSERT INTO users (id, nickname, is_restricted)
+     VALUES ('reporter-ai-restricted', 'Restricted AI Reporter', true)`
+  );
+  await pool.query(
+    `INSERT INTO reports (
+       id, target_type, target_id, reason, detail, reporter_id, status,
+       client_request_id, case_id, source_type, source_id,
+       subject_type, subject_id, reason_code, reported_field, created_at
+     ) VALUES (
+       'report-ai-restricted', 'collection', 'collection-ai', 'invalid_contact',
+       'Restricted reporter clue', 'reporter-ai-restricted', 'pending',
+       'request-ai-restricted', 'case-ai', 'collection', 'collection-ai',
+       'collection', 'collection-ai', 'invalid_contact', 'contact_wechat', $1
+     )`,
+    [NOW]
+  );
+  const provider = {
+    async analyze({ messages }) {
+      const prompt = JSON.stringify(messages);
+      assert.equal(prompt.includes("INVALIDATED PRIVATE CLUE"), false);
+      assert.equal(prompt.includes("INVALIDATED PRIVATE EVIDENCE"), false);
+      return providerOutput(validResult({
+        category: "invalid_contact",
+        subjectType: "collection",
+        impactScope: "collection",
+        riskLevel: "medium",
+        confidence: 0.9,
+        recommendedAction: "request_correction"
+      }));
+    }
+  };
+
+  const result = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => provider,
+    now: NOW
+  });
+
+  assert.deepEqual(result.policy.proposedActions.map((action) => action.actionType), ["request_correction"]);
+  assert.deepEqual(result.policy.reasonCodes, ["invalid_contact_first_report"]);
 });
 
 test("enforce mode stores proposals but applies nothing when the runtime gate is closed", async () => {

@@ -157,6 +157,59 @@ test("loads AI health directly and submits a typed human comparison", async () =
   }
 });
 
+test("submits one confirmed report-abuse mark without changing other clues", async () => {
+  const requests = [];
+  const controller = createWorkspaceController({
+    api: async (path, options) => {
+      requests.push({ path, options });
+      return {
+        case: {
+          id: "case-1",
+          version: "2026-07-16T08:01:00.000Z",
+          reports: [
+            { id: "report-1", status: "invalid", invalidReason: "coordinated" },
+            { id: "report-2", status: "pending", countsTowardThreshold: true }
+          ]
+        }
+      };
+    },
+    onRender: () => {}
+  });
+  controller.getState().detail = {
+    id: "case-1",
+    version: "2026-07-16T08:00:00.000Z",
+    reports: [
+      { id: "report-1", status: "pending", countsTowardThreshold: true },
+      { id: "report-2", status: "pending", countsTowardThreshold: true }
+    ],
+    aiComparison: { run: { id: "run-1" } }
+  };
+
+  assert.equal(controller.handleSubmit({
+    id: "report-abuse-form",
+    dataset: { caseId: "case-1", reportId: "report-1" }
+  }, {
+    reason: "coordinated",
+    confirmed: "on"
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(requests, [{
+    path: "/admin/api/cases/case-1/reports/report-1/invalidate",
+    options: {
+      method: "POST",
+      body: {
+        reason: "coordinated",
+        confirmed: true,
+        expectedVersion: "2026-07-16T08:00:00.000Z"
+      }
+    }
+  }]);
+  assert.equal(controller.getState().detail.reports.length, 2);
+  assert.equal(controller.getState().detail.reports[0].status, "invalid");
+  assert.equal(controller.getState().detail.aiComparison.run.id, "run-1");
+});
+
 test("ignores a failed AI health request after navigating away", async () => {
   const originalLocation = globalThis.location;
   const originalHistory = globalThis.history;

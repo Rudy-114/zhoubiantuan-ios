@@ -81,12 +81,32 @@ export function evaluateSafetyPolicy(input = {}) {
   return manual("policy_no_automatic_match");
 }
 
+export function supportedInvalidContactActionTypes(input = {}) {
+  const caseRecord = safeObject(input.caseRecord);
+  if (caseRecord.category !== "invalid_contact" ||
+      caseRecord.subject_type !== "collection" || caseRecord.impact_scope !== "collection") {
+    return [];
+  }
+  const count = independentReporterCount7d(input.reportCounts);
+  if (count < 1) return [];
+  const supported = ["request_correction"];
+  if (count >= 2) supported.push("hide_collection_contact");
+  const now = policyNow(input.now);
+  const dueAt = dateOrNull(caseRecord.correction_due_at);
+  if (caseRecord.status === "awaiting_correction" && now && dueAt && dueAt.getTime() <= now.getTime()) {
+    supported.push("suspend_collection");
+  }
+  return supported;
+}
+
 function invalidContactPolicy(input, caseRecord) {
   if (caseRecord.subject_type !== "collection" || caseRecord.impact_scope !== "collection") {
     return manual("invalid_contact_scope_human_only");
   }
   const now = policyNow(input.now);
   if (!now) return manual("invalid_policy_time");
+  const count = independentReporterCount7d(input.reportCounts);
+  if (count < 1) return manual("invalid_report_counts");
 
   if (caseRecord.status === "awaiting_correction") {
     const dueAt = dateOrNull(caseRecord.correction_due_at);
@@ -100,31 +120,25 @@ function invalidContactPolicy(input, caseRecord) {
         reasonCodes: ["invalid_contact_correction_expired"]
       });
     }
-    return manual("correction_pending");
-  }
-
-  const count = independentReporterCount7d(input.reportCounts);
-  if (count === 1) {
-    return decision({
-      nextStatus: "monitoring",
-      proposedActions: [action("notify_owner", caseRecord)],
-      requiresHuman: false,
-      reasonCodes: ["invalid_contact_first_report"]
-    });
-  }
-  if (count >= 2) {
-    const correctionDueAt = new Date(now.getTime() + (24 * 60 * 60 * 1_000)).toISOString();
     return decision({
       nextStatus: "awaiting_correction",
-      proposedActions: [
-        action("hide_collection_contact", caseRecord),
-        { ...action("request_correction", caseRecord), correctionDueAt }
-      ],
+      proposedActions: count >= 2 ? [action("hide_collection_contact", caseRecord)] : [],
       requiresHuman: false,
-      reasonCodes: ["invalid_contact_repeated"]
+      reasonCodes: [count >= 2 ? "invalid_contact_repeated" : "correction_pending"]
     });
   }
-  return manual("invalid_report_counts");
+
+  const correctionDueAt = new Date(now.getTime() + (24 * 60 * 60 * 1_000)).toISOString();
+  const proposedActions = [
+    { ...action("request_correction", caseRecord), correctionDueAt }
+  ];
+  if (count >= 2) proposedActions.push(action("hide_collection_contact", caseRecord));
+  return decision({
+    nextStatus: "awaiting_correction",
+    proposedActions,
+    requiresHuman: false,
+    reasonCodes: [count >= 2 ? "invalid_contact_repeated" : "invalid_contact_first_report"]
+  });
 }
 
 function independentReporterCount7d(value) {

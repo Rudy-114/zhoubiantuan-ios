@@ -300,6 +300,15 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
       }
       return true;
     }
+    if (action === "open-report-abuse") {
+      const report = state.detail?.reports?.find((item) => item.id === button.dataset.reportId);
+      if (report && report.status !== "invalid") {
+        state.dialog = { kind: "report_abuse", report };
+        state.error = "";
+        requestRender();
+      }
+      return true;
+    }
     if (action === "open-case-decision") {
       if (state.detail) {
         state.dialog = { kind: "decision", decision: button.dataset.decision };
@@ -353,6 +362,10 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
     }
     if (form.id === "case-decision-form") {
       void submitCaseDecision(form, values);
+      return true;
+    }
+    if (form.id === "report-abuse-form") {
+      void submitReportAbuse(form, values);
       return true;
     }
     if (form.id === "moderation-filter-form") {
@@ -619,6 +632,45 @@ export function createWorkspaceController({ api, onRender, onLoadDevices } = {})
         state.error = "案件在处理期间发生变化，已重新加载，请再次核对。";
       } else {
         state.error = messageFor(error, "人工决定提交失败。");
+      }
+    } finally {
+      state.busy = false;
+      requestRender();
+    }
+  }
+
+  async function submitReportAbuse(form, values) {
+    if (!state.detail || form.dataset.caseId !== state.detail.id) return;
+    const reportID = form.dataset.reportId;
+    const report = state.detail.reports?.find((item) => item.id === reportID);
+    if (!report || report.status === "invalid") return;
+    state.busy = true;
+    state.error = "";
+    requestRender();
+    try {
+      const payload = await api(
+        `/admin/api/cases/${encodeURIComponent(state.detail.id)}/reports/${encodeURIComponent(reportID)}/invalidate`,
+        {
+          method: "POST",
+          body: {
+            reason: String(values.reason || ""),
+            confirmed: values.confirmed === "on" || values.confirmed === true,
+            expectedVersion: state.detail.version
+          }
+        }
+      );
+      const aiComparison = state.detail.aiComparison;
+      state.detail = { ...payload.case, aiComparison };
+      reconcileCase(payload.case);
+      state.dialog = null;
+      state.notice = "当前举报已标记无效，证据和其他线索仍保留。";
+    } catch (error) {
+      if (error?.status === 409 && error?.code === "case_changed") {
+        state.dialog = null;
+        await loadCaseDetail(state.detail.id);
+        state.error = "案件在处理期间发生变化，已重新加载，请再次核对。";
+      } else {
+        state.error = messageFor(error, "举报滥用标记失败。");
       }
     } finally {
       state.busy = false;

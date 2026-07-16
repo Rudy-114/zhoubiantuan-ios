@@ -107,7 +107,7 @@ export const config = {
     apiKey: process.env.DASHSCOPE_API_KEY || "",
     model: "qwen3.7-plus-2026-05-26",
     promptVersion: "safety-case-prompt-v2",
-    policyVersion: "safety-policy-v1",
+    policyVersion: "safety-policy-v2",
     monthlyBudgetCny: nonNegativeFiniteNumber("SAFETY_AI_MONTHLY_BUDGET_CNY"),
     inputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_INPUT_CNY_PER_MILLION"),
     outputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_OUTPUT_CNY_PER_MILLION"),

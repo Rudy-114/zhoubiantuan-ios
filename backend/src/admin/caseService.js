@@ -10,6 +10,7 @@ import {
 } from "../safety/actionService.js";
 import { SAFETY_REASON_CODES, SAFETY_TARGET_TYPES } from "../safety/constants.js";
 import { publishApprovedRevision } from "../safety/revisionPublishing.js";
+import { loadReportCountingStatuses } from "../safety/reportAbuseService.js";
 import { lockSafetyTarget } from "../safety/safetyTargetLock.js";
 
 const CASE_STATUSES = new Set([
@@ -108,11 +109,7 @@ export async function loadAdminCaseDetail(client, caseID) {
   const id = requiredIdentifier(caseID, "案件 ID");
   const selected = await client.query(`${caseListSelect} WHERE sc.id = $1`, [id]);
   if (!selected.rows[0]) throw adminError(404, "admin_case_not_found", "安全案件不存在");
-  const reports = await client.query(
-    `SELECT id, reporter_id, reason_code, reported_field, detail, status, created_at, updated_at
-     FROM reports WHERE case_id = $1 ORDER BY created_at, id`,
-    [id]
-  );
+  const reports = await loadReportCountingStatuses(client, id);
   const evidence = await client.query(
     `SELECT id, evidence_type, text_snapshot <> '' AS has_text,
             structured_snapshot <> '{}'::jsonb AS has_structured_data,
@@ -152,7 +149,7 @@ export async function loadAdminCaseDetail(client, caseID) {
   );
   return adminCaseDetail({
     row: selected.rows[0],
-    reports: reports.rows,
+    reports,
     evidence: evidence.rows,
     events: events.rows,
     actions: actions.rows,
@@ -797,8 +794,13 @@ const caseListSelect = `
   FROM safety_cases sc
   LEFT JOIN LATERAL (
     SELECT count(*)::int AS report_count,
-           count(DISTINCT report.reporter_id)::int AS independent_reporter_count
+           count(DISTINCT report.reporter_id) FILTER (
+             WHERE report.status IN ('pending', 'closed')
+               AND report.created_at >= now() - interval '7 days'
+               AND reporter.is_restricted = false
+           )::int AS independent_reporter_count
     FROM reports report
+    JOIN users reporter ON reporter.id = report.reporter_id
     WHERE report.case_id = sc.id
   ) report_totals ON true`;
 

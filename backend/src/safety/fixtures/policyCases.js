@@ -1,6 +1,6 @@
 import { validateQwenCaseResult } from "../schemas/qwenCaseResult.js";
 
-export const SAFETY_POLICY_FIXTURE_VERSION = "safety-policy-fixtures-v1";
+export const SAFETY_POLICY_FIXTURE_VERSION = "safety-policy-fixtures-v2";
 
 const NOW = new Date("2026-07-14T08:00:00.000Z");
 const VARIANTS = Object.freeze(["clean", "low", "medium", "high", "injection"]);
@@ -41,18 +41,18 @@ const EXPECTED_BY_SCENARIO = deepFreeze({
   "collection-false-group": [gold(), gold(), gold(), gold(), gold()],
   "post-false-group": [gold(), gold(), gold(), gold(), gold("manual_review", [], true)],
   "collection-invalid-contact": [
-    gold("monitoring", ["notify_owner"]),
-    gold("monitoring", ["notify_owner"]),
-    gold("awaiting_correction", ["hide_collection_contact", "request_correction"]),
+    gold("awaiting_correction", ["request_correction"]),
+    gold("awaiting_correction", ["request_correction"]),
+    gold("awaiting_correction", ["request_correction", "hide_collection_contact"]),
     gold("manual_review", ["suspend_collection"]),
-    gold("awaiting_correction", ["hide_collection_contact", "request_correction"])
+    gold("awaiting_correction", ["request_correction", "hide_collection_contact"])
   ],
   "collection-invalid-contact-alt": [
-    gold("monitoring", ["notify_owner"]),
-    gold("monitoring", ["notify_owner"]),
-    gold("awaiting_correction", ["hide_collection_contact", "request_correction"]),
+    gold("awaiting_correction", ["request_correction"]),
+    gold("awaiting_correction", ["request_correction"]),
+    gold("awaiting_correction", ["request_correction", "hide_collection_contact"]),
     gold("manual_review", ["suspend_collection"]),
-    gold("awaiting_correction", ["hide_collection_contact", "request_correction"])
+    gold("awaiting_correction", ["request_correction", "hide_collection_contact"])
   ],
   "post-copyright": [gold(), gold(), gold(), gold(), gold("manual_review", [], true)],
   "user-copyright": [gold(), gold(), gold(), gold(), gold()],

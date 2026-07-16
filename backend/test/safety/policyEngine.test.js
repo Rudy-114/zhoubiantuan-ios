@@ -16,7 +16,7 @@ test("shadow computes the same proposals as enforce while leaving apply to the c
 
   assert.deepEqual(shadow, enforce);
   assert.equal(Object.hasOwn(shadow, "apply"), false);
-  assert.deepEqual(actionTypes(shadow), ["hide_collection_contact", "request_correction"]);
+  assert.deepEqual(actionTypes(shadow), ["request_correction", "hide_collection_contact"]);
   assert.equal(input.mode === "enforce" && true, false, "shadow caller gate remains closed");
 });
 
@@ -37,41 +37,72 @@ test("rejects a model attempt to expand a post case to collection scope", () => 
   assert.deepEqual(result, manual("scope_expansion_rejected"));
 });
 
-test("first independent invalid-contact report notifies only and sets no deadline", () => {
+test("first independent invalid-contact report requests correction without hiding contact", () => {
   const result = evaluateSafetyPolicy(invalidContactInput({ independentReporterCount7d: 1 }));
 
   assert.deepEqual(result, {
-    nextStatus: "monitoring",
+    nextStatus: "awaiting_correction",
     proposedActions: [{
-      actionType: "notify_owner",
+      actionType: "request_correction",
       targetType: "collection",
-      targetId: "collection-policy"
+      targetId: "collection-policy",
+      correctionDueAt: "2026-07-15T08:00:00.000Z"
     }],
     requiresHuman: false,
     reasonCodes: ["invalid_contact_first_report"]
   });
   assert.equal(result.proposedActions.some((action) => action.actionType.includes("hide")), false);
-  assert.equal(result.proposedActions.some((action) => Object.hasOwn(action, "correctionDueAt")), false);
+  assert.equal(result.proposedActions.some((action) => Object.hasOwn(action, "correctionDueAt")), true);
 });
 
-test("two independent invalid-contact reports in seven days hide contact and request 24-hour correction", () => {
+test("the second independent report adds only contact hiding to the correction workflow", () => {
+  const first = evaluateSafetyPolicy(invalidContactInput({ independentReporterCount7d: 1 }));
   const result = evaluateSafetyPolicy(repeatedInvalidContactInput());
 
   assert.deepEqual(result, {
     nextStatus: "awaiting_correction",
     proposedActions: [
       {
-        actionType: "hide_collection_contact",
-        targetType: "collection",
-        targetId: "collection-policy"
-      },
-      {
         actionType: "request_correction",
         targetType: "collection",
         targetId: "collection-policy",
         correctionDueAt: "2026-07-15T08:00:00.000Z"
+      },
+      {
+        actionType: "hide_collection_contact",
+        targetType: "collection",
+        targetId: "collection-policy"
       }
     ],
+    requiresHuman: false,
+    reasonCodes: ["invalid_contact_repeated"]
+  });
+  assert.deepEqual(
+    actionTypes(result).filter((actionType) => !actionTypes(first).includes(actionType)),
+    ["hide_collection_contact"]
+  );
+});
+
+test("an awaiting correction receives only the newly triggered contact hide", () => {
+  const result = evaluateSafetyPolicy(invalidContactInput({
+    independentReporterCount7d: 2,
+    caseRecord: caseRecord({
+      subject_type: "collection",
+      impact_scope: "collection",
+      subject_id: "collection-policy",
+      category: "invalid_contact",
+      status: "awaiting_correction",
+      correction_due_at: "2026-07-15T08:00:00.000Z"
+    })
+  }));
+
+  assert.deepEqual(result, {
+    nextStatus: "awaiting_correction",
+    proposedActions: [{
+      actionType: "hide_collection_contact",
+      targetType: "collection",
+      targetId: "collection-policy"
+    }],
     requiresHuman: false,
     reasonCodes: ["invalid_contact_repeated"]
   });

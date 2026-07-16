@@ -19,7 +19,7 @@ const HEALTH_OPTIONS = Object.freeze({
     apiKey: "secret-health-api-key",
     model: "qwen3.7-plus-2026-05-26",
     promptVersion: "safety-case-prompt-v1",
-    policyVersion: "safety-policy-v1",
+    policyVersion: "safety-policy-v2",
     monthlyBudgetCny: 12,
     inputCnyPerMillion: 2,
     outputCnyPerMillion: 6
@@ -45,7 +45,7 @@ test("reports provider, jobs, budget, fixtures, current-version evaluations, and
     actualCny: 0.009,
     budgetCny: 12
   });
-  assert.equal(health.metrics.fixtureVersion, "safety-policy-fixtures-v1");
+  assert.equal(health.metrics.fixtureVersion, "safety-policy-fixtures-v2");
   assert.equal(health.metrics.fixtureCount, 100);
   assert.equal(health.metrics.fixtureSchemaFailures, 0);
   assert.equal(health.metrics.fixtureVersionCurrent, true);
@@ -70,7 +70,7 @@ test("reports provider, jobs, budget, fixtures, current-version evaluations, and
   assert.deepEqual(health.versions, {
     model: "qwen3.7-plus-2026-05-26",
     prompt: "safety-case-prompt-v1",
-    policy: "safety-policy-v1"
+    policy: "safety-policy-v2"
   });
   assert.equal(JSON.stringify(health).includes("secret-health-api-key"), false);
   assert.equal(Object.hasOwn(health, "apiKey"), false);
@@ -235,19 +235,19 @@ async function seedAIHealthFixture() {
      ) VALUES
        (
          'run-health', 'case-ai-health', 'qwen3.7-plus-2026-05-26',
-         'safety-case-prompt-v1', 'safety-policy-v1', 'hash-health', 'shadow', 'completed',
+         'safety-case-prompt-v1', 'safety-policy-v2', 'hash-health', 'shadow', 'completed',
          $1::jsonb, '[]'::jsonb, 'restricted-health-output', 100, 20, 0.004,
          '2026-07-14T07:20:00.000Z', '2026-07-14T07:19:00.000Z'
        ),
        (
          'run-running', 'case-ai-health', 'qwen3.7-plus-2026-05-26',
-         'safety-case-prompt-v1', 'safety-policy-v1', 'hash-running', 'shadow', 'running',
+         'safety-case-prompt-v1', 'safety-policy-v2', 'hash-running', 'shadow', 'running',
          '{}'::jsonb, '[]'::jsonb, '', 0, 0, 0,
          NULL, '2026-07-14T07:25:00.000Z'
        ),
        (
          'run-evaluate', 'case-ai-evaluate', 'qwen3.7-plus-2026-05-26',
-         'safety-case-prompt-v1', 'safety-policy-v1', 'hash-evaluate', 'shadow', 'completed',
+         'safety-case-prompt-v1', 'safety-policy-v2', 'hash-evaluate', 'shadow', 'completed',
          $1::jsonb, '[]'::jsonb, 'raw-provider-private-output', 120, 30, 0.005,
          '2026-07-14T07:50:00.000Z', '2026-07-14T07:49:00.000Z'
        )`,

@@ -291,6 +291,108 @@ test("protects, lists, redacts, audits, and version-checks admin safety cases", 
   });
 });
 
+test("marks one report invalid with CSRF, reason, confirmation, and counting status", async () => {
+  await withServer(async (baseUrl) => {
+    const detail = await request(baseUrl, "/admin/api/cases/case-post", {
+      cookies: adminCookies
+    });
+    assert.equal(detail.body.case.reports.every((report) => report.countsTowardThreshold), true);
+    assert.equal(detail.body.case.reports.every((report) => report.countingReason === "counted"), true);
+    assert.equal(detail.body.case.reports.every((report) => report.invalidReason === null), true);
+
+    const withoutCSRF = await request(
+      baseUrl,
+      "/admin/api/cases/case-post/reports/report-a/invalidate",
+      {
+        method: "POST",
+        cookies: adminCookies,
+        body: {
+          reason: "malicious",
+          confirmed: true,
+          expectedVersion: detail.body.case.version
+        }
+      }
+    );
+    assert.equal(withoutCSRF.status, 403);
+
+    const invalidReason = await request(
+      baseUrl,
+      "/admin/api/cases/case-post/reports/report-a/invalidate",
+      {
+        method: "POST",
+        cookies: adminCookies,
+        csrf: csrfToken,
+        body: {
+          reason: "unsupported",
+          confirmed: true,
+          expectedVersion: detail.body.case.version
+        }
+      }
+    );
+    assert.equal(invalidReason.status, 400);
+    assert.equal(invalidReason.body.code, "admin_report_invalid_reason");
+
+    const withoutConfirmation = await request(
+      baseUrl,
+      "/admin/api/cases/case-post/reports/report-a/invalidate",
+      {
+        method: "POST",
+        cookies: adminCookies,
+        csrf: csrfToken,
+        body: {
+          reason: "malicious",
+          confirmed: false,
+          expectedVersion: detail.body.case.version
+        }
+      }
+    );
+    assert.equal(withoutConfirmation.status, 400);
+    assert.equal(withoutConfirmation.body.code, "admin_report_confirmation_required");
+
+    const invalidated = await request(
+      baseUrl,
+      "/admin/api/cases/case-post/reports/report-a/invalidate",
+      {
+        method: "POST",
+        cookies: adminCookies,
+        csrf: csrfToken,
+        body: {
+          reason: "malicious",
+          confirmed: true,
+          expectedVersion: detail.body.case.version
+        }
+      }
+    );
+    assert.equal(invalidated.status, 200);
+    assert.equal(invalidated.body.case.reportCount, 2);
+    assert.equal(invalidated.body.case.independentReporterCount, 1);
+    assert.equal(invalidated.body.case.reports.length, 2);
+    const reportA = invalidated.body.case.reports.find((report) => report.id === "report-a");
+    const reportB = invalidated.body.case.reports.find((report) => report.id === "report-b");
+    assert.deepEqual({
+      status: reportA.status,
+      countsTowardThreshold: reportA.countsTowardThreshold,
+      countingReason: reportA.countingReason,
+      invalidReason: reportA.invalidReason
+    }, {
+      status: "invalid",
+      countsTowardThreshold: false,
+      countingReason: "invalid",
+      invalidReason: "malicious"
+    });
+    assert.equal(reportB.countsTowardThreshold, true);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS count FROM safety_evidence WHERE report_id = 'report-a'"
+    )).rows[0].count, 1);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS count FROM safety_case_events WHERE event_type = 'report_marked_invalid'"
+    )).rows[0].count, 1);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS count FROM admin_audit_events WHERE event_type = 'safety.report_invalidated'"
+    )).rows[0].count, 1);
+  });
+});
+
 test("applies and restores a human hide, and enforces manual user restrictions", async () => {
   await withServer(async (baseUrl) => {
     const detail = await request(baseUrl, "/admin/api/cases/case-post", {

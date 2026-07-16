@@ -61,6 +61,9 @@ test("serves the same-origin admin shell and client routes with strict CSP", asy
     assert.match(sources.get("aiViews.js"), /运行版本一致/u);
     assert.match(sources.get("aiViews.js"), /夹具版本一致/u);
     assert.doesNotMatch(sources.get("aiViews.js"), /data-action.{0,80}(enforce|gate|override)/u);
+    assert.match(sources.get("caseViews.js"), /标记举报滥用/u);
+    assert.match(sources.get("caseViews.js"), /我确认只标记当前这一条举报/u);
+    assert.match(sources.get("caseViews.js"), /同一举报账号已计数/u);
 
     const clientRoute = await fetch(`${baseUrl}/admin/cases/case-example`);
     assert.equal(clientRoute.status, 200);

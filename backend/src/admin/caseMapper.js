@@ -40,6 +40,9 @@ export function adminCaseDetail({
       reportedField: report.reported_field,
       hasDetail: Boolean(report.detail),
       status: report.status,
+      countsTowardThreshold: Boolean(report.counts_toward_threshold),
+      countingReason: report.counting_reason || "status_not_counted",
+      invalidReason: invalidReportReason(report.admin_result),
       createdAt: isoDate(report.created_at),
       updatedAt: isoDate(report.updated_at)
     })),
@@ -98,6 +101,11 @@ export function adminCaseDetail({
     } : null,
     relatedCases: relatedCases.map(adminCaseListItem)
   };
+}
+
+function invalidReportReason(value) {
+  const match = /^report_invalid:(malicious|coordinated|mistaken_target|other)$/u.exec(value || "");
+  return match?.[1] || null;
 }
 
 function stableReporterLabels(reports) {

@@ -44,6 +44,13 @@ const DECISION_LABELS = Object.freeze({
   restore_user: "解除账号限制"
 });
 
+const REPORT_ABUSE_REASON_LABELS = Object.freeze({
+  malicious: "恶意举报",
+  coordinated: "协同举报",
+  mistaken_target: "目标错误",
+  other: "其他"
+});
+
 const DESTRUCTIVE_DECISIONS = new Set([
   "permanent_remove", "restore", "uphold_appeal", "overturn_appeal", "restrict_user", "restore_user"
 ]);
@@ -175,7 +182,7 @@ export function renderCaseInspector({
     ["人工保持", detail.manualHold ? "已启用" : "未启用"]
   ])));
 
-  inspector.append(detailSection("举报汇总", reportList(detail.reports)));
+  inspector.append(detailSection("举报汇总", reportList(detail.reports, busy)));
   inspector.append(detailSection("证据", evidenceList(detail, revealMap)));
   inspector.append(detailSection("AI 与人工对比", renderCaseAIComparison(detail, busy)));
   inspector.append(detailSection("时间线", timeline(detail.events)));
@@ -185,6 +192,9 @@ export function renderCaseInspector({
   inspector.append(detailSection("人工决定", decisionControls(detail, busy), "decision-section"));
   if (dialog?.kind === "evidence") inspector.append(evidenceDialog(detail, dialog.evidence, busy));
   if (dialog?.kind === "decision") inspector.append(decisionDialog(detail, dialog.decision, busy));
+  if (dialog?.kind === "report_abuse") {
+    inspector.append(reportAbuseDialog(detail, dialog.report, busy));
+  }
   return inspector;
 }
 
@@ -390,6 +400,44 @@ function decisionDialog(detail, decision, busy) {
   return dialog;
 }
 
+function reportAbuseDialog(detail, report, busy) {
+  const dialog = dialogFrame(
+    "标记举报滥用",
+    "该操作只影响当前举报线索的计数状态；证据和其他举报会保留。",
+    "report-abuse-dialog-title"
+  );
+  const form = element("form", "dialog-form");
+  form.id = "report-abuse-form";
+  form.dataset.caseId = detail.id;
+  form.dataset.reportId = report.id;
+
+  const reasonField = element("label", "field");
+  const reasonLabel = element("span");
+  reasonLabel.textContent = "无效原因";
+  const reason = element("select");
+  reason.name = "reason";
+  reason.required = true;
+  reason.append(option("", "请选择原因"));
+  for (const [value, label] of Object.entries(REPORT_ABUSE_REASON_LABELS)) {
+    reason.append(option(value, label));
+  }
+  reasonField.append(reasonLabel, reason);
+
+  const confirmation = element("label", "confirm-check");
+  const checkbox = element("input");
+  checkbox.type = "checkbox";
+  checkbox.name = "confirmed";
+  checkbox.required = true;
+  const confirmationText = element("span");
+  confirmationText.textContent = "我确认只标记当前这一条举报。";
+  confirmation.append(checkbox, confirmationText);
+
+  form.append(reasonField, confirmation);
+  form.append(dialogActions("确认标记无效", "close-workspace-dialog", busy, true));
+  dialog.append(form);
+  return dialog;
+}
+
 function decisionControls(detail, busy) {
   const controls = element("div", "decision-controls");
   const decisions = availableCaseDecisions(detail);
@@ -422,7 +470,7 @@ function isUserRestricted(detail) {
   return actions.at(-1)?.type === "restrict_user";
 }
 
-function reportList(reports = []) {
+function reportList(reports = [], busy = false) {
   const list = element("ul", "plain-list");
   if (!reports.length) return emptyState("没有举报记录。" );
   for (const report of reports) {
@@ -431,10 +479,33 @@ function reportList(reports = []) {
     title.textContent = report.reporterLabel;
     const copy = element("span", "muted");
     copy.textContent = `${categoryLabel(report.reasonCode)} · ${formatDateTime(report.createdAt)} · ${report.status}`;
-    item.append(title, copy);
+    const counting = element("span", report.countsTowardThreshold ? "" : "muted");
+    counting.textContent = reportCountingLabel(report);
+    item.append(title, copy, counting);
+    if (report.status !== "invalid") {
+      const invalidate = actionButton("标记举报滥用", "open-report-abuse", "secondary-button");
+      invalidate.dataset.reportId = report.id;
+      invalidate.disabled = busy;
+      item.append(invalidate);
+    }
     list.append(item);
   }
   return list;
+}
+
+function reportCountingLabel(report) {
+  if (report.countsTowardThreshold) return "计入独立举报阈值";
+  if (report.countingReason === "invalid") {
+    const reason = REPORT_ABUSE_REASON_LABELS[report.invalidReason] || "未知原因";
+    return `不计入 · 已标记无效（${reason}）`;
+  }
+  const labels = {
+    reporter_restricted: "不计入 · 举报账号受限",
+    outside_window: "不计入 · 超过 7 天窗口",
+    duplicate_reporter: "不重复计入 · 同一举报账号已计数",
+    status_not_counted: "不计入 · 当前状态不计数"
+  };
+  return labels[report.countingReason] || "不计入独立举报阈值";
 }
 
 function timeline(events = []) {

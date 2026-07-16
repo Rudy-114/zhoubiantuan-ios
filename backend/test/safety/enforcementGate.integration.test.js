@@ -9,11 +9,11 @@ import { closeDatabase, pool, resetDatabase } from "../helpers/database.js";
 const VERSIONS = Object.freeze({
   model: "qwen3.7-plus-2026-05-26",
   prompt: "safety-case-prompt-v2",
-  policy: "safety-policy-v1"
+  policy: "safety-policy-v2"
 });
 
 const PASSING_METRICS = Object.freeze({
-  fixtureVersion: "safety-policy-fixtures-v1",
+  fixtureVersion: "safety-policy-fixtures-v2",
   fixtureCount: 100,
   fixtureInvalidCount: 0,
   autoHidePrecision: 0.95,
@@ -159,8 +159,8 @@ test("counts only current-version real evaluations and fails closed on live scop
   assert.equal(versionFailure.metrics.realEvaluationCount, 1);
 
   const staleFixtureFailure = await transaction((client) => evaluateEnforcementGate(client, {
-    ai: { ...VERSIONS, policy: "safety-policy-v2" },
-    requiredVersions: { ...VERSIONS, policy: "safety-policy-v2" }
+    ai: { ...VERSIONS, policy: "safety-policy-v1" },
+    requiredVersions: { ...VERSIONS, policy: "safety-policy-v1" }
   }));
   assert.equal(staleFixtureFailure.passed, false);
   assert.equal(staleFixtureFailure.checks.fixtureVersionCurrent, false);

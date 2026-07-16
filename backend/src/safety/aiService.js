@@ -7,6 +7,7 @@ import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "./budgetServic
 import { assertAutomaticActionsAllowed } from "./enforcementGate.js";
 import { evaluateSafetyPolicy } from "./policyEngine.js";
 import { buildQwenCaseMessages, hashCaseEvidence } from "./promptBuilder.js";
+import { independentReporterCount } from "./reportAbuseService.js";
 import { MockQwenCaseProvider } from "./providers/mockQwenCaseProvider.js";
 import { QwenCaseProvider, RAW_QWEN_CONTENT, providerError } from "./providers/qwenCaseProvider.js";
 import { publishApprovedRevision } from "./revisionPublishing.js";
@@ -163,25 +164,21 @@ async function loadAnalysisContext(client, { caseId, revisionId, now }) {
   const reports = await client.query(
     `SELECT reason_code, reported_field, detail, created_at
      FROM reports
-     WHERE case_id = $1
+     WHERE case_id = $1 AND status IN ('pending', 'closed')
      ORDER BY created_at, id`,
     [caseId]
   );
   const evidence = await client.query(
-    `SELECT evidence_type, text_snapshot, structured_snapshot, object_keys, created_at
-     FROM safety_evidence
-     WHERE case_id = $1
-     ORDER BY created_at, id`,
+    `SELECT evidence.evidence_type, evidence.text_snapshot,
+            evidence.structured_snapshot, evidence.object_keys, evidence.created_at
+     FROM safety_evidence evidence
+     LEFT JOIN reports report ON report.id = evidence.report_id
+     WHERE evidence.case_id = $1
+       AND (evidence.report_id IS NULL OR report.status IN ('pending', 'closed'))
+     ORDER BY evidence.created_at, evidence.id`,
     [caseId]
   );
-  const counts = await client.query(
-    `SELECT
-       count(*)::int AS report_count,
-       count(DISTINCT reporter_id) FILTER (WHERE created_at >= $2::timestamptz - interval '7 days')::int AS independent_reporter_count_7d
-     FROM reports
-     WHERE case_id = $1`,
-    [caseId, now]
-  );
+  const independentReporterCount7d = await independentReporterCount(client, caseId, { now });
   const related = await client.query(
     `SELECT count(*)::int AS count
      FROM safety_cases
@@ -231,8 +228,8 @@ async function loadAnalysisContext(client, { caseId, revisionId, now }) {
       structuredSnapshot: sourceSnapshot
     },
     reportCounts: {
-      reportCount: counts.rows[0]?.report_count || 0,
-      independentReporterCount7d: counts.rows[0]?.independent_reporter_count_7d || 0,
+      reportCount: reports.rows.length,
+      independentReporterCount7d,
       relatedCaseCount: related.rows[0]?.count || 0
     },
     moderationInput: {

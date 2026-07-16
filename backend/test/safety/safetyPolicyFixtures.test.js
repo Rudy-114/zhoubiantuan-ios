@@ -13,7 +13,7 @@ const AUTO_HIDE_ACTIONS = new Set([
 ]);
 
 test("keeps exactly 100 versioned fixtures across every reason and subject", () => {
-  assert.equal(SAFETY_POLICY_FIXTURE_VERSION, "safety-policy-fixtures-v1");
+  assert.equal(SAFETY_POLICY_FIXTURE_VERSION, "safety-policy-fixtures-v2");
   assert.equal(safetyPolicyFixtures.length, 100);
   assert.equal(new Set(safetyPolicyFixtures.map((fixture) => fixture.id)).size, 100);
   assert.deepEqual(new Set(safetyPolicyFixtures.map((fixture) => fixture.variant)), new Set([

@@ -20,6 +20,7 @@ import { withTransaction } from "../db.js";
 import { logger } from "../logger.js";
 import { signedReadUrl } from "../oss.js";
 import { notifySyncEvents } from "../realtime.js";
+import { markReportInvalid } from "../safety/reportAbuseService.js";
 
 const EVIDENCE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -176,6 +177,40 @@ export function createAdminCaseRouter({
           userAgent: req.headers["user-agent"]
         }));
         res.status(201).json({ evaluation });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/cases/:caseId/reports/:reportId/invalidate",
+    requireAdminSession,
+    requireAdminCSRF,
+    async (req, res, next) => {
+      try {
+        const result = await withTransaction(async (client) => {
+          const invalidated = await markReportInvalid(client, {
+            caseId: req.params.caseId,
+            reportId: req.params.reportId,
+            reason: req.body?.reason,
+            confirmed: req.body?.confirmed,
+            expectedVersion: req.body?.expectedVersion,
+            adminUserId: req.adminUser.id,
+            deviceId: req.adminDevice.id,
+            sessionId: req.adminSession.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"]
+          });
+          const detail = await loadAdminCaseDetail(client, req.params.caseId);
+          const aiComparison = await loadCaseAIComparison(client, req.params.caseId);
+          return {
+            case: { ...detail, aiComparison },
+            syncEvents: invalidated.syncEvents
+          };
+        });
+        await notifyAdminEvents({ notifyEvents, eventLogger, syncEvents: result.syncEvents });
+        res.json({ case: result.case });
       } catch (error) {
         next(error);
       }
