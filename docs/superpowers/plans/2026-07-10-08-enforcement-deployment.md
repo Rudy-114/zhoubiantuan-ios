@@ -184,27 +184,27 @@ git commit -m "Harden independent report counting"
 **Interfaces:**
 - Tests real Express HTTP, PostgreSQL, jobs, mocked Aliyun/Qwen, admin signatures, and sync events.
 
-- [ ] **Step 1: Build deterministic actors**
+- [x] **Step 1: Build deterministic actors**
 
 Create owner, reporter A, reporter B, unrelated user, admin root, admin second device, collection, two child posts, comments, message thread, and seven-message context. Generate all tokens/keys in memory; never fixture real credentials.
 
-- [ ] **Step 2: Test post-only action**
+- [x] **Step 2: Test post-only action**
 
 Report a post image/content issue, run shadow analysis and human temporary hide, assert sibling post stays visible, owner sees correction, reporter sees handled, correct revision restores same ID and interactions.
 
-- [ ] **Step 3: Test collection contact cascade**
+- [x] **Step 3: Test collection contact cascade**
 
 First invalid-contact report requests correction without hide. Second independent report within seven days hides collection contact, not posts. Advance 24 hours without correction to suspend collection, assert child statuses unchanged, publish corrected collection, and assert independently clean child restores while an independently hidden child does not.
 
-- [ ] **Step 4: Test private message safety**
+- [x] **Step 4: Test private message safety**
 
 Report incoming message with block on, assert personal block and immutable seven-message evidence, apply temporary message hide distinct from revoke, close case, advance 180 days, run retention, and assert raw context cleared.
 
-- [ ] **Step 5: Test admin device and appeal boundaries**
+- [x] **Step 5: Test admin device and appeal boundaries**
 
 Prove password-only second device pending, root approval required, human restriction cannot auto-restore, one appeal accepted within seven days, second appeal rejected, AI cannot decide, and recovery revokes both old sessions.
 
-- [ ] **Step 6: Run E2E in the DB script and commit**
+- [x] **Step 6: Run E2E in the DB script and commit**
 
 Update the script to run safety/admin/e2e integration directories serially.
 
