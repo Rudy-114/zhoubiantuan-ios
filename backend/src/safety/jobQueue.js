@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { settleAiBudget } from "./budgetService.js";
 
 const STALE_LOCK_INTERVAL = "5 minutes";
 const REPORT_UPLOAD_REACTIVATION_INTERVAL = "24 hours";
@@ -28,6 +29,7 @@ export async function claimSafetyJobs({ limit = 1, workerId, deferredJobTypes = 
   const safeWorkerId = boundedString(workerId, "workerId", 128);
   const safeDeferredJobTypes = normalizeDeferredJobTypes(deferredJobTypes);
   return withTransaction(async (client) => {
+    await reconcileExhaustedAnalyzeJobs(client);
     await client.query(
       `UPDATE safety_jobs
        SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
@@ -37,7 +39,8 @@ export async function claimSafetyJobs({ limit = 1, workerId, deferredJobTypes = 
            error_summary = CASE WHEN attempts >= max_attempts THEN $3 ELSE error_summary END,
            updated_at = now()
        WHERE status = 'running'
-         AND locked_at < now() - ($1::text)::interval`,
+         AND locked_at < now() - ($1::text)::interval
+         AND NOT (job_type = 'analyze_case' AND attempts >= max_attempts)`,
       [STALE_LOCK_INTERVAL, ERROR_CODE, ERROR_SUMMARY]
     );
     await reactivateFailedReportUploadCleanups(client);
@@ -59,6 +62,71 @@ export async function claimSafetyJobs({ limit = 1, workerId, deferredJobTypes = 
     );
     return rows;
   });
+}
+
+async function reconcileExhaustedAnalyzeJobs(client) {
+  const { rows } = await client.query(
+    `SELECT id, case_id, payload->>'currentAiRunId' AS current_ai_run_id
+     FROM safety_jobs
+     WHERE status = 'running'
+       AND job_type = 'analyze_case'
+       AND attempts >= max_attempts
+       AND locked_at < now() - ($1::text)::interval
+     ORDER BY locked_at, id
+     FOR UPDATE SKIP LOCKED
+     LIMIT 100`,
+    [STALE_LOCK_INTERVAL]
+  );
+
+  for (const job of rows) {
+    if (job.current_ai_run_id && job.case_id) {
+      const run = await client.query(
+        `SELECT status
+         FROM safety_ai_runs
+         WHERE id = $1 AND case_id = $2
+         FOR UPDATE`,
+        [job.current_ai_run_id, job.case_id]
+      );
+      if (run.rows[0]?.status === "running") {
+        const usage = await client.query(
+          "SELECT status FROM safety_ai_usage WHERE ai_run_id = $1",
+          [job.current_ai_run_id]
+        );
+        if (usage.rows[0]?.status === "reserved") {
+          await settleAiBudget(client, {
+            aiRunId: job.current_ai_run_id,
+            inputTokens: 0,
+            outputTokens: 0,
+            uncertain: true,
+            now: new Date()
+          });
+        }
+        await client.query(
+          `UPDATE safety_ai_runs
+           SET status = 'failed', retryable = false,
+               error_code = 'safety_job_attempts_exhausted', raw_response = '',
+               completed_at = now()
+           WHERE id = $1 AND status = 'running'`,
+          [job.current_ai_run_id]
+        );
+      }
+    }
+    if (job.case_id) {
+      await client.query(
+        `UPDATE safety_cases
+         SET status = 'manual_review', updated_at = now()
+         WHERE id = $1 AND status = 'received' AND manual_hold = false`,
+        [job.case_id]
+      );
+    }
+    await client.query(
+      `UPDATE safety_jobs
+       SET status = 'failed', locked_at = NULL, locked_by = NULL,
+           error_code = $2, error_summary = $3, updated_at = now()
+       WHERE id = $1 AND status = 'running' AND attempts >= max_attempts`,
+      [job.id, ERROR_CODE, ERROR_SUMMARY]
+    );
+  }
 }
 
 async function reactivateFailedReportUploadCleanups(client) {

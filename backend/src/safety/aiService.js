@@ -115,7 +115,6 @@ export async function analyzeSafetyCase({
     jobId: safeJobId,
     jobAttempt: safeJobAttempt,
     interruptedRunId: safeInterruptedRunId,
-    recoverInterruptedRun,
     now: safeNow
   }));
   if (prepared.kind === "cached") return cachedResult(prepared.run);
@@ -315,7 +314,6 @@ async function prepareAiRun(client, {
   jobId,
   jobAttempt,
   interruptedRunId,
-  recoverInterruptedRun,
   now
 }) {
   await assertCurrentJobLease(client, { jobId, jobAttempt, interruptedRunId });

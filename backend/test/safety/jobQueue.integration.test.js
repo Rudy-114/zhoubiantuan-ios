@@ -101,6 +101,84 @@ test("recovers stale jobs, fences old owners, retries with bounded delays, and s
   assert.doesNotMatch(terminal.error_summary, /api_key|store/i);
 });
 
+test("terminally reconciles a stale final AI attempt without a fourth provider lease", async () => {
+  await query(
+    `INSERT INTO safety_cases (
+       id, subject_type, subject_id, category, impact_scope, status
+     ) VALUES (
+       'case-terminal-ai', 'post', 'post-terminal-ai', 'other', 'post', 'received'
+     )`
+  );
+  await query(
+    `INSERT INTO safety_ai_runs (
+       id, case_id, model_version, prompt_version, policy_version,
+       evidence_hash, mode, status, started_at
+     ) VALUES (
+       'run-terminal-ai', 'case-terminal-ai', 'model-terminal', 'prompt-terminal',
+       'policy-terminal', repeat('a', 64), 'shadow', 'running', now() - interval '6 minutes'
+     )`
+  );
+  await query(
+    `INSERT INTO safety_ai_usage (
+       id, ai_run_id, month_key, reserved_cny, status
+     ) VALUES (
+       'usage-terminal-ai', 'run-terminal-ai', '2026-07', 0.012345, 'reserved'
+     )`
+  );
+  await query(
+    `INSERT INTO safety_jobs (
+       job_type, case_id, unique_key, payload, status, attempts, max_attempts,
+       locked_at, locked_by
+     ) VALUES (
+       'analyze_case', 'case-terminal-ai', 'analyze-terminal-ai',
+       '{"currentAiRunId":"run-terminal-ai"}'::jsonb,
+       'running', 3, 3, now() - interval '6 minutes', 'worker-terminal'
+     )`
+  );
+
+  assert.deepEqual(await claimSafetyJobs({ limit: 1, workerId: "worker-no-fourth-lease" }), []);
+  assert.deepEqual(
+    (await query(
+      `SELECT status, attempts, locked_at, locked_by, error_code, error_summary
+       FROM safety_jobs WHERE unique_key = 'analyze-terminal-ai'`
+    )).rows[0],
+    {
+      status: "failed",
+      attempts: 3,
+      locked_at: null,
+      locked_by: null,
+      error_code: "SAFETY_JOB_FAILED",
+      error_summary: "Safety job failed (SAFETY_JOB_FAILED)."
+    }
+  );
+  assert.deepEqual(
+    (await query(
+      `SELECT status, retryable, error_code, input_tokens, output_tokens,
+              estimated_cost_cny::float8 AS estimated_cost_cny
+       FROM safety_ai_runs WHERE id = 'run-terminal-ai'`
+    )).rows[0],
+    {
+      status: "failed",
+      retryable: false,
+      error_code: "safety_job_attempts_exhausted",
+      input_tokens: 0,
+      output_tokens: 0,
+      estimated_cost_cny: 0.012345
+    }
+  );
+  assert.deepEqual(
+    (await query(
+      `SELECT status, reserved_cny::float8 AS reserved_cny, actual_cny::float8 AS actual_cny
+       FROM safety_ai_usage WHERE ai_run_id = 'run-terminal-ai'`
+    )).rows[0],
+    { status: "settled", reserved_cny: 0.012345, actual_cny: 0.012345 }
+  );
+  assert.equal(
+    (await query("SELECT status FROM safety_cases WHERE id = 'case-terminal-ai'")).rows[0].status,
+    "manual_review"
+  );
+});
+
 test("applies thirty-second then two-minute retry delays before terminal failure", async () => {
   const job = await enqueueSafetyJob({ type: "case_received", uniqueKey: "retry-delays", maxAttempts: 3 });
   const [first] = await claimSafetyJobs({ limit: 1, workerId: "worker-a" });
