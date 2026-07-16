@@ -112,8 +112,9 @@ test("locks the DM target and reads context through the same transaction client"
   assert.equal(queries[1], "SAVEPOINT capture_source_evidence_probe");
   assert.equal(queries[2], "RELEASE SAVEPOINT capture_source_evidence_probe");
   assert.match(queries[3], /FOR UPDATE OF dm, mt/);
-  assert.match(queries[4], /WITH ordered AS/);
-  assert.equal(queries[5], "COMMIT");
+  assert.match(queries[4], /FROM users[\s\S]*ORDER BY id[\s\S]*FOR SHARE/);
+  assert.match(queries[5], /WITH ordered AS/);
+  assert.equal(queries[6], "COMMIT");
 });
 
 test("captures a bounded direct-message snapshot from server rows only", async () => {

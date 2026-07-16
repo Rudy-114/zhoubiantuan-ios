@@ -51,18 +51,15 @@ async function assertActiveTransaction(client) {
 async function captureDirectMessageEvidence(client, reporterId, sourceId) {
   const { rows } = await client.query(
     `SELECT dm.id, dm.thread_id, dm.sender_id, dm.body, dm.revoked_at, dm.deleted_for_user_ids,
-            dm.safety_status, mt.buyer_user_id, mt.publisher_user_id,
-            sender.status AS sender_status, sender.deleted_at AS sender_deleted_at
+            dm.safety_status, mt.buyer_user_id, mt.publisher_user_id
      FROM direct_messages dm
      JOIN message_threads mt ON mt.id = dm.thread_id
-     JOIN users sender ON sender.id = dm.sender_id
      WHERE dm.id = $1
      FOR UPDATE OF dm, mt`,
     [sourceId]
   );
   const target = rows[0];
-  if (!target || target.sender_status !== "active" || target.sender_deleted_at ||
-      target.safety_status !== "active" || target.revoked_at ||
+  if (!target || target.safety_status !== "active" || target.revoked_at ||
       (target.deleted_for_user_ids || []).includes(reporterId)) {
     throw targetNotVisible();
   }
@@ -73,6 +70,19 @@ async function captureDirectMessageEvidence(client, reporterId, sourceId) {
   }
   const otherParticipantId = participantIds.find((id) => id !== reporterId);
   if (!otherParticipantId || target.sender_id !== otherParticipantId) {
+    throw targetNotVisible();
+  }
+  const participantUsers = await client.query(
+    `SELECT id, status, deleted_at
+     FROM users
+     WHERE id = ANY($1::text[])
+     ORDER BY id
+     FOR SHARE`,
+    [participantIds]
+  );
+  const sender = participantUsers.rows.find((user) => user.id === target.sender_id);
+  if (participantUsers.rows.length !== new Set(participantIds).size ||
+      !sender || sender.status !== "active" || sender.deleted_at) {
     throw targetNotVisible();
   }
 
@@ -127,7 +137,8 @@ async function capturePostEvidence(client, sourceId) {
             c.default_note AS collection_default_note
      FROM posts p
      LEFT JOIN group_collections c ON c.id = p.collection_id
-     WHERE p.id = $1`,
+     WHERE p.id = $1
+     FOR SHARE OF p`,
     [sourceId]
   );
   const post = rows[0];
@@ -174,7 +185,8 @@ async function captureCommentEvidence(client, sourceId) {
      FROM comments cm
      JOIN posts p ON p.id = cm.post_id
      LEFT JOIN group_collections c ON c.id = p.collection_id
-     WHERE cm.id = $1`,
+     WHERE cm.id = $1
+     FOR SHARE OF cm`,
     [sourceId]
   );
   const comment = rows[0];
@@ -207,7 +219,8 @@ async function captureUserEvidence(client, sourceId) {
     `SELECT id, nickname, bio, avatar_object_key, background_object_key,
             created_at, is_restricted, can_show_contact, status, deleted_at
      FROM users
-     WHERE id = $1`,
+     WHERE id = $1
+     FOR SHARE`,
     [sourceId]
   );
   const user = rows[0];
@@ -238,7 +251,8 @@ async function captureCollectionEvidence(client, sourceId) {
             group_info, deadline, default_note, status, safety_status, contact_visibility,
             created_at, updated_at
      FROM group_collections
-     WHERE id = $1`,
+     WHERE id = $1
+     FOR SHARE`,
     [sourceId]
   );
   const collection = rows[0];

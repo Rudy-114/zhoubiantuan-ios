@@ -28,7 +28,7 @@ const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/w
 const ALLOWED_UPLOAD_KINDS = new Set(["post", "avatar", "background", "message", "report"]);
 const REPORT_UPLOAD_CLEANUP_GRACE_MS = 24 * 60 * 60 * 1000;
 
-export function createRouter() {
+export function createRouter({ deleteObjects: deleteStoredObjects = deleteObjects } = {}) {
   const router = express.Router();
   const sharedRateLimitStore = config.nodeEnv === "production" ? "postgres" : "memory";
   const authLimiter = createRateLimiter({
@@ -259,11 +259,21 @@ export function createRouter() {
         await client.query("DELETE FROM post_favorites WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1", [userId]);
 
-        return keys;
+        if (!keys.length) return [];
+        const retainedEvidence = await client.query(
+          `SELECT DISTINCT object_key
+           FROM safety_evidence evidence
+           CROSS JOIN LATERAL unnest(evidence.object_keys) AS object_key
+           WHERE evidence.redacted_at IS NULL
+             AND object_key = ANY($1::text[])`,
+          [keys]
+        );
+        const retainedKeys = new Set(retainedEvidence.rows.map((row) => row.object_key));
+        return keys.filter((key) => !retainedKeys.has(key));
       });
 
       // Best-effort OSS cleanup outside the transaction; never block deletion on it.
-      deleteObjects(objectKeys).catch(() => {});
+      deleteStoredObjects(objectKeys).catch(() => {});
       logger.info("account.deleted", { userID: userId, objectKeys: objectKeys.length });
       res.status(204).end();
     } catch (error) {

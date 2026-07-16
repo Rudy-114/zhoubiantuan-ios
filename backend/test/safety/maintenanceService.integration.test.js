@@ -150,11 +150,31 @@ test("recent reports, hard signals, manual holds, and active actions keep monito
 });
 
 test("clears closed direct-message evidence at 180 days but preserves protected cases", async () => {
+  const activeSourceKey = "message/retention-sender/2026-01-01/still-live.jpg";
   await seedMessageRetentionCase({
     suffix: "expired",
     status: "resolved_no_action",
     resolvedAt: new Date(NOW.getTime() - 180 * 24 * 60 * 60 * 1000)
   });
+  await pool.query(
+    `INSERT INTO users (id, nickname) VALUES
+       ('retention-sender', 'Sender'), ('retention-recipient', 'Recipient')`
+  );
+  await pool.query(
+    `INSERT INTO message_threads (id, buyer_user_id, publisher_user_id)
+     VALUES ('retention-thread', 'retention-sender', 'retention-recipient')`
+  );
+  await pool.query(
+    `INSERT INTO direct_messages (id, thread_id, sender_id, image_object_key)
+     VALUES ('message-expired', 'retention-thread', 'retention-sender', $1)`,
+    [activeSourceKey]
+  );
+  await pool.query(
+    `UPDATE safety_evidence
+     SET object_keys = array_append(object_keys, $1)
+     WHERE id = 'evidence-message-expired'`,
+    [activeSourceKey]
+  );
   await seedMessageRetentionCase({
     suffix: "179-days",
     status: "resolved_no_action",

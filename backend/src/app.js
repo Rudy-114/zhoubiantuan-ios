@@ -14,7 +14,8 @@ import { createRouter } from "./routes.js";
 
 export function createApp({
   adminCaseRouterOptions,
-  adminWebEnabled = config.admin.webEnabled
+  adminWebEnabled = config.admin.webEnabled,
+  routerOptions
 } = {}) {
   const app = express();
   app.set("trust proxy", "loopback");
@@ -49,7 +50,7 @@ export function createApp({
   app.use(cors());
   app.use(express.json({ limit: "2mb" }));
   app.get(PRIVACY_POLICY_PATHS, servePrivacyPolicy);
-  app.use("/api", createRouter());
+  app.use("/api", createRouter(routerOptions));
   app.get("/", (_req, res) => res.json({ name: "ZhouBianTuan API", ok: true }));
   app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
   app.use((error, req, res, _next) => {
