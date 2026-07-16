@@ -150,19 +150,19 @@ git commit -m "Gate automatic safety enforcement"
 **Interfaces:**
 - Produces: `markReportInvalid`, `independentReporterCount`, and admin “举报滥用” action.
 
-- [ ] **Step 1: Write failing count tests**
+- [x] **Step 1: Write failing count tests**
 
 Verify one account retry/evidence supplements count once, two valid distinct accounts count twice, closed/invalid abuse reports do not count, restricted reporters do not trigger the automatic threshold, and all clues remain visible to admin with their counting status.
 
-- [ ] **Step 2: Implement invalidation without deleting evidence**
+- [x] **Step 2: Implement invalidation without deleting evidence**
 
 Admin can mark a report `invalid` with reason `malicious`, `coordinated`, `mistaken_target`, or `other`. Append event/audit, preserve evidence under retention, recalculate case independent count, and re-evaluate only reversible automatic actions. Never punish a target based on invalidated clues.
 
-- [ ] **Step 3: Use the count in invalid-contact policy**
+- [x] **Step 3: Use the count in invalid-contact policy**
 
 Compute distinct active reporter IDs within rolling seven days where report status is pending/closed-valid and abuse flag is absent. The threshold triggers only `hide_collection_contact`; account punishment is still impossible.
 
-- [ ] **Step 4: Add compact admin controls and commit**
+- [x] **Step 4: Add compact admin controls and commit**
 
 Show whether each clue counts toward the threshold. Marking abuse requires a reason and single-item confirmation.
 
