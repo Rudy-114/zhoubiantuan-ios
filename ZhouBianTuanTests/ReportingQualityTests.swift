@@ -2789,7 +2789,10 @@ final class ReportingQualityTests: XCTestCase {
 
     @MainActor
     private func makeStore() -> MockAppStore {
-        let store = MockAppStore(backendClient: makeClient())
+        let store = MockAppStore(
+            backendClient: makeClient(),
+            persistenceMode: .preview
+        )
         store.isLoggedIn = true
         store.backendToken = "current-session-value"
         store.toastMessage = nil
