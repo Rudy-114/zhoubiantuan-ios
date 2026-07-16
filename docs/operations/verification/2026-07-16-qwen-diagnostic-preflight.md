@@ -1,13 +1,13 @@
 # Qwen Privacy-Safe Diagnostic Preflight - 2026-07-16
 
-Status: LOCAL PASS; PRODUCTION NOT DEPLOYED; NO NEW PROVIDER CALL
+Status: DIAGNOSTIC RUNTIME DEPLOYED; SECOND CALL INVALID; LOCAL PROMPT V2 READY
 
 ## Authorization Boundary
 
 Rudy authorized future synthetic diagnostic calls for the fixed model
 `qwen3.7-plus-2026-05-26` under a hard cumulative spend cap of CNY 1.000000.
-The already-settled call consumed CNY 0.002080, leaving CNY 0.997920 of
-headroom. The cap is fail-closed: a new call may start only when committed
+The two settled calls consumed CNY 0.003800, leaving CNY 0.996200 of headroom.
+The cap is fail-closed: a new call may start only when committed
 lifetime spend plus its conservative maximum reservation remains at or below
 CNY 1.000000.
 
@@ -51,10 +51,24 @@ node scripts/validate-qwen.js \
   coverage. Both review axes then returned PASS with no remaining P1/P2.
 - Temporary PostgreSQL clusters and port 55435 were released after testing.
 
-## Production Deployment Checkpoint
+After the production diagnostic exposed a wrong top-level JSON shape, a second
+test-first local pass made the prompt contract self-contained from the same
+`qwenCaseResultSchema` that Ajv validates, explicitly required the nine
+camelCase top-level properties, prohibited wrapper objects, and advanced the
+prompt version to `safety-case-prompt-v2`. The prompt regression was observed
+red before the fix. Targeted Qwen tests passed 26/26, ordinary Node passed
+147/147, and PostgreSQL 16 passed 221/221. Standards and Spec review both
+returned PASS with no P1/P2; their two P3 test/wording observations were fixed
+and the final targeted pass remained 26/26. Temporary PostgreSQL resources and
+ports 55436 and 55437 were released, and syntax plus `git diff --check` passed.
 
-No diagnostic code has been deployed and no new paid call has occurred. Before
-the first production deployment of this change:
+## Production Deployment And Diagnostic Result
+
+Rudy explicitly authorized production deployment of reviewed commit `1c4591b`.
+The exact commit archive was installed into a mode-700 staging runtime, production
+dependencies, JavaScript syntax, Ajv loading, the known test-fixture-only secret
+scan, release marker, and validation-script checksum all passed, and the mode-600
+environment file was copied without reading or printing it.
 
 The final read-only baseline confirmed the production service active/running,
 `shadow`, automatic actions disabled, monthly budget zero, CNY 2/CNY 8 rates,
@@ -67,17 +81,25 @@ health returned 401. Remote and local validation-script checksums differed,
 independently confirming this diagnostic commit was not deployed. The check
 performed no restart, environment change, database write, or provider call.
 
-1. Confirm service health and the authenticated AI health page, production
-   `shadow` mode, automatic actions disabled, budget zero, fixed versions, and
-   no active synthetic validation run.
-2. Confirm lifetime committed AI spend remains CNY 0.002080 and the configured
-   input/output rates remain the approved CNY 2/CNY 8 per million tokens without
-   printing credentials or environment contents.
-3. Create a mode-600 runtime/environment backup and record checksums. There is
-   no database migration in this change.
-4. Deploy the reviewed commit, restart once, and verify public health, admin
-   isolation, service flags, and the no-confirmation CLI refusal before any
-   provider call.
+The deployment created `/opt/zbt-backend.qwen-diagnostic-backup-20260716-034239`
+and the immediate rollback directory
+`/opt/zbt-backend.qwen-diagnostic-replaced-20260716-034239`, switched once, and
+restarted `zbt-backend.service` once. The service became active/running on a new
+PID; health, feed, privacy, and `/admin` returned 200; unauthenticated AI health
+returned 401; the runtime checksum matched `1c4591b`; the no-confirmation CLI
+refused with exit 1; and post-deploy database/configuration counts exactly
+matched the baseline. Startup-failure, provider-call, and environment-value
+leak markers were all zero before the paid diagnostic.
+
+One subsequently authorized diagnostic attempt returned 288 input and 143
+output tokens and settled CNY 0.001720. It failed closed as
+`invalid_ai_result`. The allowlisted diagnostic showed all nine approved
+top-level properties missing and five disallowed top-level properties, without
+retaining their names, values, messages, prompt, evidence, or raw response.
+The run is synthetic and invalid, its raw and parsed result are empty, and it
+created no real AI run, evaluation, or action. Production remained `shadow`,
+automatic actions disabled, monthly budget zero, active diagnostics zero, and
+public/service health passed. Lifetime committed spend is CNY 0.003800.
 
 Rollback is to restore the immediately preceding runtime backup, preserve the
 existing additive AI schema and audit rows, restart the service with budget
@@ -86,10 +108,14 @@ authorize a provider call.
 
 ## Next Paid Call Bound
 
-One diagnostic attempt still uses the fixed synthetic invalid-contact packet,
-non-thinking JSON Mode, and at most 900 output tokens. At the approved CNY
-2/CNY 8 rates its existing conservative maximum remains CNY 0.010046; together
-with the settled CNY 0.002080, the worst committed total after the next attempt
-is CNY 0.012126, below the lifetime cap. Stop without another call if preflight
-state differs, the reservation is blocked, a matching run is active/completed,
-or any safety output would exceed the allowlist.
+The next diagnostic attempt requires deploying the reviewed local prompt-v2
+fix first; that new production write is not covered by the authorization to
+deploy `1c4591b`. It still uses the fixed synthetic invalid-contact packet,
+non-thinking JSON Mode, and at most 900 output tokens. At CNY 2/CNY 8 rates the
+new self-contained prompt has a conservative maximum reservation of CNY
+0.013736; together with settled CNY 0.003800, the worst committed total is CNY
+0.017536, below the lifetime cap. Paid-call authority already covers that
+synthetic attempt, but no call may occur until a separately authorized deployment
+passes its zero-call checks. Stop if preflight state differs, the reservation is
+blocked, a matching run is active/completed, or any safety output would exceed
+the allowlist.

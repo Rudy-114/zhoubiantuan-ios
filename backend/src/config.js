@@ -106,7 +106,7 @@ export const config = {
     baseUrl: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
     apiKey: process.env.DASHSCOPE_API_KEY || "",
     model: "qwen3.7-plus-2026-05-26",
-    promptVersion: "safety-case-prompt-v1",
+    promptVersion: "safety-case-prompt-v2",
     policyVersion: "safety-policy-v1",
     monthlyBudgetCny: nonNegativeFiniteNumber("SAFETY_AI_MONTHLY_BUDGET_CNY"),
     inputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_INPUT_CNY_PER_MILLION"),

@@ -548,14 +548,26 @@ privacy-safe retained artifact has no raw response or validator paths, the exact
 schema mismatch is not reproducible; Step 6 remains incomplete.
 
 Rudy subsequently authorized further fixed-model synthetic diagnostic calls
-under a hard cumulative CNY 1.000000 cap (including the settled CNY 0.002080)
-and confirmed the privacy-safe public seams. A test-first local follow-up now
-adds an explicit `--diagnostic-attempt --hard-cap-cny=1` mode, lifetime
-cross-month reservations, settlement-overrun rejection, completed-run duplicate
-blocking, and allowlisted validator paths without values or raw content. Node
-146/146 and PostgreSQL 221/221 pass; independent Standards and Spec re-review
-both report no remaining P1/P2. This diagnostic change is not deployed and no
-new provider call has occurred. See
+under a hard cumulative CNY 1.000000 cap (including settled usage) and confirmed
+the privacy-safe public seams. A test-first follow-up added an explicit
+`--diagnostic-attempt --hard-cap-cny=1` mode, lifetime cross-month reservations,
+settlement-overrun rejection, completed-run duplicate blocking, and allowlisted
+validator paths without values or raw content. Both review axes returned PASS
+with no remaining P1/P2. Rudy explicitly authorized deployment of `1c4591b`;
+the mode-600 backup, exact runtime switch, one restart, zero-call
+service/admin/database checks, and no-confirmation refusal all passed with
+production budget still zero.
+
+One authorized diagnostic call then consumed 288 input and 143 output tokens at
+CNY 0.001720. It failed closed with all nine required top-level fields missing
+and five additional top-level properties; only allowlisted paths/keywords were
+exposed, raw and parsed results remained empty, and no real run, action, or
+evaluation was created. Lifetime spend is CNY 0.003800. A test-first local fix
+now embeds the same closed schema used by Ajv, prohibits wrapper objects, and
+bumps the prompt to `safety-case-prompt-v2`. Targeted Qwen tests pass 26/26,
+ordinary Node 147/147, PostgreSQL 16 221/221, and both review axes pass with no
+P1/P2 after their P3 observations were closed. The v2 fix is not deployed; Step
+6 remains incomplete. See
 `docs/operations/verification/2026-07-16-qwen-diagnostic-preflight.md`.
 
 - [ ] **Step 6: Begin real shadow comparisons**

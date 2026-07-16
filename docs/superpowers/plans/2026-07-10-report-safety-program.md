@@ -199,11 +199,13 @@ RealtimeConnectionState
 **Plan:** `docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md`
 
 Status: implementation Tasks 1–8 and Task 9's zero-budget production deployment
-are complete. The separately authorized one-call validation executed once and
-settled CNY 0.002080, but failed the closed schema and was not retried. Production
-budget is zero. Privacy-safe diagnostic support and a lifetime CNY 1 cap now
-pass local Node 146/146 and PostgreSQL 221/221 verification but are not deployed;
-a diagnosable production result and real shadow comparisons remain incomplete.
+are complete. Privacy-safe diagnostics and the lifetime CNY 1 cap are deployed
+at `1c4591b`. Two authorized synthetic calls settled CNY 0.003800 total and both
+failed the closed schema; the second produced safe field-location diagnostics
+with no raw/value retention or real-case side effects. Production remains
+shadow, automatic actions disabled, and budget zero. A local prompt-v2 fix now
+passes Node 147/147, PostgreSQL 221/221, and both review axes, but is not deployed;
+a passing synthetic validation and real shadow comparisons remain incomplete.
 
 - [ ] Add schema validation, prompt minimization, budget reservation, deterministic policy tests, fixtures, AI health, and shadow comparisons.
 - [x] Keep the budget at zero until Rudy explicitly approves the single paid validation call.

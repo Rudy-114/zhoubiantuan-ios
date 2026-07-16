@@ -1,18 +1,19 @@
 # AI Shadow Production Deployment - 2026-07-16
 
-Status: ZERO-BUDGET PRODUCTION ACTIVE; ONE PAID VALIDATION INVALID; NO RETRY
+Status: ZERO-BUDGET PRODUCTION ACTIVE; TWO PAID VALIDATIONS INVALID; LOCAL V2 FIX NOT DEPLOYED
 
 ## Scope
 
 - Production service: `zbt-backend.service`
 - Production directory: `/opt/zbt-backend`
-- Runtime commit: `836226b`
+- Runtime commit: `1c4591b`
 - Additive migration: `017_safety_ai.sql`
 - Mode: `SAFETY_AI_MODE=shadow`
 - Automatic actions: `SAFETY_AUTO_ACTIONS_ENABLED=false`
 - Monthly budget: `SAFETY_AI_MONTHLY_BUDGET_CNY=0`
 - Fixed model in code: `qwen3.7-plus-2026-05-26`
-- Paid Qwen validation: exactly one authorized call, CNY 0.002080, invalid result
+- Paid Qwen validations: two authorized synthetic calls, CNY 0.003800 total,
+  both invalid
 - Enforcement: excluded
 
 This deployment introduced the AI audit schema, budget guard, shadow worker,
@@ -29,6 +30,10 @@ action occurred during that deployment checkpoint.
   `.project-secrets/backups/zbt-before-ai-shadow-20260716-084315.dump`
 - Immediate runtime rollback after the final switch:
   `/opt/zbt-backend.ai-shadow-replaced-20260716-090204`
+- Diagnostic runtime backup:
+  `/opt/zbt-backend.qwen-diagnostic-backup-20260716-034239`
+- Current immediate runtime rollback:
+  `/opt/zbt-backend.qwen-diagnostic-replaced-20260716-034239`
 - Preserved failed first Stage 7 runtime:
   `/opt/zbt-backend.ai-shadow-failed-20260716-084315`
 - Final runtime archive checksum:
@@ -152,7 +157,7 @@ temporary PostgreSQL tunnel closed and local port 55434 was released.
 
 For an incident, first set mode off while keeping automatic actions false and
 budget zero, then restore
-`/opt/zbt-backend.ai-shadow-replaced-20260716-090204` with permissions preserved
+`/opt/zbt-backend.qwen-diagnostic-replaced-20260716-034239` with permissions preserved
 and restart `zbt-backend.service` once. Verify public health, feed, privacy,
 consumer authentication, WebSocket, `/admin`, administrator isolation, and
 recent journal status. Keep `017_safety_ai.sql` and its empty tables in place.
@@ -173,3 +178,32 @@ real case, evaluation, or safety action, and does not count toward real shadow
 metrics. It was not retried. Production immediately returned to monthly budget
 zero, remained in shadow mode with automatic actions disabled, and passed
 service, public API, database, journal, and authenticated AI-health checks.
+
+## Diagnostic Runtime And Second Validation
+
+Rudy explicitly authorized deployment of commit `1c4591b`. The complete
+runtime was staged and checked before one restart, with the production environment
+copied at owner `ecs-user`, mode `600`, without exposing values. The validation
+script checksum changed from the prior runtime and matched the reviewed commit.
+Health, feed, privacy, `/admin`, administrator isolation, service flags, database
+counts, and the no-confirmation CLI refusal all passed before a provider call.
+There was no migration. Startup-failure, provider-call, and environment-value
+leak markers were zero at the zero-call checkpoint.
+
+The authorized diagnostic attempt used the fixed synthetic packet and lifetime
+CNY 1 cap. It consumed 288 input and 143 output tokens and settled CNY 0.001720.
+The result was valid JSON but the wrong closed-schema shape: all nine approved
+top-level properties were reported missing and five unapproved top-level
+properties were reported, using only allowlisted schema locations and keywords.
+It was recorded as synthetic `invalid_ai_result`, with empty raw response and
+empty parsed result. There are now two invalid synthetic runs, zero active or
+completed synthetic runs, zero real runs, zero AI evaluations, zero safety
+actions, and lifetime committed spend CNY 0.003800. The service remains
+active/running, shadow, automatic actions disabled, and budget zero.
+
+The local test-first correction makes the prompt self-contained from the exact
+Ajv schema, forbids wrapper objects, and advances the prompt version to
+`safety-case-prompt-v2`. Targeted Qwen tests pass 26/26, ordinary Node 147/147,
+and PostgreSQL 16 221/221; both review axes pass with no P1/P2. This local fix is
+not deployed. A new production authorization is required before switching away
+from `1c4591b`.
