@@ -497,7 +497,7 @@ git commit -m "Add safety AI health and evaluation UI"
 
 The script exits before loading provider when `--confirm-spend` is absent. With confirmation it builds one synthetic invalid-contact case, reserves against the configured budget, invokes fixed Qwen once, validates schema, prints only model, request ID, token counts, estimated cost, and pass/fail, then deletes or marks the synthetic run. It prints no key, prompt, evidence, or raw response.
 
-- [ ] **Step 2: Deploy with shadow mode but budget zero**
+- [x] **Step 2: Deploy with shadow mode but budget zero**
 
 Set:
 
@@ -509,9 +509,21 @@ SAFETY_AI_MONTHLY_BUDGET_CNY=0
 
 Deploy migration 017 and code, restart, submit a test report, and verify it reaches human review with `budget_blocked` and no outbound Qwen call.
 
-- [ ] **Step 3: Present the exact paid-call checkpoint to Rudy**
+Completed on 2026-07-16 at runtime commit `836226b`. The first smoke exposed a
+PostgreSQL microsecond freshness defect and triggered an immediate runtime
+rollback; the test-first precision fix then passed Node 134/134 and PostgreSQL
+217/217 before the final deployment and independent smoke passed. See
+`docs/operations/verification/2026-07-16-ai-shadow-production.md`.
+
+- [x] **Step 3: Present the exact paid-call checkpoint to Rudy**
 
 Report the chosen official input/output rates, proposed monthly budget, and maximum cost of one 900-output-token validation call. Ask for explicit confirmation of that spend. General approval of this implementation plan does not satisfy this checkpoint.
+
+Presented as `docs/operations/verification/2026-07-16-qwen-paid-call-checkpoint.md`:
+fixed model `qwen3.7-plus-2026-05-26`, exactly one call, official
+Chinese-mainland rates CNY 2/CNY 8 per million input/non-thinking output tokens,
+and conservative maximum spend CNY 0.010046. Explicit spend authorization is
+still absent, so Steps 4-6 remain blocked.
 
 - [ ] **Step 4: Configure approved rates/budget without exposing values**
 
@@ -529,7 +541,7 @@ Verify key permission, model availability, JSON Mode, non-thinking setting, usag
 
 Leave automatic actions disabled. For each real case, AI records a proposal and the admin records comparison after their decision. Do not enable enforcement in this phase.
 
-- [ ] **Step 7: Commit the guarded validation script**
+- [x] **Step 7: Commit the guarded validation script**
 
 ```bash
 git add backend/scripts/validate-qwen.js

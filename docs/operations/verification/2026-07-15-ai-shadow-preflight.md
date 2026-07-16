@@ -1,6 +1,6 @@
 # AI Shadow Production Preflight - 2026-07-15
 
-Status: LOCAL PRECHECK COMPLETE; PRODUCTION NOT AUTHORIZED OR EXECUTED
+Status: EXECUTED; ZERO-BUDGET PRODUCTION RUNTIME PASSED; PAID QWEN CALL NOT RUN
 
 ## Scope
 
@@ -19,13 +19,15 @@ zero. The migration adds `safety_ai_runs`, `safety_ai_usage`, and
 content rows. Budget zero must record `budget_blocked` before provider
 construction or network activity, and every case must remain in human review.
 
-No production host, database, environment file, credential, or paid API was
-accessed while preparing this document.
+The preflight was prepared without production access. Rudy then explicitly
+authorized the zero-budget production deployment. Execution evidence, rollback
+events, final smoke results, and synthetic-data cleanup are recorded in
+`docs/operations/verification/2026-07-16-ai-shadow-production.md`.
 
 ## Local Evidence
 
 - Stage 7 Tasks 1-8 are committed through `5b03139`; plan state is committed at
-  `9e954e1`.
+  `9e954e1`; the production precision fix is committed at `836226b`.
 - Guarded validation CLI unit coverage passes 9/9.
 - Full ordinary Node regression passes 134/134.
 - Running the CLI without `--confirm-spend` in an environment without project
@@ -34,7 +36,8 @@ accessed while preparing this document.
   uses one synthetic invalid-contact packet, prints an allowlist-only JSON
   summary, marks the run synthetic, keeps raw output empty, and refuses a second
   provider attempt for the same model/prompt/policy versions.
-- PostgreSQL 16 full regression passes 216/216 after the host reboot. The three
+- PostgreSQL 16 full regression passes 217/217 after the host reboot and the
+  production-discovered microsecond precision regression was added. The three
   guarded CLI integration tests cover successful reservation/call/validation/
   settlement with synthetic persistence, budget-zero blocking before provider
   construction, and two truly concurrent confirmed attempts constructing and
