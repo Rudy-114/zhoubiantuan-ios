@@ -284,6 +284,8 @@ async function prepareAiRun(client, {
     `SELECT * FROM safety_ai_runs
      WHERE case_id = $1 AND model_version = $2 AND prompt_version = $3
        AND policy_version = $4 AND evidence_hash = $5
+       AND NOT (status = 'failed' AND retryable = true)
+     ORDER BY created_at DESC, id DESC
      LIMIT 1
      FOR UPDATE`,
     [context.caseRecord.id, aiConfig.model, aiConfig.promptVersion, aiConfig.policyVersion, evidenceHash]
@@ -520,6 +522,7 @@ async function finishProviderFailure({
 }) {
   const errorCode = safeProviderErrorCode(error);
   const runStatus = ["invalid_ai_result", "qwen_invalid_response"].includes(errorCode) ? "invalid" : "failed";
+  const retryable = runStatus === "failed" && error?.retryable === true;
   return withTransaction(async (client) => {
     if (validUsage(error?.usage)) {
       await settleAiBudget(client, {
@@ -543,12 +546,13 @@ async function finishProviderFailure({
     }
     await client.query(
       `UPDATE safety_ai_runs
-       SET status = $2, raw_response = $3, error_code = $4, completed_at = $5
+       SET status = $2, raw_response = $3, error_code = $4,
+           retryable = $5, completed_at = $6
        WHERE id = $1`,
-      [runId, runStatus, boundedRaw(error?.[RAW_QWEN_CONTENT]), errorCode, now]
+      [runId, runStatus, boundedRaw(error?.[RAW_QWEN_CONTENT]), errorCode, retryable, now]
     );
     await moveCaseToManualIfCurrent(client, context, now);
-    return { status: runStatus, reason: errorCode, providerCalled: true };
+    return { status: runStatus, reason: errorCode, providerCalled: true, retryable };
   });
 }
 

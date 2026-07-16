@@ -29,7 +29,7 @@ test("documents report upload and supplement abuse defaults with the final migra
   }
   assert.match(
     deploymentPlan,
-    /013, core off, intake on\/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web\/root, 017 safety AI/
+    /013, core off, intake on\/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web\/root, 017 safety AI, 018 retry audit/
   );
 });
 

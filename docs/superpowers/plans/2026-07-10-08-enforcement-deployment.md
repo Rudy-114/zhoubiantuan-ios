@@ -251,7 +251,7 @@ Refer operators to mode-600 environment files; never include keys, passwords, re
 
 - [x] **Step 3: Document exact rollout and rollback**
 
-Rollout order: P0, 013, core off, intake on/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web/root, 017 safety AI, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
+Rollout order: P0, 013, core off, intake on/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web/root, 017 safety AI, 018 retry audit, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
 
 - [x] **Step 4: Document incident procedures**
 

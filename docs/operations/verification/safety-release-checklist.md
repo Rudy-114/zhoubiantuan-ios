@@ -89,7 +89,8 @@ git grep -nE 'DASHSCOPE_API_KEY[=][^[:space:]]+|ALIYUN_ACCESS_KEY_SECRET[=][^[:s
   checksums or file manifests.
 - [ ] The exact not-yet-applied migration set is recorded.
 - [ ] Migration order is P0, 013, 014, 015, 016, administrator 017 changes, then
-  safety AI 017; each migration is additive or its index replacement is stated.
+  safety AI 017 and retry audit 018; each migration is additive or its index
+  replacement is stated.
 - [ ] Migration runs in a controlled transaction and its migration record is
   verified before runtime activation.
 - [ ] Down migrations are excluded from the ordinary production rollback plan.

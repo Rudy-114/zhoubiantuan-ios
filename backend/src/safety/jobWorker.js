@@ -173,6 +173,11 @@ export function createAnalyzeCaseJobHandler({
     const caseId = requiredCaseId(job?.case_id);
     const revisionId = optionalRevisionId(job?.payload?.revisionId);
     const result = await analyzeSafetyCase({ caseId, revisionId });
+    if (result?.status === "failed" && result.retryable === true) {
+      const retryError = new Error("Safety AI analysis requires retry");
+      retryError.code = "SAFETY_AI_RETRYABLE";
+      throw retryError;
+    }
     if (result?.syncEvents?.length) {
       try {
         await notifySyncEvents(result.syncEvents);

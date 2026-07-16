@@ -589,6 +589,44 @@ test("invalid JSON, timeout, and 429 fail closed with conservative usage state",
   }
 });
 
+test("a retryable provider failure permits a fresh audited run for the same evidence", async () => {
+  await seedPostCase({ category: "other" });
+  let providerCalls = 0;
+  const provider = {
+    async analyze() {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        throw providerError("qwen_timeout", { retryable: true, billingUncertain: true });
+      }
+      return providerOutput(validResult());
+    }
+  };
+
+  const first = await analyze({ provider });
+  const second = await analyze({ provider });
+  const cached = await analyze({ provider });
+
+  assert.deepEqual(first, {
+    status: "failed",
+    reason: "qwen_timeout",
+    providerCalled: true,
+    retryable: true
+  });
+  assert.equal(second.status, "completed");
+  assert.equal(cached.cached, true);
+  assert.equal(providerCalls, 2);
+  const runs = await pool.query(
+    `SELECT status, retryable, error_code
+     FROM safety_ai_runs
+     ORDER BY status`
+  );
+  assert.deepEqual(runs.rows, [
+    { status: "completed", retryable: false, error_code: null },
+    { status: "failed", retryable: true, error_code: "qwen_timeout" }
+  ]);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_ai_usage")).rows[0].count, 2);
+});
+
 test("worker persists only generic job errors when orchestration throws unexpectedly", async () => {
   await seedPostCase({ category: "other" });
   await pool.query(

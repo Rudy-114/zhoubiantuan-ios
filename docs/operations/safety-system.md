@@ -161,13 +161,17 @@ because a later feature is disabled.
     remove all disposable access.
 11. **Safety AI schema:** apply `017_safety_ai.sql` with AI off, automatic actions
     false, and budget zero; verify the three AI tables and no provider activity.
-12. **Shadow:** after separate budget/provider authorization, set shadow mode,
+12. **Safety AI retry audit:** apply `018_safety_ai_retry_runs.sql` with AI off,
+    automatic actions false, and budget zero. Verify `retryable` defaults false,
+    the partial uniqueness index permits only failed retryable attempts to share
+    an evidence identity, and the durable job remains capped at three attempts.
+13. **Shadow:** after separate budget/provider authorization, set shadow mode,
     keep automatic actions false, and collect only real current-version human
     comparisons. Synthetic diagnostics never count toward the gate.
-13. **Gate:** verify 100 current fixtures, zero schema failures, at least 95%
+14. **Gate:** verify 100 current fixtures, zero schema failures, at least 95%
     auto-hide precision, 30 current-version real comparisons, zero scope errors,
     zero automatic account actions, and exact model/prompt/policy versions.
-14. **Enforce:** only after explicit production authorization, set enforce mode
+15. **Enforce:** only after explicit production authorization, set enforce mode
     and automatic actions true. Start with a bounded observation window; the
     runtime gate must still pass immediately before every action.
 

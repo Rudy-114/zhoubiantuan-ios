@@ -79,3 +79,64 @@ test("AI down migration removes only AI state", async () => {
     });
   });
 });
+
+test("AI retry migration permits transient attempts but keeps one blocking run", async () => {
+  await withMigrationDatabase(async ({ pool: migrationPool, applyMigration, applyDownMigration }) => {
+    await applyMigration("013_safety_cases.sql");
+    await applyMigration("017_admin_auth.sql");
+    await applyMigration("017_safety_ai.sql");
+    await applyMigration("018_safety_ai_retry_runs.sql");
+
+    await migrationPool.query(
+      `INSERT INTO users (id, nickname) VALUES ('retry-owner', 'Retry Owner');
+       INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope)
+       VALUES ('retry-case', 'user', 'retry-owner', 'other', 'user');`
+    );
+    const insertRun = (id, status, retryable) => migrationPool.query(
+      `INSERT INTO safety_ai_runs (
+         id, case_id, model_version, prompt_version, policy_version,
+         evidence_hash, mode, status, retryable
+       ) VALUES ($1, 'retry-case', 'model-v1', 'prompt-v1', 'policy-v1',
+         'same-evidence', 'shadow', $2, $3)`,
+      [id, status, retryable]
+    );
+
+    await insertRun("retry-run-1", "failed", true);
+    await insertRun("retry-run-2", "failed", true);
+    await insertRun("retry-run-completed", "completed", false);
+    await assert.rejects(
+      insertRun("retry-run-duplicate", "running", false),
+      (error) => error.code === "23505"
+    );
+    const schema = await migrationPool.query(
+      `SELECT
+         (SELECT column_default FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'safety_ai_runs' AND column_name = 'retryable') AS retryable_default,
+         (SELECT indexdef FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'safety_ai_runs_one_blocking_evidence') AS retry_index`
+    );
+    assert.match(schema.rows[0].retryable_default, /false/);
+    assert.match(schema.rows[0].retry_index, /WHERE \(\(status <> 'failed'::text\) OR \(retryable = false\)\)/);
+
+    await assert.rejects(
+      applyDownMigration("018_safety_ai_retry_runs.sql"),
+      /cannot restore safety AI run uniqueness/i
+    );
+    await migrationPool.query(
+      "DELETE FROM safety_ai_runs WHERE id IN ('retry-run-1', 'retry-run-2')"
+    );
+    await applyDownMigration("018_safety_ai_retry_runs.sql");
+    const down = await migrationPool.query(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'safety_ai_runs' AND column_name = 'retryable'
+         ) AS retryable_exists,
+         EXISTS (
+           SELECT 1 FROM pg_constraint
+           WHERE conrelid = 'safety_ai_runs'::regclass AND contype = 'u'
+         ) AS unique_exists`
+    );
+    assert.deepEqual(down.rows[0], { retryable_exists: false, unique_exists: true });
+  });
+});
