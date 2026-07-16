@@ -97,11 +97,11 @@ git commit -m "Add safety retention and deadline jobs"
 **Interfaces:**
 - Produces: `evaluateEnforcementGate(client)` and `assertAutomaticActionsAllowed(client)`.
 
-- [ ] **Step 1: Write every gate failure test**
+- [x] **Step 1: Write every gate failure test**
 
 Assert false for: fixture count 99, fixture schema failure, auto-hide precision 0.949, real evaluations 29, one scope error, one automated account action, model/prompt/policy version mismatch, and stale fixture version. Assert true only when all exact conditions pass.
 
-- [ ] **Step 2: Implement the gate result**
+- [x] **Step 2: Implement the gate result**
 
 ```js
 export async function evaluateEnforcementGate(client) {
@@ -121,15 +121,15 @@ export async function evaluateEnforcementGate(client) {
 
 Fixture metrics are computed at runtime from `backend/src/safety/fixtures/policyCases.js`; real evaluation metrics join only `safety_ai_runs.is_synthetic=false` and the current model, prompt, and policy versions. A version change therefore restarts the 30-case comparison window without deleting old audit history.
 
-- [ ] **Step 3: Check immediately before action application**
+- [x] **Step 3: Check immediately before action application**
 
 Even when `SAFETY_AI_MODE=enforce`, `aiService` must re-read the current case, verify run/case version, call the gate, and only then call `applySafetyAction`. A failed gate stores proposals and sets reason `enforcement_gate_closed`; it does not mark the provider run failed.
 
-- [ ] **Step 4: Expose gate checks without a bypass button**
+- [x] **Step 4: Expose gate checks without a bypass button**
 
 AI Health displays each check and evidence count. There is no web toggle that overrides failures. Mode changes remain an operator environment/restart action, and runtime gate still controls execution.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bash
 npm --prefix backend test
