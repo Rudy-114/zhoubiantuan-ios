@@ -17,6 +17,7 @@ import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSafetyReportRouter } from "./safety/reportRoutes.js";
 import { registerReportUpload } from "./safety/reportUploadCleanup.js";
+import { loadRetainedSafetyObjectKeys } from "./safety/objectRetention.js";
 import { COLLECTION_PUBLIC_VISIBILITY_PREDICATE, COMMENT_PUBLIC_VISIBILITY_PREDICATE, POST_PUBLIC_VISIBILITY_PREDICATE } from "./safety/visibility.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
@@ -260,15 +261,7 @@ export function createRouter({ deleteObjects: deleteStoredObjects = deleteObject
         await client.query("DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1", [userId]);
 
         if (!keys.length) return [];
-        const retainedEvidence = await client.query(
-          `SELECT DISTINCT object_key
-           FROM safety_evidence evidence
-           CROSS JOIN LATERAL unnest(evidence.object_keys) AS object_key
-           WHERE evidence.redacted_at IS NULL
-             AND object_key = ANY($1::text[])`,
-          [keys]
-        );
-        const retainedKeys = new Set(retainedEvidence.rows.map((row) => row.object_key));
+        const retainedKeys = await loadRetainedSafetyObjectKeys(client, keys);
         return keys.filter((key) => !retainedKeys.has(key));
       });
 

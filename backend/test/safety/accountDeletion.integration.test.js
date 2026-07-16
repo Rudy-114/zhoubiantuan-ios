@@ -9,6 +9,7 @@ test.after(closeDatabase);
 
 test("account deletion preserves object keys held by active safety evidence", async () => {
   const retainedKey = "post/owner/2026-07-16/retained.jpg";
+  const moderationKey = "post/owner/2026-07-16/moderation.jpg";
   const disposablePostKey = "post/owner/2026-07-16/disposable.jpg";
   const disposableAvatarKey = "avatar/owner/2026-07-16/avatar.jpg";
   await pool.query(
@@ -21,7 +22,15 @@ test("account deletion preserves object keys held by active safety evidence", as
   await pool.query(
     `INSERT INTO posts (id, author_id, title, image_object_keys, deadline)
      VALUES ('reported-post', 'owner', 'Reported post', $1, now() + interval '1 day')`,
-    [[retainedKey, disposablePostKey]]
+    [[retainedKey, moderationKey, disposablePostKey]]
+  );
+  await pool.query(
+    `INSERT INTO moderation_reviews (
+       id, target_type, target_id, owner_id, status, image_object_keys
+     ) VALUES (
+       'retained-moderation', 'post', 'reported-post', 'owner', 'review', ARRAY[$1]::text[]
+     )`,
+    [moderationKey]
   );
   await pool.query(
     `INSERT INTO safety_cases (
