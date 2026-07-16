@@ -35,7 +35,7 @@
 **Interfaces:**
 - Produces: `processCorrectionDeadlines`, `closeLowRiskCases`, `clearExpiredEvidence`, `deidentifyExpiredAudit`, and periodic job enqueue.
 
-- [ ] **Step 1: Write failing time-controlled tests**
+- [x] **Step 1: Write failing time-controlled tests**
 
 Use injected `now` and cover:
 
@@ -50,11 +50,11 @@ two-year audit -> identifiers removed or row deleted according to event class
 repeat maintenance -> no duplicate action/event
 ```
 
-- [ ] **Step 2: Implement correction and low-risk rules**
+- [x] **Step 2: Implement correction and low-risk rules**
 
 Lock candidate cases with `FOR UPDATE SKIP LOCKED`. For overdue invalid contact, apply `suspend_collection` with idempotency key `deadline:suspend_collection:<caseId>`. For low-risk closure, require zero reports created in the last seven days beyond the original clue, no hard signal, no manual hold, and no active action.
 
-- [ ] **Step 3: Clear raw evidence safely**
+- [x] **Step 3: Clear raw evidence safely**
 
 For closed direct-message cases older than 180 days:
 
@@ -69,15 +69,15 @@ WHERE id = $1 AND redacted_at IS NULL;
 
 Collect object keys before update, commit, then best-effort delete from OSS. Clear related `safety_ai_runs.raw_response`. Keep case, event, action, category, dates, and de-identified outcome metadata.
 
-- [ ] **Step 4: De-identify two-year metadata**
+- [x] **Step 4: De-identify two-year metadata**
 
 For audit events older than two years, remove actor/session/device/IP identifiers and retain only event type, subject type, coarse month, and outcome when needed for aggregate accountability; delete low-value auth failure rows entirely. Unresolved cases and pending appeals are excluded from this cleanup.
 
-- [ ] **Step 5: Schedule maintenance through PostgreSQL jobs**
+- [x] **Step 5: Schedule maintenance through PostgreSQL jobs**
 
 At startup and every hour, enqueue unique hour-keyed jobs rather than running cleanup directly from timers. Register handlers with concurrency 1 per maintenance type so service restarts and multiple processes remain safe.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 ```bash
 npm --prefix backend run test:db
