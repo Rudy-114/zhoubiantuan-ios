@@ -1,3 +1,4 @@
+import { createSyncEventsForUsers } from "../sync.js";
 import { applySafetyAction } from "./actionService.js";
 import { enqueueSafetyJob as enqueueSafetyJobDefault } from "./jobQueue.js";
 
@@ -46,7 +47,13 @@ export async function processCorrectionDeadlines(client, { now = new Date() } = 
 export async function closeLowRiskCases(client, { now = new Date() } = {}) {
   const maintenanceNow = requiredDate(now, "now");
   const { rows } = await client.query(
-    `SELECT sc.id
+    `SELECT sc.id,
+            ARRAY(
+              SELECT DISTINCT report.reporter_id
+              FROM reports report
+              WHERE report.case_id = sc.id
+              ORDER BY report.reporter_id
+            ) AS reporter_ids
      FROM safety_cases sc
      WHERE sc.status = 'monitoring'
        AND sc.risk_level IN ('none', 'low')
@@ -88,6 +95,7 @@ export async function closeLowRiskCases(client, { now = new Date() } = {}) {
     [maintenanceNow, MAINTENANCE_BATCH_SIZE]
   );
 
+  const syncEvents = [];
   for (const safetyCase of rows) {
     await client.query(
       `UPDATE safety_cases
@@ -107,8 +115,14 @@ export async function closeLowRiskCases(client, { now = new Date() } = {}) {
        VALUES ($1, 'system', 'maintenance_low_risk_closed', '{}', $2)`,
       [safetyCase.id, maintenanceNow]
     );
+    syncEvents.push(...await createSyncEventsForUsers(client, {
+      userIds: safetyCase.reporter_ids,
+      eventType: "safety.report.updated",
+      entityType: "safety_case",
+      entityId: safetyCase.id
+    }));
   }
-  return { processed: rows.length };
+  return { processed: rows.length, syncEvents };
 }
 
 export async function clearExpiredEvidence(client, {

@@ -84,6 +84,7 @@ export function createMaintenanceJobHandlers({
   clearExpiredEvidence = clearExpiredEvidenceDefault,
   deidentifyExpiredAudit = deidentifyExpiredAuditDefault,
   deleteEvidenceObject = async () => { throw new Error("evidence object deletion is unavailable"); },
+  notifySyncEvents,
   eventLogger = logger
 } = {}) {
   const operations = {
@@ -97,6 +98,7 @@ export function createMaintenanceJobHandlers({
     if (typeof operation !== "function") throw new TypeError("maintenance operations must be functions");
   }
   if (typeof deleteEvidenceObject !== "function") throw new TypeError("deleteEvidenceObject must be a function");
+  if (typeof notifySyncEvents !== "function") throw new TypeError("notifySyncEvents must be a function");
   if (!eventLogger || typeof eventLogger.error !== "function") throw new TypeError("eventLogger must expose error");
 
   return {
@@ -104,10 +106,22 @@ export function createMaintenanceJobHandlers({
       "maintenance_correction_deadlines",
       operations.maintenance_correction_deadlines
     ),
-    maintenance_low_risk_cases: () => runExclusive(
-      "maintenance_low_risk_cases",
-      operations.maintenance_low_risk_cases
-    ),
+    maintenance_low_risk_cases: async () => {
+      const result = await runExclusive(
+        "maintenance_low_risk_cases",
+        operations.maintenance_low_risk_cases
+      );
+      if (result?.syncEvents?.length) {
+        try {
+          await notifySyncEvents(result.syncEvents);
+        } catch {
+          eventLogger.error("safety_worker.maintenance_low_risk_notify_failed", {
+            errorCode: "MAINTENANCE_LOW_RISK_NOTIFY_FAILED"
+          });
+        }
+      }
+      return result;
+    },
     maintenance_evidence_retention: async () => {
       const result = await runExclusive(
         "maintenance_evidence_retention",

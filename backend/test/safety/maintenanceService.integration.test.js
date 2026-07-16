@@ -77,12 +77,42 @@ test("overdue correction with a pending revision does not suspend the collection
 
 test("quiet low-risk monitoring case resolves once after seven days", async () => {
   await seedLowRiskCase();
+  await pool.query("INSERT INTO users (id, nickname) VALUES ('reporter-low-risk-second', 'Reporter 2')");
+  await pool.query(
+    `INSERT INTO reports (
+       id, target_type, target_id, reason, reporter_id, status, client_request_id,
+       case_id, source_type, source_id, subject_type, subject_id, reason_code,
+       reported_field, created_at, updated_at
+     ) VALUES (
+       'report-low-risk-second', 'post', 'post-low-risk', 'other',
+       'reporter-low-risk-second', 'pending', 'request-low-risk-second',
+       'case-low-risk', 'post', 'post-low-risk', 'post', 'post-low-risk',
+       'other', 'content', $1, $1
+     )`,
+    [new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000)]
+  );
 
   const first = await withTransaction((client) => closeLowRiskCases(client, { now: NOW }));
   const second = await withTransaction((client) => closeLowRiskCases(client, { now: NOW }));
 
-  assert.deepEqual(first, { processed: 1 });
-  assert.deepEqual(second, { processed: 0 });
+  assert.equal(first.processed, 1);
+  assert.deepEqual(first.syncEvents.map(({ id: _id, createdAt: _createdAt, ...event }) => event), [
+    {
+      userID: "reporter-low-risk",
+      eventType: "safety.report.updated",
+      entityType: "safety_case",
+      entityID: "case-low-risk",
+      threadID: null
+    },
+    {
+      userID: "reporter-low-risk-second",
+      eventType: "safety.report.updated",
+      entityType: "safety_case",
+      entityID: "case-low-risk",
+      threadID: null
+    }
+  ]);
+  assert.deepEqual(second, { processed: 0, syncEvents: [] });
   const safetyCase = await pool.query(
     "SELECT status, resolved_at FROM safety_cases WHERE id = 'case-low-risk'"
   );
@@ -94,6 +124,24 @@ test("quiet low-risk monitoring case resolves once after seven days", async () =
   assert.equal((await pool.query(
     "SELECT count(*)::int AS count FROM safety_case_events WHERE case_id = 'case-low-risk' AND event_type = 'maintenance_low_risk_closed'"
   )).rows[0].count, 1);
+  assert.deepEqual((await pool.query(
+    `SELECT user_id, event_type, entity_type, entity_id
+     FROM sync_events
+     ORDER BY user_id`
+  )).rows, [
+    {
+      user_id: "reporter-low-risk",
+      event_type: "safety.report.updated",
+      entity_type: "safety_case",
+      entity_id: "case-low-risk"
+    },
+    {
+      user_id: "reporter-low-risk-second",
+      event_type: "safety.report.updated",
+      entity_type: "safety_case",
+      entity_id: "case-low-risk"
+    }
+  ]);
 });
 
 test("recent reports, hard signals, manual holds, and active actions keep monitoring open", async () => {
@@ -137,7 +185,7 @@ test("recent reports, hard signals, manual holds, and active actions keep monito
 
   const result = await withTransaction((client) => closeLowRiskCases(client, { now: NOW }));
 
-  assert.deepEqual(result, { processed: 0 });
+  assert.deepEqual(result, { processed: 0, syncEvents: [] });
   const statuses = await pool.query(
     "SELECT id, status FROM safety_cases ORDER BY id"
   );
@@ -391,6 +439,7 @@ test("PostgreSQL advisory lock allows only one concurrent handler per maintenanc
     closeLowRiskCases: async () => ({ processed: 0 }),
     clearExpiredEvidence: async () => ({ processed: 0, objectKeys: [] }),
     deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
+    notifySyncEvents: async () => {},
     eventLogger: { error() {} }
   });
 

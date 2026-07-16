@@ -93,6 +93,7 @@ export function createSafetyServerRuntime({
           Object.assign(handlers, createMaintenanceJobHandlers({
             withTransaction: transaction,
             deleteEvidenceObject: deleteEvidence,
+            notifySyncEvents: notifyEvents,
             eventLogger
           }));
           for (const jobType of [...MAINTENANCE_JOB_TYPES, RETAINED_EVIDENCE_DELETE_JOB_TYPE]) {

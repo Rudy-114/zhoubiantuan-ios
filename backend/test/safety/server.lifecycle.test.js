@@ -119,6 +119,7 @@ test("evidence maintenance deletes objects only after commit and uses a global t
     clearExpiredEvidence: async () => ({ processed: 1, objectKeys: ["report/private-1.jpg"] }),
     deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
     deleteEvidenceObject: async (objectKey) => calls.push(["delete", objectKey, committed]),
+    notifySyncEvents: async () => {},
     eventLogger: { error() {} }
   });
 
@@ -140,6 +141,7 @@ test("maintenance lock contention fails the lease so the worker can retry it", a
     closeLowRiskCases: async () => ({ processed: 0 }),
     clearExpiredEvidence: async () => ({ processed: 0, objectKeys: [] }),
     deidentifyExpiredAudit: async () => ({ deidentified: 0, deleted: 0 }),
+    notifySyncEvents: async () => {},
     eventLogger: { error() {} }
   });
 
@@ -164,6 +166,7 @@ test("retained evidence object deletion stays retryable when OSS is unavailable"
       deleteCalls += 1;
       throw new Error("temporary OSS failure");
     },
+    notifySyncEvents: async () => {},
     eventLogger: { error() {} }
   });
 
