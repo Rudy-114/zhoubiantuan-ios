@@ -301,6 +301,9 @@ test("non-off runtime idempotently enqueues and handles analyze_case", async () 
   assert.deepEqual(analyses, [{
     caseId: "case-shadow",
     revisionId: null,
+    jobId: null,
+    jobAttempt: null,
+    interruptedRunId: null,
     recoverInterruptedRun: false,
     mode: "enforce",
     aiConfig: undefined,

@@ -48,11 +48,30 @@ test("a reclaimed durable job requests interrupted-run recovery", async () => {
     notifySyncEvents: async () => {}
   });
 
-  await handler({ case_id: "case-first", attempts: 1, payload: {} });
-  await handler({ case_id: "case-reclaimed", attempts: 2, payload: { revisionId: "revision-1" } });
+  await handler({ id: 11, case_id: "case-first", attempts: 1, payload: {} });
+  await handler({
+    id: 12,
+    case_id: "case-reclaimed",
+    attempts: 2,
+    payload: { revisionId: "revision-1", currentAiRunId: "sair-interrupted" }
+  });
 
   assert.deepEqual(analyses, [
-    { caseId: "case-first", revisionId: null, recoverInterruptedRun: false },
-    { caseId: "case-reclaimed", revisionId: "revision-1", recoverInterruptedRun: true }
+    {
+      caseId: "case-first",
+      revisionId: null,
+      jobId: 11,
+      jobAttempt: 1,
+      interruptedRunId: null,
+      recoverInterruptedRun: false
+    },
+    {
+      caseId: "case-reclaimed",
+      revisionId: "revision-1",
+      jobId: 12,
+      jobAttempt: 2,
+      interruptedRunId: "sair-interrupted",
+      recoverInterruptedRun: true
+    }
   ]);
 });

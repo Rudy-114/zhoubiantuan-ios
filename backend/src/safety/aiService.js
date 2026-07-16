@@ -43,6 +43,9 @@ export async function analyzeSafetyCase({
   publishRevision = publishApprovedRevision,
   automaticActionsEnabled = config.safety.autoActionsEnabled,
   assertEnforcementAllowed = assertAutomaticActionsAllowed,
+  jobId = null,
+  jobAttempt = null,
+  interruptedRunId = null,
   recoverInterruptedRun = false,
   now = new Date()
 } = {}) {
@@ -50,7 +53,16 @@ export async function analyzeSafetyCase({
   const safeRevisionId = revisionId == null ? null : requiredId(revisionId, "revisionId");
   const safeMode = aiMode(mode);
   const safeNow = validDate(now);
+  const safeJobId = jobId == null ? null : positiveInteger(Number(jobId), "jobId");
+  const safeJobAttempt = jobAttempt == null ? null : positiveInteger(jobAttempt, "jobAttempt");
+  const safeInterruptedRunId = interruptedRunId == null ? null : requiredId(interruptedRunId, "interruptedRunId");
   if (typeof recoverInterruptedRun !== "boolean") throw new TypeError("recoverInterruptedRun must be boolean");
+  if ((safeJobId == null) !== (safeJobAttempt == null)) {
+    throw new TypeError("jobId and jobAttempt must be provided together");
+  }
+  if (safeInterruptedRunId != null && safeJobId == null) {
+    throw new TypeError("interruptedRunId requires a job lease");
+  }
   const safeAiConfig = normalizeAiConfig(aiConfig);
   if (typeof withTransaction !== "function") throw new TypeError("withTransaction must be a function");
   if (typeof moderation !== "function") throw new TypeError("moderation must be a function");
@@ -65,6 +77,16 @@ export async function analyzeSafetyCase({
       [safeCaseId]
     ));
     return { status: "manual_review", reason: "ai_off_or_unavailable", providerCalled: false };
+  }
+
+  if (recoverInterruptedRun && safeInterruptedRunId) {
+    await withTransaction((client) => reconcileBoundInterruptedRun(client, {
+      caseId: safeCaseId,
+      jobId: safeJobId,
+      jobAttempt: safeJobAttempt,
+      interruptedRunId: safeInterruptedRunId,
+      now: safeNow
+    }));
   }
 
   const context = await withTransaction((client) => loadAnalysisContext(client, {
@@ -91,6 +113,9 @@ export async function analyzeSafetyCase({
     evidenceHash,
     hardSignal,
     messages,
+    jobId: safeJobId,
+    jobAttempt: safeJobAttempt,
+    interruptedRunId: safeInterruptedRunId,
     recoverInterruptedRun,
     now: safeNow
   }));
@@ -282,9 +307,13 @@ async function prepareAiRun(client, {
   evidenceHash,
   hardSignal,
   messages,
+  jobId,
+  jobAttempt,
+  interruptedRunId,
   recoverInterruptedRun,
   now
 }) {
+  await assertCurrentJobLease(client, { jobId, jobAttempt, interruptedRunId });
   const existing = await client.query(
     `SELECT * FROM safety_ai_runs
      WHERE case_id = $1 AND model_version = $2 AND prompt_version = $3
@@ -296,7 +325,7 @@ async function prepareAiRun(client, {
     [context.caseRecord.id, aiConfig.model, aiConfig.promptVersion, aiConfig.policyVersion, evidenceHash]
   );
   if (existing.rows[0]) {
-    if (recoverInterruptedRun && interruptedRunIsStale(existing.rows[0], now)) {
+    if (recoverInterruptedRun && !interruptedRunId && interruptedRunIsStale(existing.rows[0], now)) {
       await reconcileInterruptedRun(client, existing.rows[0], now);
     } else {
       return { kind: existing.rows[0].status === "completed" ? "cached" : "existing", run: existing.rows[0] };
@@ -341,7 +370,53 @@ async function prepareAiRun(client, {
     return { kind: "blocked", reason: reservation.reason, runId };
   }
   await client.query("UPDATE safety_ai_runs SET status = 'running' WHERE id = $1", [runId]);
+  await bindAiRunToJobLease(client, { jobId, jobAttempt, runId });
   return { kind: "ready", runId, reservation };
+}
+
+async function assertCurrentJobLease(client, { jobId, jobAttempt, interruptedRunId }) {
+  if (jobId == null) return;
+  const lease = await client.query(
+    `SELECT payload->>'currentAiRunId' AS current_ai_run_id
+     FROM safety_jobs
+     WHERE id = $1 AND status = 'running' AND attempts = $2
+     FOR UPDATE`,
+    [jobId, jobAttempt]
+  );
+  if (!lease.rows[0]) throw analysisError("safety_job_lease_lost");
+  if (interruptedRunId != null && lease.rows[0].current_ai_run_id !== interruptedRunId) {
+    throw analysisError("safety_job_run_mismatch");
+  }
+}
+
+async function reconcileBoundInterruptedRun(client, {
+  caseId,
+  jobId,
+  jobAttempt,
+  interruptedRunId,
+  now
+}) {
+  await assertCurrentJobLease(client, { jobId, jobAttempt, interruptedRunId });
+  const interrupted = await client.query(
+    "SELECT * FROM safety_ai_runs WHERE id = $1 AND case_id = $2 FOR UPDATE",
+    [interruptedRunId, caseId]
+  );
+  if (interrupted.rows[0]?.status === "running") {
+    await reconcileInterruptedRun(client, interrupted.rows[0], now);
+  }
+}
+
+async function bindAiRunToJobLease(client, { jobId, jobAttempt, runId }) {
+  if (jobId == null) return;
+  const bound = await client.query(
+    `UPDATE safety_jobs
+     SET payload = jsonb_set(payload, '{currentAiRunId}', to_jsonb($3::text), true),
+         updated_at = now()
+     WHERE id = $1 AND status = 'running' AND attempts = $2
+     RETURNING id`,
+    [jobId, jobAttempt, runId]
+  );
+  if (!bound.rows[0]) throw analysisError("safety_job_lease_lost");
 }
 
 async function reconcileInterruptedRun(client, run, now) {

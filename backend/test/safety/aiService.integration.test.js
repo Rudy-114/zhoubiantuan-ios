@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeSafetyCase } from "../../src/safety/aiService.js";
 import { supplementSafetyReport } from "../../src/safety/caseService.js";
+import { claimSafetyJobs, enqueueSafetyJob, failSafetyJob } from "../../src/safety/jobQueue.js";
 import { createAnalyzeCaseJobHandler, startSafetyWorker } from "../../src/safety/jobWorker.js";
 import { providerError, QwenCaseProvider } from "../../src/safety/providers/qwenCaseProvider.js";
 import { closeDatabase, pool, resetDatabase } from "../helpers/database.js";
@@ -711,6 +712,97 @@ test("a reclaimed job settles an interrupted running attempt before retrying", a
   assert.equal(
     (await pool.query("SELECT count(*)::int AS count FROM safety_ai_runs WHERE status = 'completed'")).rows[0].count,
     1
+  );
+});
+
+test("a normal retry immediately recovers the running attempt bound to its job lease", async () => {
+  await seedPostCase({ category: "other" });
+  await enqueueSafetyJob({
+    type: "analyze_case",
+    caseId: "case-ai",
+    uniqueKey: "analyze-case-bound-retry"
+  });
+  const [firstLease] = await claimSafetyJobs({ limit: 1, workerId: "ai-first-lease" });
+  const first = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => ({
+      analyze: async () => {
+        throw providerError("qwen_timeout", { retryable: true, billingUncertain: true });
+      }
+    }),
+    jobId: firstLease.id,
+    jobAttempt: firstLease.attempts,
+    now: NOW
+  });
+  assert.equal(first.status, "failed");
+
+  const firstRun = (await pool.query("SELECT id FROM safety_ai_runs")).rows[0];
+  assert.equal(
+    (await pool.query("SELECT payload->>'currentAiRunId' AS run_id FROM safety_jobs WHERE id = $1", [firstLease.id])).rows[0].run_id,
+    firstRun.id
+  );
+  await pool.query(
+    `UPDATE safety_ai_runs
+     SET status = 'running', retryable = false, error_code = NULL,
+         input_tokens = 0, output_tokens = 0, estimated_cost_cny = 0, completed_at = NULL
+     WHERE id = $1`,
+    [firstRun.id]
+  );
+  await pool.query(
+    `UPDATE safety_ai_usage
+     SET status = 'reserved', actual_cny = NULL, settled_at = NULL
+     WHERE ai_run_id = $1`,
+    [firstRun.id]
+  );
+  await failSafetyJob({
+    jobId: firstLease.id,
+    workerId: "ai-first-lease",
+    leaseAttempt: firstLease.attempts,
+    error: new Error("synthetic completion transaction failure")
+  });
+  await pool.query("UPDATE safety_jobs SET run_at = now() - interval '1 second' WHERE id = $1", [firstLease.id]);
+  const [retryLease] = await claimSafetyJobs({ limit: 1, workerId: "ai-retry-lease" });
+  assert.equal(retryLease.attempts, 2);
+  assert.equal(retryLease.payload.currentAiRunId, firstRun.id);
+
+  let providerCalls = 0;
+  const recovered = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "shadow",
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: passModeration,
+    providerFactory: () => ({
+      analyze: async () => {
+        providerCalls += 1;
+        return providerOutput(validResult());
+      }
+    }),
+    jobId: retryLease.id,
+    jobAttempt: retryLease.attempts,
+    interruptedRunId: retryLease.payload.currentAiRunId,
+    recoverInterruptedRun: true,
+    now: new Date(NOW.getTime() + 30_000)
+  });
+
+  assert.equal(recovered.status, "completed");
+  assert.equal(providerCalls, 1);
+  assert.deepEqual(
+    (await pool.query("SELECT status, retryable, error_code FROM safety_ai_runs WHERE id = $1", [firstRun.id])).rows[0],
+    { status: "failed", retryable: true, error_code: "qwen_provider_interrupted" }
+  );
+  const currentRunId = (await pool.query(
+    "SELECT payload->>'currentAiRunId' AS run_id FROM safety_jobs WHERE id = $1",
+    [retryLease.id]
+  )).rows[0].run_id;
+  assert.notEqual(currentRunId, firstRun.id);
+  assert.equal(
+    (await pool.query("SELECT status FROM safety_ai_runs WHERE id = $1", [currentRunId])).rows[0].status,
+    "completed"
   );
 });
 

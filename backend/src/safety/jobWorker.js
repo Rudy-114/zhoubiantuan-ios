@@ -186,8 +186,18 @@ export function createAnalyzeCaseJobHandler({
   return async function handleAnalyzeCaseJob(job) {
     const caseId = requiredCaseId(job?.case_id);
     const revisionId = optionalRevisionId(job?.payload?.revisionId);
-    const recoverInterruptedRun = Number.isSafeInteger(job?.attempts) && job.attempts > 1;
-    const result = await analyzeSafetyCase({ caseId, revisionId, recoverInterruptedRun });
+    const jobId = optionalJobId(job?.id);
+    const jobAttempt = optionalJobAttempt(job?.attempts);
+    const interruptedRunId = optionalAiRunId(job?.payload?.currentAiRunId);
+    const recoverInterruptedRun = jobAttempt != null && jobAttempt > 1;
+    const result = await analyzeSafetyCase({
+      caseId,
+      revisionId,
+      jobId,
+      jobAttempt,
+      interruptedRunId,
+      recoverInterruptedRun
+    });
     if (result?.status === "failed" && result.retryable === true) {
       const retryError = new Error("Safety AI analysis requires retry");
       retryError.code = "SAFETY_AI_RETRYABLE";
@@ -371,6 +381,30 @@ function requiredCaseId(value) {
 
 function optionalRevisionId(value) {
   return value == null ? null : requiredRevisionId(value);
+}
+
+function optionalJobId(value) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new TypeError("analyze_case id must be a positive integer");
+  return parsed;
+}
+
+function optionalJobAttempt(value) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 20) {
+    throw new TypeError("analyze_case attempts must be an integer from 1 to 20");
+  }
+  return parsed;
+}
+
+function optionalAiRunId(value) {
+  if (value == null) return null;
+  if (typeof value !== "string" || !value.trim() || Array.from(value.trim()).length > 160) {
+    throw new TypeError("analyze_case payload.currentAiRunId must be a bounded string");
+  }
+  return value.trim();
 }
 
 function maintenanceHour(value) {
