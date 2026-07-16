@@ -4,6 +4,7 @@ import { withTransaction as defaultWithTransaction } from "../db.js";
 import { reviewSubmission } from "../moderation/index.js";
 import { applySafetyAction } from "./actionService.js";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "./budgetService.js";
+import { assertAutomaticActionsAllowed } from "./enforcementGate.js";
 import { evaluateSafetyPolicy } from "./policyEngine.js";
 import { buildQwenCaseMessages, hashCaseEvidence } from "./promptBuilder.js";
 import { MockQwenCaseProvider } from "./providers/mockQwenCaseProvider.js";
@@ -35,7 +36,8 @@ export async function analyzeSafetyCase({
   providerFactory = defaultProviderFactory,
   applyAction = applySafetyAction,
   publishRevision = publishApprovedRevision,
-  gatePassed = false,
+  automaticActionsEnabled = config.safety.autoActionsEnabled,
+  assertEnforcementAllowed = assertAutomaticActionsAllowed,
   now = new Date()
 } = {}) {
   const safeCaseId = requiredId(caseId, "caseId");
@@ -46,6 +48,9 @@ export async function analyzeSafetyCase({
   if (typeof withTransaction !== "function") throw new TypeError("withTransaction must be a function");
   if (typeof moderation !== "function") throw new TypeError("moderation must be a function");
   if (typeof providerFactory !== "function") throw new TypeError("providerFactory must be a function");
+  if (typeof assertEnforcementAllowed !== "function") {
+    throw new TypeError("assertEnforcementAllowed must be a function");
+  }
 
   if (safeMode === "off") {
     await withTransaction((client) => client.query(
@@ -139,7 +144,8 @@ export async function analyzeSafetyCase({
     hardSignal,
     providerOutput,
     policy,
-    gatePassed: gatePassed === true,
+    automaticActionsEnabled: automaticActionsEnabled === true,
+    assertEnforcementAllowed,
     applyAction,
     publishRevision,
     now: safeNow
@@ -352,7 +358,8 @@ async function completeSuccessfulRun(client, {
   hardSignal,
   providerOutput,
   policy,
-  gatePassed,
+  automaticActionsEnabled,
+  assertEnforcementAllowed,
   applyAction,
   publishRevision,
   now
@@ -366,12 +373,41 @@ async function completeSuccessfulRun(client, {
     now
   });
 
-  const apply = mode === "enforce" && gatePassed;
-  if (apply) {
+  const wantsAutomaticActions = mode === "enforce" && automaticActionsEnabled;
+  if (wantsAutomaticActions) {
     await lockSafetyTarget(client, context.caseRecord.subject_type, context.caseRecord.subject_id);
   }
   const current = await lockCurrentCase(client, context.caseRecord.id, context.caseVersion);
-  const stale = current.version_matches !== true;
+  const run = await lockCurrentRun(client, {
+    runId,
+    caseId: context.caseRecord.id,
+    aiConfig
+  });
+  const staleCase = current.version_matches !== true;
+  const staleRun = run.version_matches !== true || run.status_matches !== true;
+  let gateOpen = false;
+  let completionReason = staleCase
+    ? "stale_case_version"
+    : staleRun
+      ? "stale_run_version"
+      : null;
+  if (!completionReason && wantsAutomaticActions) {
+    try {
+      await assertEnforcementAllowed(client, {
+        ai: aiConfig,
+        requiredVersions: {
+          model: run.model_version,
+          prompt: run.prompt_version,
+          policy: run.policy_version
+        }
+      });
+      gateOpen = true;
+    } catch {
+      completionReason = "enforcement_gate_closed";
+    }
+  } else if (!completionReason && mode === "enforce") {
+    completionReason = "enforcement_gate_closed";
+  }
   await client.query(
     `UPDATE safety_ai_runs
      SET status = 'completed', hard_signal = $2::jsonb, parsed_result = $3::jsonb,
@@ -384,12 +420,20 @@ async function completeSuccessfulRun(client, {
       JSON.stringify(providerOutput.result),
       JSON.stringify(policy.proposedActions),
       boundedRaw(providerOutput.rawContent || JSON.stringify(providerOutput.result)),
-      stale ? "stale_case_version" : null,
+      completionReason,
       now
     ]
   );
-  if (stale) {
-    return { status: "completed", stale: true, policy, providerCalled: true, syncEvents: [] };
+  if (staleCase || staleRun) {
+    return {
+      status: "completed",
+      stale: true,
+      reason: completionReason,
+      policy,
+      providerCalled: true,
+      applied: false,
+      syncEvents: []
+    };
   }
 
   await client.query(
@@ -407,7 +451,8 @@ async function completeSuccessfulRun(client, {
         mode,
         proposedActions: policy.proposedActions,
         requiresHuman: policy.requiresHuman,
-        reasonCodes: policy.reasonCodes
+        reasonCodes: policy.reasonCodes,
+        enforcementReason: completionReason
       }),
       aiConfig.model,
       aiConfig.promptVersion,
@@ -418,7 +463,7 @@ async function completeSuccessfulRun(client, {
 
   const syncEvents = [];
   let revisionPublished = false;
-  if (apply && context.revision && policy.reasonCodes.includes("revision_safe_to_publish")) {
+  if (gateOpen && context.revision && policy.reasonCodes.includes("revision_safe_to_publish")) {
     const published = await publishRevision(client, context.revision.id, {
       actorType: "policy",
       qwenResult: providerOutput.result,
@@ -426,7 +471,7 @@ async function completeSuccessfulRun(client, {
     });
     revisionPublished = published.published === true;
     syncEvents.push(...(published.syncEvents || []));
-  } else if (apply) {
+  } else if (gateOpen) {
     for (const proposal of policy.proposedActions) {
       const applied = await applyAction(client, {
         caseId: current.id,
@@ -443,7 +488,7 @@ async function completeSuccessfulRun(client, {
     }
   }
   if (!revisionPublished) {
-    const operationalStatus = apply ? policy.nextStatus : "manual_review";
+    const operationalStatus = gateOpen ? policy.nextStatus : "manual_review";
     await client.query(
       "UPDATE safety_cases SET status = $2, updated_at = $3 WHERE id = $1",
       [current.id, operationalStatus, now]
@@ -452,9 +497,10 @@ async function completeSuccessfulRun(client, {
   return {
     status: "completed",
     stale: false,
+    reason: completionReason,
     policy,
     providerCalled: true,
-    applied: apply && (revisionPublished || policy.proposedActions.length > 0),
+    applied: gateOpen && (revisionPublished || policy.proposedActions.length > 0),
     syncEvents
   };
 }
@@ -519,6 +565,20 @@ async function lockCurrentCase(client, caseId, caseVersion) {
     [caseId, caseVersion]
   );
   if (!result.rows[0]) throw analysisError("safety_case_not_found");
+  return result.rows[0];
+}
+
+async function lockCurrentRun(client, { runId, caseId, aiConfig }) {
+  const result = await client.query(
+    `SELECT *,
+       model_version = $3 AND prompt_version = $4 AND policy_version = $5 AS version_matches,
+       status = 'running' AS status_matches
+     FROM safety_ai_runs
+     WHERE id = $1 AND case_id = $2
+     FOR UPDATE`,
+    [runId, caseId, aiConfig.model, aiConfig.promptVersion, aiConfig.policyVersion]
+  );
+  if (!result.rows[0]) throw analysisError("safety_ai_run_not_found");
   return result.rows[0];
 }
 

@@ -300,7 +300,7 @@ test("non-off runtime idempotently enqueues and handles analyze_case", async () 
     revisionId: null,
     mode: "enforce",
     aiConfig: undefined,
-    gatePassed: true
+    automaticActionsEnabled: true
   }]);
   await runtime.shutdown("test");
 });

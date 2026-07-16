@@ -80,6 +80,111 @@ test("shadow recommendations never advance the live workflow without their actio
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM safety_actions")).rows[0].count, 0);
 });
 
+test("enforce mode stores proposals but applies nothing when the runtime gate is closed", async () => {
+  await seedPostCase({ category: "suspected_scam" });
+  let gateCalls = 0;
+  let actionCalls = 0;
+  const result = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "enforce",
+    automaticActionsEnabled: true,
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: async () => ({
+      outcome: "block",
+      riskLevel: "high",
+      source: "textAgent",
+      reason: "Hard scam signal"
+    }),
+    providerFactory: () => ({
+      analyze: async () => providerOutput(validResult({
+        category: "suspected_scam",
+        riskLevel: "high",
+        confidence: 0.99,
+        recommendedAction: "no_action"
+      }))
+    }),
+    assertEnforcementAllowed: async () => {
+      gateCalls += 1;
+      const error = new Error("Automatic safety actions are not allowed");
+      error.code = "enforcement_gate_closed";
+      throw error;
+    },
+    applyAction: async () => {
+      actionCalls += 1;
+      return { syncEvents: [] };
+    },
+    now: NOW
+  });
+
+  assert.equal(gateCalls, 1);
+  assert.equal(actionCalls, 0);
+  assert.equal(result.status, "completed");
+  assert.equal(result.reason, "enforcement_gate_closed");
+  assert.equal(result.applied, false);
+  const run = await pool.query("SELECT status, error_code, proposed_actions FROM safety_ai_runs");
+  assert.equal(run.rows[0].status, "completed");
+  assert.equal(run.rows[0].error_code, "enforcement_gate_closed");
+  assert.deepEqual(run.rows[0].proposed_actions.map((action) => action.actionType), ["hide_post"]);
+  assert.equal((await pool.query("SELECT status FROM safety_cases WHERE id = 'case-ai'")).rows[0].status, "manual_review");
+  assert.equal((await pool.query("SELECT safety_status FROM posts WHERE id = 'post-ai'")).rows[0].safety_status, "active");
+});
+
+test("rechecks run and case freshness before opening the gate and applying an automatic action", async () => {
+  await seedPostCase({ category: "suspected_scam" });
+  const order = [];
+  const result = await analyzeSafetyCase({
+    caseId: "case-ai",
+    mode: "enforce",
+    automaticActionsEnabled: true,
+    aiConfig: AI_CONFIG,
+    withTransaction: transaction,
+    moderation: async () => ({
+      outcome: "block",
+      riskLevel: "high",
+      source: "textAgent",
+      reason: "Hard scam signal"
+    }),
+    providerFactory: () => ({
+      analyze: async () => providerOutput(validResult({
+        category: "suspected_scam",
+        riskLevel: "high",
+        confidence: 0.99,
+        recommendedAction: "no_action"
+      }))
+    }),
+    assertEnforcementAllowed: async (client, options) => {
+      order.push("gate");
+      const run = await client.query(
+        "SELECT status, model_version, prompt_version, policy_version FROM safety_ai_runs"
+      );
+      assert.deepEqual(run.rows[0], {
+        status: "running",
+        model_version: AI_CONFIG.model,
+        prompt_version: AI_CONFIG.promptVersion,
+        policy_version: AI_CONFIG.policyVersion
+      });
+      assert.deepEqual(options.requiredVersions, {
+        model: AI_CONFIG.model,
+        prompt: AI_CONFIG.promptVersion,
+        policy: AI_CONFIG.policyVersion
+      });
+      return { passed: true };
+    },
+    applyAction: async (_client, input) => {
+      order.push("action");
+      assert.equal(input.actionType, "hide_post");
+      return { syncEvents: [] };
+    },
+    now: NOW
+  });
+
+  assert.deepEqual(order, ["gate", "action"]);
+  assert.equal(result.applied, true);
+  assert.equal(result.reason, null);
+  assert.equal((await pool.query("SELECT error_code FROM safety_ai_runs")).rows[0].error_code, null);
+});
+
 test("zero budget records a blocked run before loading or invoking any provider", async () => {
   await seedPostCase({ category: "other" });
   let providerFactoryCalls = 0;

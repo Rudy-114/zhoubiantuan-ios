@@ -48,12 +48,25 @@ test("reports provider, jobs, budget, fixtures, current-version evaluations, and
   assert.equal(health.metrics.fixtureVersion, "safety-policy-fixtures-v1");
   assert.equal(health.metrics.fixtureCount, 100);
   assert.equal(health.metrics.fixtureSchemaFailures, 0);
+  assert.equal(health.metrics.fixtureVersionCurrent, true);
   assert.ok(health.metrics.autoHidePrecision >= 0.95);
   assert.equal(health.metrics.realEvaluations, 1);
   assert.equal(health.metrics.categoryCorrect, 1);
   assert.equal(health.metrics.actionCorrect, 1);
   assert.equal(health.metrics.scopeExpansionErrors, 0);
   assert.equal(health.metrics.automaticAccountActions, 0);
+  assert.equal(health.metrics.versionsMatch, true);
+  assert.equal(health.gate.passed, false);
+  assert.deepEqual(health.gate.checks, {
+    fixtureCount: true,
+    fixtureSchemaValid: true,
+    autoHidePrecision: true,
+    realComparisons: false,
+    noScopeErrors: true,
+    noAutomaticAccountActions: true,
+    versionsMatch: true,
+    fixtureVersionCurrent: true
+  });
   assert.deepEqual(health.versions, {
     model: "qwen3.7-plus-2026-05-26",
     prompt: "safety-case-prompt-v1",

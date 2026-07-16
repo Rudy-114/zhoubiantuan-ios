@@ -114,7 +114,7 @@ export function createSafetyServerRuntime({
                 revisionId,
                 mode: runtimeConfig.safety.aiMode,
                 aiConfig: runtimeConfig.safetyAi,
-                gatePassed: runtimeConfig.safety.autoActionsEnabled === true
+                automaticActionsEnabled: runtimeConfig.safety.autoActionsEnabled === true
               }),
               notifySyncEvents: notifyEvents,
               eventLogger

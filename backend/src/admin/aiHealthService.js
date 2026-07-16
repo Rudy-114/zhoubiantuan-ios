@@ -1,21 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
-import { evaluateSafetyPolicy } from "../safety/policyEngine.js";
-import {
-  SAFETY_POLICY_FIXTURE_VERSION,
-  safetyPolicyFixtures
-} from "../safety/fixtures/policyCases.js";
-import { validateQwenCaseResult } from "../safety/schemas/qwenCaseResult.js";
+import { evaluateEnforcementGate } from "../safety/enforcementGate.js";
 import { recordAdminAuditEvent } from "./auditService.js";
 import { adminError } from "./deviceService.js";
-
-const AUTO_HIDE_ACTIONS = new Set([
-  "hide_post",
-  "hide_comment",
-  "hide_message",
-  "hide_collection_contact",
-  "suspend_collection"
-]);
 
 export async function loadAdminAIHealth(client, {
   safety = config.safety,
@@ -42,28 +29,10 @@ export async function loadAdminAIHealth(client, {
      WHERE month_key = $1`,
     [month]
   );
-  const evaluations = await client.query(
-    `SELECT
-       count(*)::int AS real_evaluations,
-       count(*) FILTER (WHERE evaluation.category_correct)::int AS category_correct,
-       count(*) FILTER (WHERE evaluation.action_correct)::int AS action_correct,
-       count(*) FILTER (WHERE evaluation.scope_expansion_error)::int AS scope_expansion_errors
-     FROM safety_ai_evaluations evaluation
-     JOIN safety_ai_runs run ON run.id = evaluation.ai_run_id
-     WHERE run.is_synthetic = false
-       AND run.model_version = $1
-       AND run.prompt_version = $2
-       AND run.policy_version = $3`,
-    [versions.model, versions.prompt, versions.policy]
-  );
-  const automaticAccountActions = await client.query(
-    `SELECT count(*)::int AS count
-     FROM safety_actions
-     WHERE actor_type = 'ai'
-       AND (target_type = 'user' OR action_type IN ('restrict_user', 'restore_user'))`
-  );
-  const fixtureMetrics = computeFixtureMetrics();
-  const evaluationMetrics = evaluations.rows[0];
+  const gate = await evaluateEnforcementGate(client, {
+    ai,
+    requiredVersions: versions
+  });
 
   return {
     mode: aiMode(safety?.aiMode),
@@ -80,17 +49,19 @@ export async function loadAdminAIHealth(client, {
       budgetCny: nonNegativeNumber(ai?.monthlyBudgetCny)
     },
     metrics: {
-      fixtureVersion: SAFETY_POLICY_FIXTURE_VERSION,
-      fixtureCount: safetyPolicyFixtures.length,
-      fixtureSchemaFailures: fixtureMetrics.schemaFailures,
-      autoHidePrecision: fixtureMetrics.autoHidePrecision,
-      realEvaluations: evaluationMetrics?.real_evaluations || 0,
-      categoryCorrect: evaluationMetrics?.category_correct || 0,
-      actionCorrect: evaluationMetrics?.action_correct || 0,
-      scopeExpansionErrors: evaluationMetrics?.scope_expansion_errors || 0,
-      automaticAccountActions:
-        fixtureMetrics.automaticAccountActions + (automaticAccountActions.rows[0]?.count || 0)
+      fixtureVersion: gate.metrics.fixtureVersion,
+      fixtureCount: gate.metrics.fixtureCount,
+      fixtureSchemaFailures: gate.metrics.fixtureInvalidCount,
+      fixtureVersionCurrent: gate.metrics.fixtureVersionCurrent,
+      autoHidePrecision: gate.metrics.autoHidePrecision,
+      realEvaluations: gate.metrics.realEvaluationCount,
+      categoryCorrect: gate.metrics.categoryCorrect,
+      actionCorrect: gate.metrics.actionCorrect,
+      scopeExpansionErrors: gate.metrics.scopeExpansionErrors,
+      automaticAccountActions: gate.metrics.automaticAccountActions,
+      versionsMatch: gate.metrics.versionsMatch
     },
+    gate: { passed: gate.passed, checks: gate.checks },
     versions
   };
 }
@@ -198,39 +169,6 @@ export async function recordAdminAIEvaluation(client, input = {}) {
     eventData: { caseId, categoryCorrect, actionCorrect, scopeExpansionError }
   });
   return mapInsertedEvaluation(inserted.rows[0]);
-}
-
-function computeFixtureMetrics() {
-  let schemaFailures = 0;
-  let proposedAutoHides = 0;
-  let truePositiveAutoHides = 0;
-  let automaticAccountActions = 0;
-  for (const fixture of safetyPolicyFixtures) {
-    if (fixture.qwenResult) {
-      try {
-        validateQwenCaseResult(fixture.qwenResult);
-      } catch {
-        schemaFailures += 1;
-      }
-    } else if (!fixture.providerFailure) {
-      schemaFailures += 1;
-    }
-    const result = evaluateSafetyPolicy(fixture.caseInput);
-    for (const action of result.proposedActions) {
-      if (action.targetType === "user" || /user|account/u.test(action.actionType)) {
-        automaticAccountActions += 1;
-      }
-      if (AUTO_HIDE_ACTIONS.has(action.actionType)) {
-        proposedAutoHides += 1;
-        if (fixture.expectedActions.includes(action.actionType)) truePositiveAutoHides += 1;
-      }
-    }
-  }
-  return {
-    schemaFailures,
-    autoHidePrecision: proposedAutoHides ? truePositiveAutoHides / proposedAutoHides : 0,
-    automaticAccountActions
-  };
 }
 
 function mapRun(row) {
