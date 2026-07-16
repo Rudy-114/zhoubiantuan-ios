@@ -294,7 +294,7 @@ Only document risks that cannot be removed without changing the approved scope, 
 **Interfaces:**
 - REQUIRED SUB-SKILL before claims: `superpowers:verification-before-completion`.
 
-- [ ] **Step 1: Run all automated checks from a clean process state**
+- [x] **Step 1: Run all automated checks from a clean process state**
 
 ```bash
 npm --prefix backend test
@@ -304,15 +304,15 @@ xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration D
 git diff --check
 ```
 
-- [ ] **Step 2: Run admin browser QA through Playwright CLI**
+- [x] **Step 2: Run admin browser QA through Playwright CLI**
 
 Repeat login, queue, evidence reveal, decision, correction comparison, appeal, audit, AI health, device approval/revocation, logout, desktop 1440x900, and narrow 390x844. Save screenshots only under ignored `output/playwright/`, inspect them, then close the browser and server.
 
-- [ ] **Step 3: Run two-simulator iOS QA**
+- [x] **Step 3: Run two-simulator iOS QA**
 
 Verify five report entries, collection scope confirmation, offline retry, default block, My Reports, Content Remediation, same-ID restoration, appeal, realtime update, foreground sync, and no three-second idle polling.
 
-- [ ] **Step 4: Run secret and privacy scans**
+- [x] **Step 4: Run secret and privacy scans**
 
 ```bash
 git grep -nE 'DASHSCOPE_API_KEY=.+|ALIYUN_ACCESS_KEY_SECRET=.+|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|zbt_admin_session=|WS_TEST_TOKEN=.+' -- ':!docs/superpowers/plans/**'
