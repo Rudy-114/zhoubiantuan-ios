@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultEnvPath = path.resolve(__dirname, "../../.project-secrets/backend.env");
-const nodeEnv = process.env.NODE_ENV || "development";
 
 dotenv.config({ path: process.env.ENV_FILE || defaultEnvPath });
 dotenv.config();
+
+const nodeEnv = process.env.NODE_ENV || "development";
 
 function required(name) {
   const value = process.env[name];
