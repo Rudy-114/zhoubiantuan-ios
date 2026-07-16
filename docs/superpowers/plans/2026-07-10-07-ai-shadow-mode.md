@@ -564,10 +564,20 @@ and five additional top-level properties; only allowlisted paths/keywords were
 exposed, raw and parsed results remained empty, and no real run, action, or
 evaluation was created. Lifetime spend is CNY 0.003800. A test-first local fix
 now embeds the same closed schema used by Ajv, prohibits wrapper objects, and
-bumps the prompt to `safety-case-prompt-v2`. Targeted Qwen tests pass 26/26,
-ordinary Node 147/147, PostgreSQL 16 221/221, and both review axes pass with no
-P1/P2 after their P3 observations were closed. The v2 fix is not deployed; Step
-6 remains incomplete. See
+bumped the prompt to `safety-case-prompt-v2`. Targeted Qwen tests passed 26/26,
+ordinary Node 147/147, PostgreSQL 16 221/221, and both review axes passed with no
+P1/P2 after their P3 observations were closed. Rudy explicitly authorized and
+production deployed `8f224db`; staging, checksums, mode-600 backups, one restart,
+and the complete zero-call checkpoint passed with service budget zero.
+
+One prompt-v2 diagnostic then consumed 655 input and 226 output tokens at CNY
+0.003118 and passed the closed schema with zero validation issues. The run is
+synthetic and completed, raw response empty, parsed validated result present,
+and duplicate paid validation blocked. Lifetime spend is CNY 0.006918; active
+synthetic runs, real runs, evaluations, and actions are all zero. Production
+remains shadow, automatic actions disabled, and budget zero. This proves the
+fixed synthetic contract but is not a real comparison; Step 6 remains
+incomplete pending real cases and a separate production traffic decision. See
 `docs/operations/verification/2026-07-16-qwen-diagnostic-preflight.md`.
 
 - [ ] **Step 6: Begin real shadow comparisons**

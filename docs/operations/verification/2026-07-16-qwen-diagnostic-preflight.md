@@ -1,12 +1,12 @@
 # Qwen Privacy-Safe Diagnostic Preflight - 2026-07-16
 
-Status: DIAGNOSTIC RUNTIME DEPLOYED; SECOND CALL INVALID; LOCAL PROMPT V2 READY
+Status: PROMPT V2 PRODUCTION ACTIVE; SYNTHETIC VALIDATION PASS; REAL SHADOW DISABLED
 
 ## Authorization Boundary
 
 Rudy authorized future synthetic diagnostic calls for the fixed model
 `qwen3.7-plus-2026-05-26` under a hard cumulative spend cap of CNY 1.000000.
-The two settled calls consumed CNY 0.003800, leaving CNY 0.996200 of headroom.
+The three settled calls consumed CNY 0.006918, leaving CNY 0.993082 of headroom.
 The cap is fail-closed: a new call may start only when committed
 lifetime spend plus its conservative maximum reservation remains at or below
 CNY 1.000000.
@@ -108,14 +108,16 @@ authorize a provider call.
 
 ## Next Paid Call Bound
 
-The next diagnostic attempt requires deploying the reviewed local prompt-v2
-fix first; that new production write is not covered by the authorization to
-deploy `1c4591b`. It still uses the fixed synthetic invalid-contact packet,
-non-thinking JSON Mode, and at most 900 output tokens. At CNY 2/CNY 8 rates the
-new self-contained prompt has a conservative maximum reservation of CNY
-0.013736; together with settled CNY 0.003800, the worst committed total is CNY
-0.017536, below the lifetime cap. Paid-call authority already covers that
-synthetic attempt, but no call may occur until a separately authorized deployment
-passes its zero-call checks. Stop if preflight state differs, the reservation is
-blocked, a matching run is active/completed, or any safety output would exceed
-the allowlist.
+Rudy explicitly authorized and production deployed `8f224db`. The zero-call
+checks passed before one prompt-v2 diagnostic consumed 655 input and 226 output
+tokens, settled CNY 0.003118, and returned `pass=true` with zero validation
+issues. Its raw response remains empty, the parsed closed-schema result is
+present, and there are no real runs, evaluations, or actions. Production remains
+shadow, automatic actions disabled, and service budget zero.
+
+The matching prompt-v2 run is now `completed`, so the diagnostic guard blocks a
+duplicate paid attempt for the same model, prompt, policy, and evidence. No
+additional synthetic call is needed or permitted on that tuple. The lifetime
+CNY 1 authorization remains a hard ceiling for any genuinely new reviewed
+diagnostic tuple; it does not authorize real-case traffic, continuous shadow,
+automatic actions, or enforcement.

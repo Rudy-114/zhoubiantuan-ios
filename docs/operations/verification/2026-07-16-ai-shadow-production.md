@@ -1,19 +1,19 @@
 # AI Shadow Production Deployment - 2026-07-16
 
-Status: ZERO-BUDGET PRODUCTION ACTIVE; TWO PAID VALIDATIONS INVALID; LOCAL V2 FIX NOT DEPLOYED
+Status: PROMPT V2 PRODUCTION ACTIVE; SYNTHETIC VALIDATION PASS; REAL SHADOW DISABLED
 
 ## Scope
 
 - Production service: `zbt-backend.service`
 - Production directory: `/opt/zbt-backend`
-- Runtime commit: `1c4591b`
+- Runtime commit: `8f224db`
 - Additive migration: `017_safety_ai.sql`
 - Mode: `SAFETY_AI_MODE=shadow`
 - Automatic actions: `SAFETY_AUTO_ACTIONS_ENABLED=false`
 - Monthly budget: `SAFETY_AI_MONTHLY_BUDGET_CNY=0`
 - Fixed model in code: `qwen3.7-plus-2026-05-26`
-- Paid Qwen validations: two authorized synthetic calls, CNY 0.003800 total,
-  both invalid
+- Paid Qwen validations: three authorized synthetic calls, CNY 0.006918 total;
+  two prompt-v1 invalid and one prompt-v2 pass
 - Enforcement: excluded
 
 This deployment introduced the AI audit schema, budget guard, shadow worker,
@@ -32,8 +32,12 @@ action occurred during that deployment checkpoint.
   `/opt/zbt-backend.ai-shadow-replaced-20260716-090204`
 - Diagnostic runtime backup:
   `/opt/zbt-backend.qwen-diagnostic-backup-20260716-034239`
-- Current immediate runtime rollback:
+- Prior diagnostic immediate rollback:
   `/opt/zbt-backend.qwen-diagnostic-replaced-20260716-034239`
+- Prompt-v2 runtime backup:
+  `/opt/zbt-backend.qwen-prompt-v2-backup-20260716-041712`
+- Current prompt-v2 immediate rollback:
+  `/opt/zbt-backend.qwen-prompt-v2-replaced-20260716-041712`
 - Preserved failed first Stage 7 runtime:
   `/opt/zbt-backend.ai-shadow-failed-20260716-084315`
 - Final runtime archive checksum:
@@ -157,7 +161,7 @@ temporary PostgreSQL tunnel closed and local port 55434 was released.
 
 For an incident, first set mode off while keeping automatic actions false and
 budget zero, then restore
-`/opt/zbt-backend.qwen-diagnostic-replaced-20260716-034239` with permissions preserved
+`/opt/zbt-backend.qwen-prompt-v2-replaced-20260716-041712` with permissions preserved
 and restart `zbt-backend.service` once. Verify public health, feed, privacy,
 consumer authentication, WebSocket, `/admin`, administrator isolation, and
 recent journal status. Keep `017_safety_ai.sql` and its empty tables in place.
@@ -201,9 +205,34 @@ completed synthetic runs, zero real runs, zero AI evaluations, zero safety
 actions, and lifetime committed spend CNY 0.003800. The service remains
 active/running, shadow, automatic actions disabled, and budget zero.
 
-The local test-first correction makes the prompt self-contained from the exact
+The test-first correction makes the prompt self-contained from the exact
 Ajv schema, forbids wrapper objects, and advances the prompt version to
 `safety-case-prompt-v2`. Targeted Qwen tests pass 26/26, ordinary Node 147/147,
-and PostgreSQL 16 221/221; both review axes pass with no P1/P2. This local fix is
-not deployed. A new production authorization is required before switching away
-from `1c4591b`.
+and PostgreSQL 16 221/221; both review axes pass with no P1/P2.
+
+## Prompt V2 Deployment And Passing Validation
+
+Rudy explicitly authorized deployment of `8f224db`. Its exact archive was
+staged with production dependencies, full JavaScript syntax checks, Ajv load,
+release marker, prompt/config checksums, the known test-fixture-only secret
+scan, and the no-confirmation CLI refusal. A new mode-600 environment/runtime
+backup was verified before one atomic switch and one service restart. Health,
+feed, privacy, `/admin`, administrator isolation, prompt-v2 flags, unchanged
+database counts, and zero startup/provider/leak markers passed before the call.
+
+One authorized prompt-v2 diagnostic then returned a closed-schema-valid result:
+655 input tokens, 226 output tokens, CNY 0.003118, `pass=true`, and zero
+validation issues. The database recorded one synthetic `completed` run at
+`safety-case-prompt-v2`, settled usage CNY 0.003118 against reservation CNY
+0.013736, an empty raw response, and a parsed validated result. Lifetime
+committed spend is CNY 0.006918. There are zero active synthetic runs, two prior
+invalid prompt-v1 runs, one completed prompt-v2 run, zero real runs, zero AI
+evaluations, and zero safety actions. The service remains active/running,
+shadow, automatic actions disabled, and monthly budget zero. The completed run
+blocks a duplicate paid validation for the same model/prompt/policy/evidence.
+
+This success verifies model access, current CNY 2/CNY 8 accounting, non-thinking
+JSON Mode, the self-contained prompt contract, and the closed Ajv validator on
+the fixed synthetic packet. It does not authorize or count as real shadow
+traffic. Task 9 Step 6 remains pending real cases and its separate production
+traffic decision.
