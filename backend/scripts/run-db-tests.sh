@@ -55,7 +55,14 @@ export SAFETY_AI_MODE=off
 
 node scripts/migrate.js
 tests=()
-while IFS= read -r file; do tests+=("$file"); done < <(find test -type f -name '*.integration.test.js' | sort)
+while IFS= read -r file; do tests+=("$file"); done < <(
+  find test -maxdepth 1 -type f -name '*.integration.test.js' | sort
+)
+for suite in safety admin e2e; do
+  while IFS= read -r file; do tests+=("$file"); done < <(
+    find "test/$suite" -type f -name '*.integration.test.js' | sort
+  )
+done
 if test "${#tests[@]}" -eq 0; then
   printf 'No database integration tests found.\n'
 else
