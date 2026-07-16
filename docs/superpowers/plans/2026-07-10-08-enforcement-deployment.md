@@ -224,11 +224,11 @@ git commit -m "Test complete safety case lifecycle"
 **Interfaces:**
 - Documents exact local verification, production flags, admin recovery, migration order, rollout, rollback, and incident response without secret values.
 
-- [ ] **Step 1: Document architecture and ownership**
+- [x] **Step 1: Document architecture and ownership**
 
 List API/service modules, job types, tables, provider roles, human-only actions, data retention, and why child post state is not mutated by a collection case.
 
-- [ ] **Step 2: Document environment variable names and safe defaults**
+- [x] **Step 2: Document environment variable names and safe defaults**
 
 Include names, purpose, and safe defaults only:
 
@@ -249,15 +249,15 @@ ADMIN_WEB_ENABLED=false
 
 Refer operators to mode-600 environment files; never include keys, passwords, recovery codes, host IPs, or tokens.
 
-- [ ] **Step 3: Document exact rollout and rollback**
+- [x] **Step 3: Document exact rollout and rollback**
 
 Rollout order: P0, 013, core off, intake on/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web/root, 017 safety AI, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
 
-- [ ] **Step 4: Document incident procedures**
+- [x] **Step 4: Document incident procedures**
 
 Include provider outage, queue growth, budget exhaustion, false automatic hide, lost root device, suspected admin session theft, evidence access review, and WebSocket regression. Every procedure names the observable signal, immediate containment, verification, and recovery.
 
-- [ ] **Step 5: Add a release checklist and commit**
+- [x] **Step 5: Add a release checklist and commit**
 
 Checklist includes tests, Xcode, browser desktop/narrow, secret scan, staged files, migrations, backup, flags, health/privacy/feed/sync/ws, admin login/device, one disposable report, correction, audit, provider mode, and rollback command.
 
