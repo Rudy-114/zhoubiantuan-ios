@@ -523,19 +523,29 @@ Presented as `docs/operations/verification/2026-07-16-qwen-paid-call-checkpoint.
 fixed model `qwen3.7-plus-2026-05-26`, exactly one call, official
 Chinese-mainland rates CNY 2/CNY 8 per million input/non-thinking output tokens,
 and conservative maximum spend CNY 0.010046. Explicit spend authorization is
-still absent, so Steps 4-6 remain blocked.
+required before Steps 4-5. Rudy later provided that exact authorization; the
+single-call outcome is recorded below.
 
-- [ ] **Step 4: Configure approved rates/budget without exposing values**
+- [x] **Step 4: Configure approved rates/budget without exposing values**
 
 After confirmation, update server environment through hidden input or a mode-600 file. Keep key unchanged unless the validation shows it is invalid. Restart and verify AI health reports nonzero budget and correct versions but no call yet.
 
-- [ ] **Step 5: Run exactly one validation call**
+- [x] **Step 5: Run exactly one validation call**
 
 ```bash
 node backend/scripts/validate-qwen.js --confirm-spend
 ```
 
 Verify key permission, model availability, JSON Mode, non-thinking setting, usage, and schema. On failure, leave mode shadow, reset budget to zero if needed, and route cases to human review.
+
+Executed once on 2026-07-16 after the authenticated health page showed provider
+ready and the approved CNY 0.010046 budget. The provider returned 288 input and
+188 output tokens at CNY 0.002080, but the result failed the closed schema and
+was stored as `invalid_ai_result`, synthetic=true, raw response empty, with zero
+actions. It was not retried. Budget returned to zero, service/public health
+passed, and AI health showed actual/budget CNY 0.0021/0.0000. Because the
+privacy-safe retained artifact has no raw response or validator paths, the exact
+schema mismatch is not reproducible; Step 6 remains incomplete.
 
 - [ ] **Step 6: Begin real shadow comparisons**
 

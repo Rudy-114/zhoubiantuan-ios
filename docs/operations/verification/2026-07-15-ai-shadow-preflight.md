@@ -1,6 +1,6 @@
 # AI Shadow Production Preflight - 2026-07-15
 
-Status: EXECUTED; ZERO-BUDGET PRODUCTION RUNTIME PASSED; PAID QWEN CALL NOT RUN
+Status: EXECUTED; ZERO-BUDGET RUNTIME PASSED; LATER PAID VALIDATION RECORDED SEPARATELY
 
 ## Scope
 
@@ -144,6 +144,11 @@ the runtime/environment copy. If it fails after migration commit, use AI-off
 plus compatible prior code and retain the additive schema.
 
 ## Separate Paid-Call Gate
+
+This gate was later explicitly authorized and executed once. The invalid result,
+CNY 0.002080 settlement, no-retry decision, and budget-zero restoration are
+recorded in
+`docs/operations/verification/2026-07-16-qwen-paid-call-checkpoint.md`.
 
 After the zero-budget deployment passes, a later checkpoint must name the fixed
 model, official current input/output rates, proposed nonzero monthly budget,

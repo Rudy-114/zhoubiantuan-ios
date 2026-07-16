@@ -1,6 +1,6 @@
 # Qwen Paid Validation Checkpoint - 2026-07-16
 
-Status: AWAITING SEPARATE EXPLICIT SPEND AUTHORIZATION; NO PAID CALL RUN
+Status: EXECUTED ONCE; INVALID RESULT; NO RETRY; BUDGET RESET TO ZERO
 
 ## Proposed One-Call Boundary
 
@@ -87,9 +87,52 @@ restart once, and confirm health, logs, usage settlement/release, and the
 synthetic marker. A failed validation routes ordinary cases to manual review and
 does not authorize enforcement.
 
-## Required Authorization
+## Authorization And Execution Outcome
 
-A general instruction to continue, the prior zero-budget deployment approval,
-or an approval to use the existing ECS environment does not satisfy this gate.
-Authorization must explicitly approve the fixed model, exactly one real call,
-and a maximum spend of CNY 0.010046.
+Rudy explicitly approved the fixed model, exactly one real call, and maximum
+spend CNY 0.010046. The production pre-call check proved zero reports, cases,
+AI runs, usage rows, pending/running jobs, prior validation attempts, and current
+month committed spend. The API key was present without being read or changed;
+the endpoint remained the official Chinese-mainland default.
+
+The first shell command used the repository path
+`backend/scripts/validate-qwen.js`, but the deployed runtime is rooted one level
+deeper. Node exited with `MODULE_NOT_FOUND` before loading the validation script.
+Database, usage, and journal checks proved that this path error created no run,
+provider request, or cost. The actual deployed path
+`/opt/zbt-backend/scripts/validate-qwen.js` was then discovered rather than
+guessed, matched the local `aecfa3b` source checksum, and passed `node --check`.
+
+After a fresh zero-row precondition check and authenticated AI-health check, the
+correct script executed once. Its allowlisted result was:
+
+```text
+model: qwen3.7-plus-2026-05-26
+request ID: d66c6f1c-db37-9f25-af9d-d01ae2e99d17
+input tokens: 288
+output tokens: 188
+estimated cost: CNY 0.002080
+pass: false
+```
+
+The database recorded exactly one synthetic run with status `invalid`, error
+`invalid_ai_result`, the fixed model/prompt/policy versions, zero-byte raw
+response, and no parsed result. Its only usage row settled from the conservative
+CNY 0.010046 reservation to CNY 0.002080. There were zero reports, real cases,
+safety actions, and AI evaluations.
+
+The result means the provider returned billable output but it did not validate
+against `qwen-case-result-v1`. The privacy boundary intentionally retained
+neither raw output nor validator details, so the exact schema mismatch cannot be
+reproduced or diagnosed from the preserved artifact. No retry was attempted.
+A future retry requires privacy-safe diagnostic instrumentation, a new reviewed
+deployment, and separate explicit paid authorization.
+
+Immediately after the one real execution, monthly budget returned to zero and
+the service restarted healthy. Rates 2/8 remain configured but cannot authorize
+spend while budget is zero. The authenticated AI-health page showed provider
+state `预算为零`, actual/budget CNY 0.0021/0.0000, zero reserved amount, the fixed
+versions, zero automatic account actions, and no browser warnings/errors. One
+mode-600 pre-validation environment backup remains at
+`/opt/zbt-backend/.env.qwen-validation-backup-20260716-103657`; two verified
+duplicate/final-state copies were removed.

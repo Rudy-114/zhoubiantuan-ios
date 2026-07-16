@@ -199,8 +199,10 @@ RealtimeConnectionState
 **Plan:** `docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md`
 
 Status: implementation Tasks 1–8 and Task 9's zero-budget production deployment
-are complete. The exact one-call paid checkpoint has been presented; nonzero
-budget, the real validation call, and real shadow comparisons remain incomplete.
+are complete. The separately authorized one-call validation executed once and
+settled CNY 0.002080, but failed the closed schema and was not retried. Production
+budget is zero; a diagnosable validation result and real shadow comparisons
+remain incomplete.
 
 - [ ] Add schema validation, prompt minimization, budget reservation, deterministic policy tests, fixtures, AI health, and shadow comparisons.
 - [ ] Keep the budget at zero until Rudy explicitly approves the single paid validation call.

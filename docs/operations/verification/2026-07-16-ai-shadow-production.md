@@ -1,6 +1,6 @@
 # AI Shadow Production Deployment - 2026-07-16
 
-Status: PASS; ZERO-BUDGET PRODUCTION ACTIVE; PAID QWEN CALL NOT RUN
+Status: ZERO-BUDGET PRODUCTION ACTIVE; ONE PAID VALIDATION INVALID; NO RETRY
 
 ## Scope
 
@@ -12,13 +12,14 @@ Status: PASS; ZERO-BUDGET PRODUCTION ACTIVE; PAID QWEN CALL NOT RUN
 - Automatic actions: `SAFETY_AUTO_ACTIONS_ENABLED=false`
 - Monthly budget: `SAFETY_AI_MONTHLY_BUDGET_CNY=0`
 - Fixed model in code: `qwen3.7-plus-2026-05-26`
-- Paid Qwen validation and enforcement: excluded
+- Paid Qwen validation: exactly one authorized call, CNY 0.002080, invalid result
+- Enforcement: excluded
 
 This deployment introduced the AI audit schema, budget guard, shadow worker,
 restricted administrator health/compare UI, and the spend-guarded validation
-CLI. Budget remained zero throughout deployment and verification. No provider
-call, token usage, usage reservation, AI safety action, or paid API call
-occurred.
+CLI. Budget remained zero throughout the zero-budget deployment and smoke
+verification. No provider call, token usage, usage reservation, or AI safety
+action occurred during that deployment checkpoint.
 
 ## Backups And Rollback Points
 
@@ -158,10 +159,17 @@ recent journal status. Keep `017_safety_ai.sql` and its empty tables in place.
 The down migration is not an ordinary runtime rollback and requires a separate
 database rollback decision.
 
-## Remaining Paid-Call Gate
+## Paid Validation Outcome
 
-This deployment did not authorize or execute
-`node backend/scripts/validate-qwen.js --confirm-spend`. Before that command can
-run, the fixed model, current official input/output rates, exact nonzero budget,
-maximum one-call spend, synthetic packet, allowlisted output, and failure
-rollback must be presented and explicitly approved as a separate paid boundary.
+Rudy later provided the separate explicit authorization recorded in
+`docs/operations/verification/2026-07-16-qwen-paid-call-checkpoint.md`. Exactly
+one real provider request used the fixed synthetic packet. It consumed 288 input
+and 188 output tokens at estimated cost CNY 0.002080, below the approved CNY
+0.010046 maximum, but failed the closed `qwen-case-result-v1` validator and was
+recorded as `invalid_ai_result`.
+
+The synthetic run retained no raw response or parsed result, created no report,
+real case, evaluation, or safety action, and does not count toward real shadow
+metrics. It was not retried. Production immediately returned to monthly budget
+zero, remained in shadow mode with automatic actions disabled, and passed
+service, public API, database, journal, and authenticated AI-health checks.
