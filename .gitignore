@@ -34,6 +34,7 @@ backend/.npm-cache/
 playwright-report/
 test-results/
 output/playwright/
+output/app-store/
 
 # Local secrets for backend/cloud credentials
 .project-secrets/
