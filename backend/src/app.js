@@ -8,7 +8,12 @@ import { createAdminCaseRouter } from "./admin/caseRoutes.js";
 import { createAdminModerationRouter } from "./admin/moderationRoutes.js";
 import { createAdminWebRouter } from "./admin/webRoutes.js";
 import { config } from "./config.js";
-import { PRIVACY_POLICY_PATHS, servePrivacyPolicy } from "./legal.js";
+import {
+  PRIVACY_POLICY_PATHS,
+  SUPPORT_PAGE_PATHS,
+  servePrivacyPolicy,
+  serveSupportPage
+} from "./legal.js";
 import { logger } from "./logger.js";
 import { createRouter } from "./routes.js";
 
@@ -50,6 +55,7 @@ export function createApp({
   app.use(cors());
   app.use(express.json({ limit: "2mb" }));
   app.get(PRIVACY_POLICY_PATHS, servePrivacyPolicy);
+  app.get(SUPPORT_PAGE_PATHS, serveSupportPage);
   app.use("/api", createRouter(routerOptions));
   app.get("/", (_req, res) => res.json({ name: "ZhouBianTuan API", ok: true }));
   app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
