@@ -10,11 +10,17 @@ struct ZhouBianTuanApp: App {
     @StateObject private var store: MockAppStore
 
     init() {
-        let appStore = MockAppStore()
         #if DEBUG
-        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+        let appStore = AppStoreScreenshotScreen.current == nil
+            ? MockAppStore()
+            : MockAppStore.previewStore()
+        if AppStoreScreenshotScreen.current != nil {
+            appStore.installAppStoreScreenshotFixture()
+        } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
             appStore.installContentRemediationPreviewFixture()
         }
+        #else
+        let appStore = MockAppStore()
         #endif
         _store = StateObject(wrappedValue: appStore)
 
@@ -40,7 +46,12 @@ struct ZhouBianTuanApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+            if let screenshotScreen = AppStoreScreenshotScreen.current {
+                AppStoreScreenshotRoot(screen: screenshotScreen)
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(.dark)
+            } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
                 if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "appeal",
                    let appealAction = store.safetyContentActions.first(where: \.canAppeal) {
                     SafetyAppealSheet(action: appealAction)

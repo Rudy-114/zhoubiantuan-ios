@@ -46,6 +46,28 @@ struct CreatePostView: View {
         self.republishingPostID = republishingPostID
         self.revisionCaseID = revisionCaseID
         self.editingOriginalPostID = editingOriginalPostID
+        #if DEBUG
+        if AppStoreScreenshotScreen.current == .create,
+           republishingPostID == nil,
+           revisionCaseID == nil,
+           editingOriginalPostID == nil {
+            _title = State(initialValue: "植物星球亚克力立牌拼团")
+            _selectedGroupType = State(initialValue: .followGroup)
+            _selectedCollectionID = State(initialValue: AppStoreScreenshotFixtures.collectionID)
+            _uploadedImageData = State(
+                initialValue: AppStoreScreenshotFixtures.imageData(named: "merch-acrylic-standees.png")
+                    .map { [$0] } ?? []
+            )
+            _selectedTags = State(initialValue: ["立牌", "自印团", "预售"])
+            _priceLowerBound = State(initialValue: "48")
+            _priceUpperBound = State(initialValue: "68")
+            _deadline = State(
+                initialValue: Calendar.current.date(byAdding: .day, value: 18, to: Date()) ?? Date()
+            )
+            _condition = State(initialValue: "满 20 件成团")
+            _description = State(initialValue: "透明亚克力搭配雾面底座，共三款可选；进度会在合集内持续更新。")
+        }
+        #endif
     }
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]

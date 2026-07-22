@@ -220,6 +220,29 @@ final class ReportingQualityTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testAppStoreScreenshotFixtureIsOfflineAndSynthetic() {
+        let store = MockAppStore.previewStore()
+
+        store.installAppStoreScreenshotFixture()
+
+        XCTAssertTrue(store.isLoggedIn)
+        XCTAssertFalse(store.isBackendEnabled)
+        XCTAssertEqual(store.currentUserID, AppStoreScreenshotFixtures.currentUserID)
+        XCTAssertEqual(store.users.count, 3)
+        XCTAssertEqual(store.posts.count, 5)
+        XCTAssertTrue(store.users.allSatisfy { $0.id.hasPrefix("screenshot-") })
+        XCTAssertTrue(store.posts.allSatisfy { $0.id.hasPrefix("screenshot-") })
+        XCTAssertTrue(store.posts.allSatisfy(\.remoteImageURLs.isEmpty))
+        XCTAssertTrue(store.posts.allSatisfy(\.previewRemoteImageURLs.isEmpty))
+        XCTAssertFalse(
+            store.posts.contains {
+                $0.searchableText.localizedCaseInsensitiveContains("synthetic") ||
+                    $0.searchableText.contains("截图")
+            }
+        )
+    }
+
     func testSubmitReportUsesExpectedRequestAndWireBody() async throws {
         URLProtocolStub.setHandler { _ in
             .json(Self.reportEnvelope(reportID: "rp-submit"))
