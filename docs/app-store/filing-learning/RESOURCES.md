@@ -8,6 +8,8 @@
   说明通过阿里云备案时，中国内地云资源、实例类型、购买时长和公网带宽等要求。用于判断生产实例是否可备案。
 - [阿里云：域名准备与检查](https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/prepare-and-check-the-domain-name)
   说明域名实名认证、注册商和备案主体一致性要求。用于核对 `zhoubiantuanmail.top`。
+- [阿里云：上海市备案规则](https://help.aliyun.com/zh/icp-filing/icp-filing-regulations-for-shanghai)
+  展示年龄限制具有地域差异：上海个人申请原则上须满 18 周岁，16 至 18 周岁确有需要时由监护人代办并提供监护关系证明。用于理解“监护人代办”与“借用信息”的区别；其他省份应查询对应规则。
 - [工信部：关于开展移动互联网应用程序备案工作的通知](https://www.miit.gov.cn/jgsj/xgj/hlwgl/art/2023/art_564bf0759d7e41d5b4aa8ce4996b9e84.html)
   App 备案制度的主管部门说明。用于理解为什么 App 主办者需通过接入服务商提交备案。
 - [Apple：Availability in China mainland](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information/)
@@ -22,3 +24,4 @@
 
 - 当前无法从公开信息看到域名持有者的真实姓名或证件号码；必须登录 Rudy 的阿里云域名控制台核对。
 - 当前无法从公网确认 ECS 的付费方式、剩余时长和控制台“可备案”状态；必须登录阿里云 ICP 备案系统核对。
+- 尚不知道备案主体所在省份和申请人的年龄区间，不能把上海的未成年人规则直接套用到其他地区。
