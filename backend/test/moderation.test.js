@@ -80,7 +80,9 @@ test("aliyun text moderation uses configured detection agent", async () => {
   const { AliyunModerationProvider } = await import(`../src/moderation/aliyunProvider.js?agent=${Date.now()}`);
   const provider = Object.create(AliyunModerationProvider.prototype);
   const capturedRequests = [];
-  provider.request = async (action, params) => {
+  provider.budget = async (_hash, perform) => perform();
+  provider.client = {};
+  provider.client.request = async (action, params) => {
     capturedRequests.push({ action, params });
     return {
       Code: 200,

@@ -1,10 +1,12 @@
 import RPCClient from "@alicloud/pop-core";
+import { budgetedModerationCall, moderationCallHash } from "./budget.js";
 import { config } from "../config.js";
 import { signedReadUrl } from "../oss.js";
 import { normalizeModerationResult } from "./result.js";
 
 export class AliyunModerationProvider {
-  constructor() {
+  constructor({ budget = budgetedModerationCall } = {}) {
+    this.budget = budget;
     this.client = new RPCClient({
       accessKeyId: config.oss.accessKeyId,
       accessKeySecret: config.oss.accessKeySecret,
@@ -40,8 +42,8 @@ export class AliyunModerationProvider {
       const response = await this.request("MultiModalAgent", {
         AppID: config.moderation.textAgentAppId,
         ServiceParameters: JSON.stringify(serviceParameters)
-      });
-      return mapAliyunResponse(response, "textAgent", "文本审核智能体通过");
+      }, "textAgent", "文本审核智能体通过");
+      return response;
     }
 
     const response = await this.request("TextModeration", {
@@ -50,8 +52,8 @@ export class AliyunModerationProvider {
         content,
         accountId: ownerId || ""
       })
-    });
-    return mapAliyunResponse(response, "textKeyword", "文本审核通过");
+    }, "textKeyword", "文本审核通过");
+    return response;
   }
 
   async reviewImages({ imageObjectKeys, ownerId }) {
@@ -68,8 +70,8 @@ export class AliyunModerationProvider {
             ossRegionId: config.oss.region,
             accountId: ownerId || ""
           })
-        });
-        const result = mapAliyunResponse(response, "imageSignal", "图片审核通过");
+        }, "imageSignal", "图片审核通过");
+        const result = response;
         results.push(result);
         if (result.outcome === "block") return result;
     }
@@ -86,11 +88,10 @@ export class AliyunModerationProvider {
     });
   }
 
-  async request(action, params) {
-    return this.client.request(action, params, {
-      method: "POST",
-      formatParams: false,
-      timeout: 7000
+  async request(action, params, source, passReason) {
+    return this.budget(moderationCallHash(action, params), async () => {
+      const response = await this.client.request(action, params, { method: "POST", formatParams: false, timeout: 7000 });
+      return mapAliyunResponse(response, source, passReason);
     });
   }
 }

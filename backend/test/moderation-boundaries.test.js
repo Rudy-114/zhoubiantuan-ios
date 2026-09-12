@@ -17,7 +17,9 @@ test('all displayed text including the suffix after 6000 characters is reviewed'
   assert.match(text, /tail-bad$/);
   const provider = Object.create(AliyunModerationProvider.prototype);
   const requests = [];
-  provider.request = async (_action, params) => {
+  provider.budget = async (_hash, perform) => perform();
+  provider.client = {};
+  provider.client.request = async (_action, params) => {
     const content = JSON.parse(params.ServiceParameters).content;
     requests.push(content);
     return { Code: 200, Data: { RiskLevel: content.includes('tail-bad') ? 'high' : 'none' } };

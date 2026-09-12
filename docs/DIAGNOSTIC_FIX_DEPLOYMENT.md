@@ -25,3 +25,9 @@
 12. 私信：迁移 020/021 增加消息及会话 revision 与分页索引。新同步协议返回部分消息，必须与客户端更新配套，旧客户端无法正确合并部分会话。全局未读数携带快照游标；空同步不再重复查询。客户端升级后不在未登录状态恢复旧聊天文件，登录后仅迁移当前账号自己的待发送内容；已确认历史由服务端分页获取。后台缓存错误会显示提示，退出会清除本账号本地消息缓存。生产发布前应备份数据库并验收跨设备发送、撤回、已读、旧历史和账号切换。
 
 13. 实时：反向代理转发 `/api/ws` Upgrade/Connection/Authorization，空闲超时至少 90 秒。每个实例额外占用一个 PostgreSQL LISTEN 连接；数据库角色需允许 LISTEN/NOTIFY，事务连接池代理必须为监听提供直连或会话模式。提示本身不持久化，断开期间由数据库游标补齐；健康客户端 60 秒校验，连接失败时备用轮询最高约 30 秒。默认每实例 2000 个、每账号每实例 4 个连接，账号失效由下一次心跳重验关闭；这些上限不是压测容量承诺。关闭时停止心跳/监听并断开 socket。
+
+14. 审核预算：迁移 022，生产必填 `MODERATION_DAILY_CALL_LIMIT`（整数 0–1000000）。这限制每个北京时间自然日的供应商调用数，文本分段、各张图片分别计数，不是人民币预算。按自己的审核套餐确定额度；0 暂停自动审核。各实例必须使用一致值，勿在已消耗额度之下调整后误认为费用会追回。相同输入当天复用，未知超时仍占额度且当日不重发；跨日再次提交可能重新计费。进程崩溃后留下 reserved 记录也暂转人工，不自动假定未扣费。`moderation_daily_usage` 可只读查看使用量，临近上限/转人工积压应接现有运维告警。
+
+15. 运行环境：使用 Node 24.21.0，在目标 Linux 主机 `npm ci --registry=https://registry.npmjs.org`，不要搬运本机 node_modules。升级后的包审计为 0，不代表无需后续维护。Express 的 qs 6.16.0 override 需保留至其上游依赖修复后再验证移除。参考 [Nodemailer 公告](https://github.com/nodemailer/nodemailer/security/advisories/GHSA-8m3c-c648-2xjj)、[urllib 公告](https://github.com/node-modules/urllib/security/advisories/GHSA-hq3h-g68c-hp78)、[qs 公告](https://github.com/ljharb/qs/security/advisories/GHSA-4mjr-xmp4-gh2g)。
+
+16. 启动配置与退出：生产启动拒绝错误 NODE_ENV、Mock 审核、无效数字/SMTP/非 HTTPS API/已知占位密钥。TRUST_PROXY 仅接受 false、明确网段/地址或 1–5 跳；需按实际代理拓扑填写。HTTP 请求 60 秒、头部 15 秒、keep-alive 5 秒；反向代理业务响应等待应覆盖最长审核调用，WebSocket 空闲超时另设。SIGTERM 后最多 25 秒等待当前请求，长审核可能被关闭，但相同提交 ID 可恢复。数据库 TLS/CA、私网边界、RDS 备份保留与恢复演练、进程监控、错误/人工队列/额度告警、云 RAM 最小权限需要单独确认线上配置；本轮未访问或修改这些生产配置。

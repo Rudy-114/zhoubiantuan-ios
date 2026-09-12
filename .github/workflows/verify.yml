@@ -1,0 +1,60 @@
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: zbt_test
+          POSTGRES_PASSWORD: synthetic-ci-password
+          POSTGRES_DB: zbt_test_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U zbt_test -d zbt_test_ci'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://zbt_test:synthetic-ci-password@127.0.0.1:5432/zbt_test_ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --registry=https://registry.npmjs.org
+        working-directory: backend
+      - run: npm --prefix backend test
+      - name: Migrate empty database and exercise HTTP/transactions
+        run: npm --prefix backend run test:integration
+      - run: npm --prefix backend audit --audit-level=moderate --registry=https://registry.npmjs.org
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Choose an available iPhone simulator
+        run: |
+          xcrun simctl list devices available -j > /tmp/devices.json
+          DEVICE_ID=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/devices.json")); d=j["devices"].values.flatten.find { |x| x["name"].start_with?("iPhone") }; abort "No iPhone simulator" unless d; puts d["udid"]')
+          echo "TEST_SIMULATOR_ID=$DEVICE_ID" >> "$GITHUB_ENV"
+      - name: Native tests
+        run: xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Debug -destination "platform=iOS Simulator,id=$TEST_SIMULATOR_ID" -resultBundlePath /tmp/NativeTests.xcresult CODE_SIGNING_ALLOWED=NO test
+      - name: Release simulator build
+        run: xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Release -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
