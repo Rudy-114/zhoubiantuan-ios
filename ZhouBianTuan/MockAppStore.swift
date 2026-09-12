@@ -769,12 +769,17 @@ final class MockAppStore: ObservableObject {
     }
 
     func user(id: String) -> User {
-        users.first(where: { $0.id == id }) ?? currentUser
+        users.first(where: { $0.id == id }) ?? User(id: id, nickname: "用户资料暂不可用", bio: "", followingCount: 0,
+            followersCount: 0, postCount: 0, isRestricted: false, canShowContact: false, avatarSymbol: "?", avatarTint: .rose)
     }
 
     func post(id: String) -> GroupBuyPost? {
         guard let post = posts.first(where: { $0.id == id }),
+              post.status != .deleted,
+              post.status == .active || post.authorID == currentUserID,
               canShowContent(from: post.authorID) else { return nil }
+        if let collectionID = post.collectionID, let collection = collections.first(where: { $0.id == collectionID }),
+           collection.status != .active && collection.ownerID != currentUserID { return nil }
         return post
     }
 

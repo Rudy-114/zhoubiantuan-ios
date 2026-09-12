@@ -1,0 +1,14 @@
+本次诊断修复的部署约束（持续更新）
+
+当前为本地实施、隔离验证阶段，未发布业务服务、未执行生产数据库迁移。生产证书更换已单独完成。
+
+1. 认证：先应用迁移 013。历史 `ADMIN_EMAILS` 不再授予管理员权限；对已验证邮箱的实际管理员账号执行 `node scripts/moderator.js grant USER_ID`。未验证的历史邮箱必须先完成验证码登录，不能自动批量信任。
+2. 上传：迁移 014 新增上传凭据记录和图片索引。`POST /uploads/presign` 保留原响应结构，但 PUT 地址变为 API 单次上传入口。API 校验 10 MB、实际 JPEG/PNG/WebP、2500 万像素，重新编码 JPEG 后写入 `guarded/<kind>/...` 的私有对象。反向代理须允许 `/api/uploads/*` 的 10 MB 请求，设置有限的上传超时；建议 `client_max_body_size 10m`、`client_body_timeout 30s`。上传图片不再直接暴露 OSS PUT 地址，生产安装需包含 sharp 当前平台的可选二进制依赖，不能复制 macOS 的 node_modules 到 Linux。
+3. 图片读取：所有新 API 响应使用 `/api/assets/...`，每次检查公开状态或登录用户权限，响应 `private, no-store`。iOS 更新会为本 API 图片带登录令牌、把旧 CDN 图片地址改写到 API，并清除旧图片磁盘缓存。必须同时发布 iOS 更新；旧客户端无法继续匿名读取私信/待审核图片，这是权限生效的必要变化。
+4. CDN/OSS：**仅更新业务代码不能关闭旧的 CDN 直读入口。** 部署时必须禁止 CDN 回源直接读取 `message/*` 和 `guarded/*`，并清理旧私信缓存。为让已公开帖子下架后旧 URL 也失效，还需将旧图片域名的回源切到图片权限网关并对全部路径关闭 CDN 缓存（转发 `/post/...`、`/avatar/...`、`/background/...` 到 `/api/assets/...`），或停用旧 CDN 域名。不要保留可绕过权限网关的 OSS/CDN 回源入口。检查 OSS Bucket/Object ACL 为私有；已有公开 ACL 对象需单独收回。部署后用匿名、作者、参与者、无关账号分别验证公开、待审核、私信、撤回、下架图片，再确认 CDN 旧 URL 同样受限。
+5. 数据保留：每小时清理已存在超过 7 天、尚未被帖子/资料/私信引用的上传；失败项保留记录以便重试。已引用图片不会因时间经过而被清理。旧 OSS 对象的清理不在这个任务里自动猜测执行。
+6. 审核：文本不再截断，采用带重叠的分段；原图和预览图全部进入审核，缺失/异常返回转人工复核。服务端限制正文、数组、账号提交频率及同时审核数。审核时间超限转人工复核。未调用真实付费审核服务做测试。
+
+实现依据：[阿里云审核智能体响应格式](https://help.aliyun.com/zh/document_detail/3013147.html)、[阿里云文本服务输入限制](https://help.aliyun.com/en/document_detail/2671445.html)、[sharp 安装条件](https://sharp.pixelplumbing.com/install/)、[sharp 图像处理安全参数](https://sharp.pixelplumbing.com/security/)。
+
+本地检查证据：后端 19 项单测、13 项数据库/HTTP 集成测试通过；图片请求改动后的 iOS Release 模拟器构建通过。后续批次会继续更新最终完整验证结果。

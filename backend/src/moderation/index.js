@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { query } from "../db.js";
+import { concurrencyGate } from "../concurrency.js";
 import { arrayOfStrings } from "../validators.js";
 import { AliyunModerationProvider } from "./aliyunProvider.js";
 import { MockModerationProvider } from "./mockProvider.js";
 import { combineModerationResults, moderationErrorResult, normalizeModerationResult } from "./result.js";
 
 let provider;
+const reviewGate = concurrencyGate(4);
 
 export function moderationProvider() {
   if (!provider) {
@@ -16,6 +18,10 @@ export function moderationProvider() {
 }
 
 export async function reviewSubmission({ targetType, targetId, ownerId, text = "", imageObjectKeys = [] }) {
+  return reviewGate(() => reviewBoundedSubmission({ targetType, targetId, ownerId, text, imageObjectKeys }));
+}
+
+async function reviewBoundedSubmission({ targetType, targetId, ownerId, text, imageObjectKeys }) {
   const provider = moderationProvider();
   const checks = [];
   if (String(text || "").trim()) {
@@ -67,7 +73,7 @@ export function assertOwnedObjectKeys(userId, objectKeys, allowedKinds) {
   const keys = arrayOfStrings(objectKeys);
   const kinds = allowedKinds && allowedKinds.length ? allowedKinds : ["post", "avatar", "background"];
   for (const key of keys) {
-    const ok = kinds.some((kind) => key.startsWith(`${kind}/${userId}/`));
+    const ok = kinds.some((kind) => key.startsWith(`${kind}/${userId}/`) || key.startsWith(`guarded/${kind}/${userId}/`));
     if (!ok || key.includes("..")) {
       const error = new Error("图片上传归属无效，请重新上传");
       error.status = 400;

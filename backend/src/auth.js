@@ -47,3 +47,7 @@ export async function requireAuth(req, res, next) {
     next(error);
   }
 }
+
+export function optionalAuth(req, res, next) {
+  return req.headers.authorization ? requireAuth(req, res, next) : next();
+}

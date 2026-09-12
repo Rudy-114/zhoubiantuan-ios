@@ -9,7 +9,7 @@ import { config } from '../../src/config.js';
 export { pool, query, withTransaction };
 export function id(prefix = 'test') { return `${prefix}-${randomUUID()}`; }
 
-export async function startTestApp() {
+export async function startTestApp(options = {}) {
   const target = new URL(process.env.TEST_DATABASE_URL || 'postgres://127.0.0.1/disabled');
   if (!target.pathname.startsWith('/zbt_test')) throw new Error('Set TEST_DATABASE_URL to a disposable zbt_test* database');
   const sqlDir = new URL('../../sql/', import.meta.url);
@@ -22,7 +22,7 @@ export async function startTestApp() {
       await client.query('INSERT INTO schema_migrations(version) VALUES($1)', [file]);
     });
   }
-  const app = createApp();
+  const app = createApp(options);
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}/api`;

@@ -79,9 +79,9 @@ test("aliyun text moderation uses configured detection agent", async () => {
 
   const { AliyunModerationProvider } = await import(`../src/moderation/aliyunProvider.js?agent=${Date.now()}`);
   const provider = Object.create(AliyunModerationProvider.prototype);
-  let capturedRequest;
+  const capturedRequests = [];
   provider.request = async (action, params) => {
-    capturedRequest = { action, params };
+    capturedRequests.push({ action, params });
     return {
       Code: 200,
       Data: {
@@ -96,7 +96,10 @@ test("aliyun text moderation uses configured detection agent", async () => {
     ownerId: "u-1",
     targetId: "post/unsafe id"
   });
+  const capturedRequest = capturedRequests[0];
   const serviceParameters = JSON.parse(capturedRequest.params.ServiceParameters);
+  assert.ok(capturedRequests.length > 1);
+  assert.ok(capturedRequests.every(item => Array.from(JSON.parse(item.params.ServiceParameters).content).length <= 2000));
 
   assert.equal(capturedRequest.action, "MultiModalAgent");
   assert.equal(capturedRequest.params.AppID, "txt_check_agent_01");

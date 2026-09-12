@@ -13,12 +13,11 @@ export function moderationText(fields, options = {}) {
   return Object.entries(fields || {})
     .filter(([key]) => !omitKeys.has(key))
     .flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${JSON.stringify(item)}`) : [`${key}: ${value ?? ""}`])
-    .join("\n")
-    .slice(0, 6000);
+    .join("\n");
 }
 
 export function publicContentModerationText(fields) {
-  return `${publicContentContext}\n\n待审核内容:\n${moderationText(fields)}`.slice(0, 6000);
+  return `${publicContentContext}\n\n待审核内容:\n${moderationText(fields)}`;
 }
 
 export function postModerationSnapshot(body, collection, title) {

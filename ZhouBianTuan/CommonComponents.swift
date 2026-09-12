@@ -2,96 +2,69 @@ import CryptoKit
 import SwiftUI
 import UIKit
 
-@MainActor
-final class RemoteImageLoader: ObservableObject {
-    enum State {
-        case idle
-        case loading
-        case loaded(UIImage)
-        case failed
-    }
+// Authenticated assets bypass persistent caches so revocation and account changes take effect.
+enum RemoteAssetRequest {
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 30
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration, delegate: NoAssetRedirects(), delegateQueue: nil)
+    }()
+    private static let removeLegacyCache: Void = {
+        Task.detached(priority: .utility) {
+            guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+            try? FileManager.default.removeItem(at: base.appendingPathComponent("RemoteImageCache", isDirectory: true))
+        }
+    }()
 
-    @Published private(set) var state: State = .idle
-    private var task: Task<Void, Never>?
-    private var loadedURLString = ""
-
-    deinit {
-        task?.cancel()
-    }
-
-    func load(urlString: String) {
-        guard !urlString.isEmpty else {
-            state = .failed
-            return
+    static func data(urlString: String, token: String?) async throws -> Data {
+        _ = removeLegacyCache
+        guard var url = URL(string: urlString),
+              let api = URL(string: AliyunBackendClient.currentBaseURLString) else { throw URLError(.badURL) }
+        // Cached records from older app versions must also use the visibility gateway.
+        if url.host == "img.zhoubiantuanmail.top" {
+            url = api.appendingPathComponent("assets").appendingPathComponent(url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
         }
-        if loadedURLString == urlString, case .loaded = state {
-            return
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+        if url.scheme == api.scheme && url.host == api.host && url.port == api.port &&
+            url.path.hasPrefix(api.path + "/assets/") && token != nil {
+            request.setValue("Bearer \(token!)", forHTTPHeaderField: "Authorization")
         }
-        if let cachedImage = RemoteImageDiskCache.image(for: urlString) {
-            loadedURLString = urlString
-            state = .loaded(cachedImage)
-            return
-        }
-        task?.cancel()
-        loadedURLString = urlString
-        state = .loading
-        task = Task { [weak self] in
-            guard let url = URL(string: urlString) else {
-                await MainActor.run { self?.state = .failed }
-                return
-            }
-            do {
-                let (data, response) = try await URLSession.shared.data(from: url)
-                guard
-                    !Task.isCancelled,
-                    let http = response as? HTTPURLResponse,
-                    (200..<300).contains(http.statusCode),
-                    let image = UIImage(data: data)
-                else {
-                    if !Task.isCancelled {
-                        await MainActor.run { self?.state = .failed }
-                    }
-                    return
-                }
-                RemoteImageDiskCache.store(data, for: urlString)
-                await MainActor.run { self?.state = .loaded(image) }
-            } catch {
-                if !Task.isCancelled {
-                    await MainActor.run { self?.state = .failed }
-                }
-            }
-        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              http.mimeType?.hasPrefix("image/") == true else { throw URLError(.badServerResponse) }
+        try Task.checkCancellation()
+        return data
     }
 }
 
-private enum RemoteImageDiskCache {
-    private static let maxAge: TimeInterval = 7 * 24 * 60 * 60
-
-    static func image(for urlString: String) -> UIImage? {
-        guard let fileURL = cacheFileURL(for: urlString),
-              let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-              let modifiedAt = attributes[.modificationDate] as? Date,
-              Date().timeIntervalSince(modifiedAt) < maxAge,
-              let data = try? Data(contentsOf: fileURL) else {
-            return nil
-        }
-        return UIImage(data: data)
+private final class NoAssetRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
+}
 
-    static func store(_ data: Data, for urlString: String) {
-        guard let fileURL = cacheFileURL(for: urlString) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
-    }
+@MainActor
+final class RemoteImageLoader: ObservableObject {
+    enum State { case idle, loading, loaded(UIImage), failed }
+    @Published private(set) var state: State = .idle
+    private var generation = UUID()
 
-    private static func cacheFileURL(for urlString: String) -> URL? {
-        guard let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-            return nil
+    func load(urlString: String, token: String?) async {
+        let requestGeneration = UUID()
+        generation = requestGeneration
+        state = .loading
+        do {
+            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token)
+            guard !Task.isCancelled, generation == requestGeneration else { return }
+            guard let image = UIImage(data: data) else { state = .failed; return }
+            state = .loaded(image)
+        } catch {
+            guard !Task.isCancelled, generation == requestGeneration else { return }
+            state = .failed
         }
-        let digest = SHA256.hash(data: Data(urlString.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return baseURL.appendingPathComponent("RemoteImageCache", isDirectory: true).appendingPathComponent(digest)
     }
 }
 
@@ -135,6 +108,8 @@ struct UploadedImageView: View {
 }
 
 struct RemoteImageView: View {
+    @EnvironmentObject private var store: MockAppStore
+    @State private var retryCount = 0
     let urlString: String
     @StateObject private var loader = RemoteImageLoader()
 
@@ -143,12 +118,18 @@ struct RemoteImageView: View {
             switch loader.state {
             case .loaded(let image):
                 Image(uiImage: image).resizable()
-            case .idle, .loading, .failed:
-                imagePlaceholder
+            case .idle, .loading:
+                imagePlaceholder.overlay { ProgressView().tint(Theme.muted) }
+            case .failed:
+                imagePlaceholder.overlay {
+                    Button { retryCount += 1 } label: {
+                        Label("重新加载", systemImage: "arrow.clockwise").font(.caption)
+                    }.buttonStyle(.bordered).tint(Theme.muted)
+                }
             }
         }
-        .task(id: urlString) {
-            loader.load(urlString: urlString)
+        .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
+            await loader.load(urlString: urlString, token: store.backendToken)
         }
     }
 
@@ -164,6 +145,8 @@ struct RemoteImageView: View {
 }
 
 struct RemoteImagePreview: View {
+    @EnvironmentObject private var store: MockAppStore
+    @State private var retryCount = 0
     let urlString: String
     var blurRadius: CGFloat = 0
     @StateObject private var loader = RemoteImageLoader()
@@ -176,12 +159,18 @@ struct RemoteImagePreview: View {
                     .resizable()
                     .scaledToFill()
                     .blur(radius: blurRadius)
-            case .idle, .loading, .failed:
-                imagePlaceholder
+            case .idle, .loading:
+                imagePlaceholder.overlay { ProgressView().tint(Theme.muted) }
+            case .failed:
+                imagePlaceholder.overlay {
+                    Button { retryCount += 1 } label: {
+                        Label("重新加载", systemImage: "arrow.clockwise").font(.caption)
+                    }.buttonStyle(.bordered).tint(Theme.muted)
+                }
             }
         }
-        .task(id: urlString) {
-            loader.load(urlString: urlString)
+        .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
+            await loader.load(urlString: urlString, token: store.backendToken)
         }
     }
 

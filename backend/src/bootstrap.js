@@ -1,3 +1,4 @@
+import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
 import { collectionToClient, commentToClient, directMessageToClient, messageThreadToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
 import { query } from "./db.js";
 import { attachPostCounts } from "./postCounts.js";
@@ -9,13 +10,7 @@ export async function loadBootstrap(userId) {
         (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM posts p
-      WHERE (p.status = 'active'
-         OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed')))
-        AND NOT EXISTS (
-          SELECT 1 FROM user_blocks b
-          WHERE (b.blocker_id = $1 AND b.blocked_id = p.author_id)
-             OR (b.blocker_id = p.author_id AND b.blocked_id = $1)
-        )
+      WHERE ${visiblePostSQL("p", "$1", true)}
       ORDER BY p.created_at DESC
       LIMIT 200
     `, [userId]),
@@ -23,16 +18,8 @@ export async function loadBootstrap(userId) {
       SELECT c.*,
         COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
       FROM group_collections c
-      LEFT JOIN posts p ON p.collection_id = c.id AND (
-        p.status = 'active' OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
-      )
-      WHERE (c.status = 'active'
-         OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected')))
-        AND NOT EXISTS (
-          SELECT 1 FROM user_blocks b
-          WHERE (b.blocker_id = $1 AND b.blocked_id = c.owner_id)
-             OR (b.blocker_id = c.owner_id AND b.blocked_id = $1)
-        )
+      LEFT JOIN posts p ON p.collection_id = c.id AND ${visiblePostSQL("p", "$1", true)}
+      WHERE ${visibleCollectionSQL("c", "$1", true)}
       GROUP BY c.id
       ORDER BY c.created_at DESC
       LIMIT 200
@@ -44,13 +31,7 @@ export async function loadBootstrap(userId) {
            (SELECT mr.reason FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS moderation_reason,
            (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
          FROM comments cm
-         WHERE (cm.status = 'active'
-            OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected')))
-           AND NOT EXISTS (
-             SELECT 1 FROM user_blocks b
-             WHERE (b.blocker_id = $1 AND b.blocked_id = cm.author_id)
-                OR (b.blocker_id = cm.author_id AND b.blocked_id = $1)
-           )
+         WHERE ${visibleCommentSQL("cm", "$1", true)}
          ORDER BY cm.created_at DESC
          LIMIT 500
        ) recent_comments

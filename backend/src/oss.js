@@ -1,6 +1,4 @@
 import OSS from "ali-oss";
-import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { config } from "./config.js";
 
 const client = new OSS({
@@ -29,9 +27,23 @@ export function signedReadUrl(objectKey, expires = 900) {
 export function publicAssetUrl(objectKey) {
   return publicAssetUrlForBase(objectKey, {
     publicApiBaseUrl: config.publicApiBaseUrl,
-    publicAssetBaseUrl: config.publicAssetBaseUrl
+    // Every app-visible URL rechecks visibility, including previously public posts.
+    publicAssetBaseUrl: ""
   });
 }
+
+export const objectStorage = {
+  async putImage(key, data) {
+    await client.put(key, data, { mime: "image/jpeg", headers: {
+      "x-oss-object-acl": "private", "x-oss-forbid-overwrite": "true",
+      "Cache-Control": "private, no-store"
+    } });
+  },
+  async readImage(key) {
+    return fetch(signedReadUrl(key, 60), { signal: AbortSignal.timeout(15000), redirect: "error" });
+  },
+  async removeImage(key) { await client.delete(key); }
+};
 
 export function publicAssetUrlForBase(objectKey, { publicApiBaseUrl, publicAssetBaseUrl }) {
   if (!objectKey) return "";
@@ -42,23 +54,6 @@ export function publicAssetUrlForBase(objectKey, { publicApiBaseUrl, publicAsset
     .join("/");
   const proxyPrefix = publicAssetBaseUrl ? "" : "/assets";
   return `${baseURL}${proxyPrefix}/${encodedPath}`;
-}
-
-export function createUploadTarget({ userId, kind, filename, contentType }) {
-  const ext = extensionFor(filename, contentType);
-  const safeKind = ["post", "avatar", "background", "message"].includes(kind) ? kind : "post";
-  const objectKey = `${safeKind}/${userId}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
-  const uploadUrl = readClient.signatureUrl(objectKey, {
-    expires: 900,
-    method: "PUT",
-    "Content-Type": contentType || "application/octet-stream"
-  });
-  return {
-    objectKey,
-    uploadUrl,
-    expiresIn: 900,
-    readUrl: signedReadUrl(objectKey)
-  };
 }
 
 export async function deleteObjects(objectKeys = []) {
@@ -77,12 +72,4 @@ export async function deleteObjects(objectKeys = []) {
     }
   }
   return { deleted };
-}
-
-function extensionFor(filename, contentType) {
-  const fromName = path.extname(String(filename || "")).toLowerCase();
-  if (/^\.[a-z0-9]{1,8}$/.test(fromName)) return fromName;
-  if (contentType === "image/png") return ".png";
-  if (contentType === "image/webp") return ".webp";
-  return ".jpg";
 }

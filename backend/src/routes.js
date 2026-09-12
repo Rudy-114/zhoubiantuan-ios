@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import express from "express";
-import { hashPassword, requireAuth, signToken, verifyPassword } from "./auth.js";
+import { hashPassword, optionalAuth, requireAuth, signToken, verifyPassword } from "./auth.js";
 import { loadBootstrap } from "./bootstrap.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
@@ -12,20 +12,24 @@ import { collectionToClient, commentToClient, moderationReviewToClient, postToCl
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
-import { createUploadTarget, deleteObjects, signedReadUrl } from "./oss.js";
+import { deleteObjects, objectStorage as defaultObjectStorage } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
 
-const SIGNED_ASSET_URL_TTL_MS = 55 * 1000;
-const MAX_SIGNED_ASSET_URL_CACHE_SIZE = 1000;
-const signedAssetUrlCache = new Map();
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-export function createRouter() {
+import { assertReadyUploads, installUploadRoute, issueUploadTicket } from "./uploads.js";
+import { canReadAsset } from "./assets.js";
+import { validateContent } from "./contentValidation.js";
+import { visiblePostSQL, visibleCommentSQL, visibleCollectionSQL, unblockedSQL } from "./visibility.js";
+
+export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   const router = express.Router();
+  installUploadRoute(router, objectStorage);
+  router.use(validateContent);
   const sharedRateLimitStore = config.nodeEnv === "production" ? "postgres" : "memory";
   const authLimiter = createRateLimiter({
     name: "auth",
@@ -57,14 +61,17 @@ export function createRouter() {
     res.json({ ok: true });
   }));
 
-  router.get("/assets/*", assetLimiter, async (req, res, next) => {
+  router.get("/assets/*", optionalAuth, assetLimiter, async (req, res, next) => {
     try {
       const objectKey = String(req.params[0] || "");
-      if (!/^(post|avatar|background|message)\//.test(objectKey) || objectKey.includes("..")) {
+      if (!/^(guarded\/)?(post|avatar|background|message)\//.test(objectKey) || objectKey.includes("..")) {
         return res.status(404).json({ error: "图片不存在" });
       }
 
-      const upstream = await fetch(cachedSignedReadUrl(objectKey));
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Vary", "Authorization");
+      if (!(await canReadAsset(objectKey, req.user))) return res.status(404).json({ error: "图片不存在" });
+      const upstream = await objectStorage.readImage(objectKey);
       if (!upstream.ok || !upstream.body) {
         return res.status(upstream.status || 404).json({ error: "图片不存在" });
       }
@@ -75,7 +82,7 @@ export function createRouter() {
       res.setHeader("Content-Type", safeImageContentType(upstream.headers.get("content-type")));
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Disposition", "inline");
-      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+
       Readable.fromWeb(upstream.body).on("error", next).pipe(res);
     } catch (error) {
       next(error);
@@ -278,7 +285,11 @@ export function createRouter() {
     }
   });
 
-  router.patch("/me", requireAuth, async (req, res, next) => {
+  const contentLimiter = createRateLimiter({ name: "content", store: sharedRateLimitStore,
+    windowMs: 10 * 60 * 1000, max: 30, keyGenerator: req => req.user.id,
+    message: "内容提交太频繁，请稍后再试" });
+
+  router.patch("/me", requireAuth, contentLimiter, async (req, res, next) => {
     try {
       const nickname = trimmedString(req.body.nickname, req.user.nickname);
       const bio = trimmedString(req.body.bio, "点击这里，填写简介");
@@ -294,6 +305,9 @@ export function createRouter() {
       if (avatarObjectKey) assertOwnedObjectKeys(req.user.id, [avatarObjectKey], ["avatar"]);
       if (backgroundObjectKey) assertOwnedObjectKeys(req.user.id, [backgroundObjectKey], ["background"]);
 
+      const profileKeys = [avatarObjectKey, backgroundObjectKey].filter(Boolean);
+      const retainedProfileKeys = [req.user.avatar_object_key, req.user.background_object_key].filter(Boolean);
+      await assertReadyUploads(req.user.id, profileKeys, undefined, { retainKeys: retainedProfileKeys });
       const profileSnapshot = { nickname, bio, redBookID, gender, birthday, region, avatarSymbol, avatarTint, backgroundImageName };
       const textResult = await reviewSubmission({
         targetType: "profileText",
@@ -301,14 +315,15 @@ export function createRouter() {
         ownerId: req.user.id,
         text: moderationText(profileSnapshot)
       });
-      const avatarResult = avatarObjectKey
+      const avatarResult = avatarObjectKey && avatarObjectKey !== req.user.avatar_object_key
         ? await reviewSubmission({ targetType: "avatar", targetId: req.user.id, ownerId: req.user.id, imageObjectKeys: [avatarObjectKey] })
         : null;
-      const backgroundResult = backgroundObjectKey
+      const backgroundResult = backgroundObjectKey && backgroundObjectKey !== req.user.background_object_key
         ? await reviewSubmission({ targetType: "profileBackground", targetId: req.user.id, ownerId: req.user.id, imageObjectKeys: [backgroundObjectKey] })
         : null;
 
       const user = await withTransaction(async (client) => {
+        await assertReadyUploads(req.user.id, profileKeys, client, { retainKeys: retainedProfileKeys, markReferenced: true });
         const applyText = textResult.status === "active";
         const applyAvatar = !avatarResult || avatarResult.status === "active";
         const applyBackground = !backgroundResult || backgroundResult.status === "active";
@@ -374,16 +389,16 @@ export function createRouter() {
     }
   });
 
-  router.get("/feed", async (req, res, next) => {
+  router.get("/feed", optionalAuth, async (req, res, next) => {
     try {
       const limit = boundedFeedLimit(req.query.limit);
       const { rows: postRows } = await query(
         `SELECT p.*
         FROM posts p
-        WHERE p.status = 'active'
+        WHERE ${visiblePostSQL("p", "$2")}
         ORDER BY p.created_at DESC
         LIMIT $1`,
-        [limit]
+        [limit, req.user?.id || ""]
       );
       const postsWithCounts = await attachPostCounts(postRows);
       const authorIds = uniqueIds(postsWithCounts.map((row) => row.author_id));
@@ -425,23 +440,23 @@ export function createRouter() {
     }
   });
 
-  router.get("/posts/:id", async (req, res, next) => {
+  router.get("/posts/:id", optionalAuth, async (req, res, next) => {
     try {
       const { rows } = await query(
         `SELECT p.*
-        FROM posts p WHERE p.id = $1 AND p.status = 'active'`,
-        [req.params.id]
+        FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2", true)}`,
+        [req.params.id, req.user?.id || ""]
       );
       if (!rows[0]) return res.status(404).json({ error: "帖子不存在" });
       const [post] = await attachPostCounts([rows[0]]);
-      const comments = await query("SELECT * FROM comments WHERE post_id = $1 AND status = 'active' ORDER BY created_at ASC", [req.params.id]);
+      const comments = await query(`SELECT cm.* FROM comments cm WHERE cm.post_id = $1 AND ${visibleCommentSQL("cm", "$2", true)} ORDER BY cm.created_at ASC`, [req.params.id, req.user?.id || ""]);
       res.json({ post: postToClient(post, post), comments: comments.rows.map(commentToClient) });
     } catch (error) {
       next(error);
     }
   });
 
-  router.post("/collections", requireAuth, async (req, res, next) => {
+  router.post("/collections", requireAuth, contentLimiter, async (req, res, next) => {
     try {
       const collection = await createCollection(req.user.id, req.body);
       res.status(201).json({ collection });
@@ -450,7 +465,7 @@ export function createRouter() {
     }
   });
 
-  router.patch("/collections/:id", requireAuth, async (req, res, next) => {
+  router.patch("/collections/:id", requireAuth, contentLimiter, async (req, res, next) => {
     try {
       const { collection, syncEvents } = await updateCollection(req.user.id, req.params.id, req.body);
       if (syncEvents.length) {
@@ -473,7 +488,7 @@ export function createRouter() {
     }
   });
 
-  router.post("/posts", requireAuth, async (req, res, next) => {
+  router.post("/posts", requireAuth, contentLimiter, async (req, res, next) => {
     try {
       const title = trimmedString(req.body.title);
       if (!title) throw badRequest("请填写标题");
@@ -486,15 +501,18 @@ export function createRouter() {
       const postId = requestedId.startsWith("p-") ? requestedId : `p-${randomUUID()}`;
       const imageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.imageObjectKeys), ["post"]);
       const previewImageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.previewImageObjectKeys), ["post"]);
+      const reviewedImageKeys = [...new Set([...imageObjectKeys, ...previewImageObjectKeys])];
+      await assertReadyUploads(req.user.id, reviewedImageKeys);
       const postSnapshot = postModerationSnapshot(req.body, collection, title);
       const moderation = await reviewSubmission({
         targetType: "post",
         targetId: postId,
         ownerId: req.user.id,
         text: publicContentModerationText(postSnapshot),
-        imageObjectKeys
+        imageObjectKeys: reviewedImageKeys
       });
       const { post, syncEvents } = await withTransaction(async (client) => {
+        await assertReadyUploads(req.user.id, reviewedImageKeys, client, { markReferenced: true });
         const { rows } = await client.query(
           `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, image_object_keys, preview_image_object_keys, group_type,
@@ -541,7 +559,7 @@ export function createRouter() {
             ownerId: req.user.id,
             result: moderation,
             textSnapshot: publicContentModerationText(postSnapshot),
-            imageObjectKeys,
+            imageObjectKeys: reviewedImageKeys,
             snapshot: postSnapshot
           });
         }
@@ -589,16 +607,16 @@ export function createRouter() {
     }
   });
 
-  router.post("/posts/:id/comments", requireAuth, async (req, res, next) => {
+  router.post("/posts/:id/comments", requireAuth, contentLimiter, async (req, res, next) => {
     try {
       const body = trimmedString(req.body.body);
       const replyToID = trimmedString(req.body.replyToID);
       if (!body) throw badRequest("评论不能为空");
-      const post = await query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [req.params.id]);
+      const post = await query(`SELECT p.id, p.author_id FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2")}`, [req.params.id, req.user.id]);
       if (!post.rows[0]) throw badRequest("帖子不存在或不可评论");
       let replyAuthorId = "";
       if (replyToID) {
-        const reply = await query("SELECT id, author_id FROM comments WHERE id = $1 AND post_id = $2 AND status = 'active'", [replyToID, req.params.id]);
+        const reply = await query(`SELECT cm.id, cm.author_id FROM comments cm WHERE cm.id = $1 AND cm.post_id = $2 AND ${visibleCommentSQL("cm", "$3")}`, [replyToID, req.params.id, req.user.id]);
         if (!reply.rows[0]) throw badRequest("回复的评论不存在");
         replyAuthorId = reply.rows[0].author_id;
       }
@@ -610,6 +628,8 @@ export function createRouter() {
         text: body
       });
       const { comment, syncEvents } = await withTransaction(async (client) => {
+        const visiblePost = await client.query(`SELECT p.id FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2")} FOR SHARE OF p`, [req.params.id, req.user.id]);
+        if (!visiblePost.rows[0]) throw badRequest("帖子不存在或不可评论");
         const { rows } = await client.query(
           "INSERT INTO comments (id, post_id, author_id, body, reply_to_id, status) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6) RETURNING *",
           [commentId, req.params.id, req.user.id, body, replyToID, moderation.status]
@@ -833,6 +853,7 @@ export function createRouter() {
       const recipientUserID = trimmedString(req.body.recipientUserID);
       const relatedPostID = trimmedString(req.body.relatedPostID) || null;
       const imageObjectKey = assertOwnedObjectKeys(req.user.id, [trimmedString(req.body.imageObjectKey)], ["message"])[0] || "";
+      if (imageObjectKey) await assertReadyUploads(req.user.id, [imageObjectKey]);
       const body = trimmedString(req.body.body, imageObjectKey ? "[图片]" : "");
       const sharedPostID = trimmedString(req.body.sharedPostID) || null;
       const sharedProfileUserID = trimmedString(req.body.sharedProfileUserID) || null;
@@ -863,6 +884,7 @@ export function createRouter() {
       }
 
       const { thread, syncEvents } = await withTransaction(async (client) => {
+        if (imageObjectKey) await assertReadyUploads(req.user.id, [imageObjectKey], client, { markReferenced: true });
         const existingById = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
         let actualThreadId = threadId;
         if (existingById.rows[0]) {
@@ -1127,23 +1149,9 @@ export function createRouter() {
     }
   });
 
-  router.post("/uploads/presign", requireAuth, (req, res, next) => {
-    try {
-      const contentType = String(req.body.contentType || "").split(";")[0].trim().toLowerCase();
-      if (!ALLOWED_IMAGE_CONTENT_TYPES.has(contentType)) {
-        throw badRequest("仅支持上传 JPEG / PNG / WebP 图片");
-      }
-      const target = createUploadTarget({
-        userId: req.user.id,
-        kind: req.body.kind,
-        filename: req.body.filename,
-        contentType
-      });
-      res.json(target);
-    } catch (error) {
-      next(error);
-    }
-  });
+  router.post("/uploads/presign", requireAuth, asyncRoute(async (req, res) => {
+    res.json(await issueUploadTicket(req.user.id, req.body));
+  }));
 
   return router;
 }
@@ -1270,15 +1278,17 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
     throw badRequest("互动类型无效");
   }
   return withTransaction(async (client) => {
-    const post = await client.query("SELECT id, author_id FROM posts WHERE id = $1 AND status = 'active'", [postId]);
-    if (!post.rows[0]) return [];
+    const post = await client.query(`SELECT p.id, p.author_id FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2")} FOR SHARE OF p`, [postId, userId]);
+    if (enabled && !post.rows[0]) {
+      const error = badRequest("帖子不存在或不可互动"); error.status = 404; throw error;
+    }
 
     const result = enabled
       ? await client.query(`INSERT INTO ${table} (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [userId, postId])
       : await client.query(`DELETE FROM ${table} WHERE user_id = $1 AND post_id = $2`, [userId, postId]);
     if (!result.rowCount) return [];
 
-    const audience = uniqueIds([userId, post.rows[0].author_id]);
+    const audience = uniqueIds([userId, post.rows[0]?.author_id]);
     return createSyncEventsForUsers(client, {
       userIds: audience,
       eventType,
@@ -1409,26 +1419,6 @@ function safeImageContentType(rawContentType) {
   return ALLOWED_IMAGE_CONTENT_TYPES.has(normalized) ? normalized : "application/octet-stream";
 }
 
-function cachedSignedReadUrl(objectKey) {
-  const now = Date.now();
-  const cached = signedAssetUrlCache.get(objectKey);
-  if (cached && cached.expiresAt > now) return cached.url;
-
-  const url = signedReadUrl(objectKey, 60);
-  signedAssetUrlCache.set(objectKey, { url, expiresAt: now + SIGNED_ASSET_URL_TTL_MS });
-  pruneSignedAssetUrlCache(now);
-  return url;
-}
-
-function pruneSignedAssetUrlCache(now = Date.now()) {
-  if (signedAssetUrlCache.size <= MAX_SIGNED_ASSET_URL_CACHE_SIZE) return;
-  for (const [objectKey, entry] of signedAssetUrlCache) {
-    if (entry.expiresAt <= now || signedAssetUrlCache.size > MAX_SIGNED_ASSET_URL_CACHE_SIZE) {
-      signedAssetUrlCache.delete(objectKey);
-    }
-    if (signedAssetUrlCache.size <= MAX_SIGNED_ASSET_URL_CACHE_SIZE) break;
-  }
-}
 
 async function assertReportTargetExists(targetType, targetId) {
   const target =

@@ -398,10 +398,7 @@ struct CreatePostView: View {
     func loadImageData(from urlStrings: [String]) async -> [Data] {
         var loaded: [Data] = []
         for urlString in urlStrings.prefix(16) {
-            guard let url = URL(string: urlString),
-                  let (data, response) = try? await URLSession.shared.data(from: url),
-                  let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
+            guard let data = try? await RemoteAssetRequest.data(urlString: urlString, token: store.backendToken),
                   UIImage(data: data) != nil else { continue }
             loaded.append(data)
         }

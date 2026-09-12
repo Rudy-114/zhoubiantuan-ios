@@ -14,7 +14,20 @@ export class AliyunModerationProvider {
   }
 
   async reviewText({ text, ownerId, targetId }) {
-    const content = String(text || "").slice(0, 2000);
+    const limit = config.moderation.textAgentAppId ? 2000 : 600;
+    const chunks = splitModerationText(String(text || ""), limit);
+    const results = [];
+    const deadline = Date.now() + 45000;
+    for (const content of chunks) {
+      if (Date.now() > deadline) throw new Error("Text moderation deadline exceeded");
+      const result = await this.reviewTextChunk({ content, ownerId, targetId });
+      results.push(result);
+      if (result.outcome === "block") return result;
+    }
+    return results.find(result => result.outcome === "review") || results[0] || normalizeModerationResult({ outcome: "pass" });
+  }
+
+  async reviewTextChunk({ content, ownerId, targetId }) {
     if (config.moderation.textAgentAppId) {
       const serviceParameters = {
         content,
@@ -34,7 +47,7 @@ export class AliyunModerationProvider {
     const response = await this.request("TextModeration", {
       Service: config.moderation.textService,
       ServiceParameters: JSON.stringify({
-        content: String(text || "").slice(0, 600),
+        content,
         accountId: ownerId || ""
       })
     });
@@ -42,8 +55,10 @@ export class AliyunModerationProvider {
   }
 
   async reviewImages({ imageObjectKeys, ownerId }) {
-    const results = await Promise.all(
-      imageObjectKeys.map(async (objectKey) => {
+    const results = [];
+    const deadline = Date.now() + 45000;
+    for (const objectKey of [...new Set(imageObjectKeys)]) {
+        if (Date.now() > deadline) throw new Error("Image moderation deadline exceeded");
         const response = await this.request("ImageModeration", {
           Service: config.moderation.imageService,
           ServiceParameters: JSON.stringify({
@@ -54,9 +69,10 @@ export class AliyunModerationProvider {
             accountId: ownerId || ""
           })
         });
-        return mapAliyunResponse(response, "imageSignal", "图片审核通过");
-      })
-    );
+        const result = mapAliyunResponse(response, "imageSignal", "图片审核通过");
+        results.push(result);
+        if (result.outcome === "block") return result;
+    }
     const blocked = results.find((result) => result.outcome === "block");
     if (blocked) return blocked;
     const review = results.find((result) => result.outcome === "review");
@@ -79,7 +95,7 @@ export class AliyunModerationProvider {
   }
 }
 
-function mapAliyunResponse(response, source, passReason) {
+export function mapAliyunResponse(response, source, passReason) {
   const summary = summarizeAliyunResponse(response);
   if (summary.hasHighRisk || summary.hasBlock) {
     return normalizeModerationResult({
@@ -90,7 +106,7 @@ function mapAliyunResponse(response, source, passReason) {
       rawSummary: summary
     });
   }
-  if (summary.hasMediumRisk || summary.hasReview || summary.hasRiskLabel || summary.hasNon200Code) {
+  if (summary.hasMediumRisk || summary.hasReview || summary.hasRiskLabel || summary.hasNon200Code || !summary.hasVerdict) {
     return normalizeModerationResult({
       outcome: "review",
       riskLevel: summary.riskLevel || "medium",
@@ -142,7 +158,8 @@ function summarizeAliyunResponse(response) {
     hasReview: review,
     hasBlock: lowered.includes("block") || lowered.includes("reject"),
     hasRiskLabel: (explicitRiskLevel === "high" || explicitRiskLevel === "medium") || labels.length > 0,
-    hasNon200Code: code != null && String(code) !== "200"
+    hasNon200Code: String(code) !== "200",
+    hasVerdict: Boolean(explicitRiskLevel || collectLabels(data).length || [data.Suggestion, data.suggestion].some(value => ["pass", "review", "block"].includes(value)))
   };
 }
 
@@ -205,4 +222,15 @@ function flattenResponse(value, output = []) {
   }
   output.push(value);
   return output;
+}
+
+// Overlap preserves phrases crossing a boundary; code-point iteration never splits an emoji.
+export function splitModerationText(text, limit, overlap = 80) {
+  const points = Array.from(text);
+  const chunks = [];
+  for (let start = 0; start < points.length; start += limit - overlap) {
+    chunks.push(points.slice(start, start + limit).join(""));
+    if (start + limit >= points.length) break;
+  }
+  return chunks;
 }
