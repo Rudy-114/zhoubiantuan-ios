@@ -1,7 +1,7 @@
 import { query, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
-import { loadMessageThreadsForUser } from "./messages.js";
+import { loadMessageThreadsForUser, loadUnreadSnapshot } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
 import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
 
@@ -55,23 +55,27 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   );
   const state = snapshot.rows[0];
   if (BigInt(safeCursor) < BigInt(state.pruned_through) || BigInt(safeCursor) > BigInt(state.current_cursor)) {
-    return { nextCursor: state.current_cursor, hasMore: false, resetRequired: true, events: [], messageThreads: [], unreadMessageCount: 0 };
+    return { nextCursor: state.current_cursor, hasMore: false, resetRequired: true, events: [], messageThreads: [] };
   }
   const eventsResult = { rows: snapshot.rows.filter(row => row.id != null) };
   const rows = eventsResult.rows.slice(0, safeLimit);
   const hasMore = eventsResult.rows.length > safeLimit;
   const events = rows.map(syncEventToClient);
   const nextCursor = rows.length ? rows[rows.length - 1].id : state.current_cursor;
-  if (!rows.length) return { nextCursor, hasMore: false, events: [], messageThreads: [], unreadMessageCount: 0 };
+  if (!rows.length) return { nextCursor, hasMore: false, events: [], messageThreads: [] };
+  const messageIdsByThread = {};
+  for (const event of rows) if (event.thread_id && event.entity_type === "direct_message") {
+    (messageIdsByThread[event.thread_id] ||= []).push(event.entity_id);
+  }
   const threadIds = rows.map((row) => row.thread_id).filter(Boolean);
   const commentIds = unique(rows.filter((row) => row.entity_type === "comment").map((row) => row.entity_id));
   const initialPostIds = unique(rows.filter((row) => row.entity_type === "post").map((row) => row.entity_id));
   const initialCollectionIds = unique(rows.filter((row) => row.entity_type === "collection").map((row) => row.entity_id));
   const initialUserIds = unique(rows.filter((row) => row.entity_type === "user").map((row) => row.entity_id));
 
-  const [messageThreads, unreadMessageCount, comments, relationships] = await Promise.all([
-    loadMessageThreadsForUser({ query }, threadIds, userId),
-    threadIds.length ? loadUnreadMessageCount(userId) : 0,
+  const [messageThreads, unread, comments, relationships] = await Promise.all([
+    loadMessageThreadsForUser({ query }, threadIds, userId, messageIdsByThread),
+    threadIds.length || rows.some(row => row.event_type === "user.deleted") ? loadUnreadSnapshot(userId) : {},
     loadCommentsForSync(userId, commentIds),
     rows.some(row => row.entity_type === "user" || /liked|favorit|follow|block/.test(row.event_type)) ? loadRelationshipState(userId) : {}
   ]);
@@ -106,7 +110,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
     removedCommentIDs: commentIds.filter(id => !comments.some(comment => comment.id === id)),
     contentRefreshRequired: rows.some(row => row.entity_type === "collection" || ["user.blocked", "user.unblocked", "user.deleted"].includes(row.event_type)),
     messageThreads,
-    unreadMessageCount,
+    ...unread,
     ...relationships
   };
 }
@@ -121,28 +125,6 @@ function normalizeLimit(value) {
   const parsed = Number.parseInt(String(value ?? DEFAULT_SYNC_LIMIT), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SYNC_LIMIT;
   return Math.min(parsed, MAX_SYNC_LIMIT);
-}
-
-async function loadUnreadMessageCount(userId) {
-  const { rows } = await query(
-    `SELECT COALESCE(SUM(unread_count), 0)::int AS unread_count
-     FROM (
-       SELECT count(*) AS unread_count
-       FROM message_threads mt
-       JOIN direct_messages dm ON dm.thread_id = mt.id
-       WHERE (mt.buyer_user_id = $1 OR mt.publisher_user_id = $1)
-         AND dm.revoked_at IS NULL
-         AND NOT ($1 = ANY(dm.deleted_for_user_ids))
-         AND dm.sender_id <> $1
-         AND dm.created_at > COALESCE(
-           (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id = mt.id AND r.user_id = $1),
-           '-infinity'::timestamptz
-         )
-       GROUP BY mt.id
-     ) unread_threads`,
-    [userId]
-  );
-  return Number(rows[0]?.unread_count || 0);
 }
 
 async function loadUsersForSync(viewerUserId, userIds) {

@@ -34,6 +34,10 @@ struct BackendPayload: Decodable {
     var collections: [BackendCollection]?
     var comments: [BackendComment]?
     var messageThreads: [BackendMessageThread]?
+    var nextThreadsCursor: String?
+    var threadsHasMore: Bool?
+    var unreadMessageCount: Int?
+    var unreadCursor: String?
     var reports: [BackendReport]?
     var likedPostIDs: [String]?
     var favoritePostIDs: [String]?
@@ -332,6 +336,7 @@ struct BackendMessageThread: Decodable {
     let messages: [BackendDirectMessage]
     let unreadCount: Int
     let updatedAt: String
+    let revision: Int?
 
     func localThread() -> MessageThread {
         MessageThread(
@@ -341,7 +346,8 @@ struct BackendMessageThread: Decodable {
             relatedPostID: relatedPostID,
             messages: messages.map { $0.localMessage() },
             unreadCount: unreadCount,
-            updatedAt: BackendDateParser.date(from: updatedAt)
+            updatedAt: BackendDateParser.date(from: updatedAt),
+            revision: revision
         )
     }
 }
@@ -349,6 +355,7 @@ struct BackendMessageThread: Decodable {
 struct BackendDirectMessage: Decodable {
     let id: String
     let senderID: String
+    let revision: Int?
     let body: String
     let createdAt: String
     let imageURL: String?
@@ -367,7 +374,8 @@ struct BackendDirectMessage: Decodable {
             isRevoked: isRevoked ?? false,
             isDeletedForMe: isDeletedForMe ?? false,
             sharedPostID: sharedPostID,
-            sharedProfileUserID: sharedProfileUserID
+            sharedProfileUserID: sharedProfileUserID,
+            revision: revision ?? 1
         )
     }
 }
@@ -396,7 +404,8 @@ struct BackendSyncPayload: Decodable {
     let collections: [BackendCollection]?
     let comments: [BackendComment]?
     let messageThreads: [BackendMessageThread]
-    let unreadMessageCount: Int
+    let unreadMessageCount: Int?
+    let unreadCursor: String?
     let likedPostIDs: [String]?
     let favoritePostIDs: [String]?
     let followedUserIDs: [String]?

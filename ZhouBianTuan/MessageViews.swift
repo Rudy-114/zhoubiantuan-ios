@@ -49,8 +49,10 @@ struct MessagesView: View {
                         .padding(.horizontal, 16)
                     }
                     .padding(.bottom, 28)
+                    ContentPageFooter(query: .threads)
                 }
                 .background(Theme.background.ignoresSafeArea())
+                .refreshable { await store.loadContentPage(.threads, reset: true) }
                 .onAppear {
                     store.ensureMutualFriendThreads()
                 }
@@ -181,6 +183,13 @@ struct ChatView: View {
                 ScrollViewReader { proxy in
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 18) {
+                            ContentPageFooter(query: .messages(thread.id)) {
+                                let session = store.authSessionVersion
+                                let anchor = visibleMessages.first?.id
+                                await store.loadContentPage(.messages(thread.id))
+                                guard store.isCurrentSession(session) else { return }
+                                if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                            }
                             ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
                                 if showsTimeSeparator(at: index, in: visibleMessages) {
                                     Text(ChatTimeSeparator.label(for: message.createdAt))
@@ -196,9 +205,10 @@ struct ChatView: View {
                         .padding(.bottom, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: visibleMessages.count) {
+                    .onChange(of: visibleMessages.last?.id) {
                         if let last = visibleMessages.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
+                            store.markThreadRead(threadID: threadID)
                         }
                     }
                     .onTapGesture {
@@ -533,7 +543,7 @@ struct ChatBubble: View {
     var body: some View {
         content
             .contextMenu {
-                if !message.isRevoked && !message.isDeletedForMe {
+                if !message.isRevoked && !message.isDeletedForMe && message.deliveryStatus == .sent {
                     Button("举报私信") { isReporting = true }
                 }
                 Button("删除") {
@@ -559,7 +569,9 @@ struct ChatBubble: View {
 
     @ViewBuilder
     private var content: some View {
-        if let sharedPostID = message.sharedPostID,
+        if message.isRevoked || message.isDeletedForMe {
+            Text(message.isDeletedForMe ? "消息已删除" : "消息已撤回").font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
+        } else if let sharedPostID = message.sharedPostID,
            let post = store.post(id: sharedPostID) {
             HStack(alignment: .top, spacing: 10) {
                 if isMine { Spacer(minLength: 34) }
@@ -635,7 +647,7 @@ struct ChatBubble: View {
         case .failedBlockedByPeer: return "你已被对方拉黑，无法发送消息"
         case .failedBlockedPeer: return "你已拉黑对方，解除拉黑后才能发送"
         case .failedNetwork: return "发送失败，请稍后重试"
-        case .sent: return nil
+        case .sent, .sending: return nil
         }
     }
 
@@ -657,6 +669,11 @@ struct ChatBubble: View {
                 Text(failureReasonText)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.red.opacity(0.85))
+            }
+        } else if message.deliveryStatus == .sending {
+            VStack(alignment: .trailing, spacing: 5) {
+                bubble
+                Text("发送中…").font(.caption).foregroundStyle(Theme.muted)
             }
         } else {
             bubble

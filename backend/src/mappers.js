@@ -113,13 +113,14 @@ export function directMessageToClient(row, viewerUserID = "") {
   return {
     id: row.id,
     senderID: row.sender_id,
-    body: isRevoked ? "" : row.body || "",
+    revision: row.revision,
+    body: isRevoked || isDeletedForMe ? "" : row.body || "",
     createdAt: row.created_at.toISOString(),
-    imageURL: isRevoked ? "" : publicAssetUrl(row.image_object_key),
+    imageURL: isRevoked || isDeletedForMe ? "" : publicAssetUrl(row.image_object_key),
     isRevoked,
     isDeletedForMe,
-    sharedPostID: row.shared_post_id || null,
-    sharedProfileUserID: row.shared_profile_user_id || null
+    sharedPostID: isRevoked || isDeletedForMe ? null : row.shared_post_id || null,
+    sharedProfileUserID: isRevoked || isDeletedForMe ? null : row.shared_profile_user_id || null
   };
 }
 
@@ -127,6 +128,7 @@ export function messageThreadToClient(row, messages = []) {
   return {
     id: row.id,
     buyerUserID: row.buyer_user_id,
+    revision: row.revision,
     publisherUserID: row.publisher_user_id,
     relatedPostID: row.related_post_id || null,
     messages,

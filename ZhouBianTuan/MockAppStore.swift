@@ -10,15 +10,15 @@ final class MockAppStore: ObservableObject {
     @Published var reviews: [ReviewPost]
     @Published var comments: [Comment]
     @Published var threads: [MessageThread] {
-        didSet {
-            persistThreads()
-        }
+        didSet { persistThreads() }
     }
     @Published var moderationReviews: [ModerationReview]
     @Published var contentPages: [String: ContentPageState] = [:]
     @Published var contentPageEpoch = UUID()
     @Published var postDetailErrors: [String: String] = [:]
     @Published var postDetailRequests: [String: UUID] = [:]
+    @Published private var totalUnreadMessageCount: Int?
+    private var unreadSnapshotCursor: Int64?
     @Published var reports: [Report]
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
@@ -86,6 +86,9 @@ final class MockAppStore: ObservableObject {
     private let automaticallyRefresh: Bool
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
+    private let messageCache = MessageCache()
+    private var messageCacheSession: UUID?
+    @Published var messageCacheError: String?
     private var backendRefreshTask: Task<Void, Never>?
     private var refreshRequestID: UUID?
     private var syncRequestID: UUID?
@@ -227,25 +230,37 @@ final class MockAppStore: ObservableObject {
     }
 
     private func persistThreads() {
-        guard persistsData, !isRestoringThreads,
-              let data = try? JSONEncoder().encode(threads) else { return }
-        guard let storageURL = Self.messageThreadsStorageURL else {
-            UserDefaults.standard.set(data, forKey: Self.messageThreadsDefaultsKey)
-            return
+        guard persistsData, !isRestoringThreads, isLoggedIn, messageCacheSession == authSessionVersion else { return }
+        let session = authSessionVersion
+        messageCache.enqueue(threads, account: currentUserID, session: session) { [weak self] message in
+            Task { @MainActor in
+                guard let self, self.isCurrentSession(session), self.messageCacheError == nil else { return }
+                self.messageCacheError = message
+                self.showToast(message)
+            }
         }
-        try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: storageURL, options: .atomic)
     }
 
-    private func restorePersistedThreads() {
-        let fileData = Self.messageThreadsStorageURL.flatMap { try? Data(contentsOf: $0) }
-        guard let data = fileData ?? UserDefaults.standard.data(forKey: Self.messageThreadsDefaultsKey),
-              let restoredThreads = try? JSONDecoder().decode([MessageThread].self, from: data) else { return }
-        var seenThreadIDs = Set<String>()
-        let dedupedThreads = restoredThreads.filter { seenThreadIDs.insert($0.id).inserted }
-        isRestoringThreads = true
-        threads = dedupedThreads
-        isRestoringThreads = false
+    private func configureMessageCacheIfNeeded() {
+        guard persistsData, isLoggedIn else { return }
+        let session = authSessionVersion, account = currentUserID
+        guard messageCacheSession != session else { return }
+        messageCacheSession = session
+        messageCache.configure(account: account, session: session)
+        runSessionTask { [self] session in
+            do {
+                let outbox = try await messageCache.loadOutbox(account: account, session: session)
+                guard isCurrentSession(session) else { return }
+                isRestoringThreads = true
+                threads = MessageMerging.merge(local: outbox, remote: threads, userID: account, preserveHistory: true)
+                isRestoringThreads = false
+                persistThreads()
+            } catch {
+                guard isCurrentSession(session) else { return }
+                messageCacheError = "本机聊天草稿读取失败，已从云端重新加载记录"
+                showToast(messageCacheError!)
+            }
+        }
     }
 
     private static func normalizedMessageImageData(_ data: Data) -> Data {
@@ -267,6 +282,11 @@ final class MockAppStore: ObservableObject {
     }
 
     private func invalidateSessionWork() {
+        totalUnreadMessageCount = nil
+        unreadSnapshotCursor = nil
+        messageCache.invalidate()
+        messageCacheSession = nil
+        messageCacheError = nil
         authSessionVersion = UUID()
         authenticationAttempt = UUID()
         sessionTasks.values.forEach { $0.cancel() }
@@ -316,7 +336,6 @@ final class MockAppStore: ObservableObject {
         followingIDsByUserID = [blankUser.id: []]
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
-        if persistsData { restorePersistedThreads() }
         if isBackendEnabled, backendToken == nil {
             invalidateCloudSessionForMissingToken(prompt: false)
         }
@@ -548,7 +567,13 @@ final class MockAppStore: ObservableObject {
             self.comments = comments.map { $0.localComment() }
         }
         if let messageThreads = payload.messageThreads {
-            self.threads = mergedMessageThreads(from: messageThreads.map { $0.localThread() })
+            self.threads = MessageMerging.merge(local: previousUserID == payload.currentUser?.id ? threads : [], remote: messageThreads.map { $0.localThread() }, userID: payload.currentUser?.id ?? currentUserID, preserveHistory: false)
+            if let hasMore = payload.threadsHasMore {
+                var state = ContentPageState()
+                state.ids = messageThreads.map(\.id); state.nextCursor = payload.nextThreadsCursor
+                state.hasMore = hasMore; state.isLoaded = true
+                contentPages[ContentQuery.threads.key] = state
+            }
         }
         if let reports = payload.reports {
             self.reports = reports.map { $0.localReport() }
@@ -577,7 +602,9 @@ final class MockAppStore: ObservableObject {
             browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: currentUser.id)) ?? []
         }
         followingIDsByUserID[currentUserID] = followedUserIDs
+        mergeUnreadSnapshot(payload.unreadMessageCount, cursor: payload.unreadCursor)
         isLoggedIn = payload.currentUser != nil
+        configureMessageCacheIfNeeded()
         isAuthPromptPresented = false
         if let syncCursor = payload.syncCursor {
             SyncCursorStore.set(syncCursor, for: currentUserID)
@@ -599,34 +626,8 @@ final class MockAppStore: ObservableObject {
         mergeCollections(payload.collections?.map { $0.localCollection() } ?? [])
     }
 
-    private func mergedMessageThreads(from backendThreads: [MessageThread]) -> [MessageThread] {
-        let recentCutoff = Date().addingTimeInterval(-120)
-        var merged = Dictionary(uniqueKeysWithValues: backendThreads.map { ($0.id, $0) })
-        for localThread in threads where isCurrentUserThread(localThread) {
-            if var backendThread = merged[localThread.id] {
-                backendThread = preservingLocalMessageState(backendThread: backendThread, localThread: localThread)
-                let backendMessageIDs = Set(backendThread.messages.map(\.id))
-                let localOnlyMessages = localThread.messages.filter {
-                    !backendMessageIDs.contains($0.id) && ($0.createdAt > recentCutoff || $0.deliveryStatus.isFailed)
-                }
-                if !localOnlyMessages.isEmpty {
-                    backendThread.messages.append(contentsOf: localOnlyMessages)
-                    backendThread.messages.sort { $0.createdAt < $1.createdAt }
-                    backendThread.updatedAt = max(backendThread.updatedAt, localThread.updatedAt)
-                    merged[localThread.id] = backendThread
-                }
-                continue
-            }
-            let hasRecentDraft = localThread.updatedAt > recentCutoff
-                || localThread.messages.contains { $0.createdAt > recentCutoff || $0.deliveryStatus.isFailed }
-            if hasRecentDraft {
-                merged[localThread.id] = localThread
-            }
-        }
-        return deduplicatedMessageThreads(Array(merged.values)).sorted { $0.updatedAt > $1.updatedAt }
-    }
-
     private func applySyncPayload(_ payload: BackendSyncPayload) {
+        mergeUnreadSnapshot(payload.unreadMessageCount, cursor: payload.unreadCursor)
         for report in payload.reports?.map({ $0.localReport() }) ?? [] {
             reports.removeAll { $0.id == report.id }
             reports.insert(report, at: 0)
@@ -641,11 +642,12 @@ final class MockAppStore: ObservableObject {
         collections.removeAll { removedCollections.contains($0.id) }
         posts.removeAll { removedPosts.contains($0.id) }
         comments.removeAll { removedComments.contains($0.id) || removedPosts.contains($0.postID) || removedUsers.contains($0.authorID) }
-        if !removedUsers.isEmpty {
+        let deletedUsers = Set(payload.events.filter { $0.eventType == "user.deleted" }.map(\.entityID))
+        if !deletedUsers.isEmpty {
             threads = threads.map { thread in
                 var updated = thread
                 updated.messages = thread.messages.map { message in
-                    guard removedUsers.contains(message.senderID) else { return message }
+                    guard deletedUsers.contains(message.senderID) else { return message }
                     var revoked = message
                     revoked.isRevoked = true
                     revoked.body = ""
@@ -742,43 +744,9 @@ final class MockAppStore: ObservableObject {
         comments = order.compactMap { commentsByID[$0] }
     }
 
-    private func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
+    func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
         guard !backendThreads.isEmpty else { return }
-        let recentCutoff = Date().addingTimeInterval(-120)
-        var merged = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
-        for var backendThread in backendThreads {
-            if let localThread = merged[backendThread.id] {
-                backendThread = preservingLocalMessageState(backendThread: backendThread, localThread: localThread)
-                let backendMessageIDs = Set(backendThread.messages.map(\.id))
-                let localOnlyMessages = localThread.messages.filter {
-                    !backendMessageIDs.contains($0.id) && ($0.createdAt > recentCutoff || $0.deliveryStatus.isFailed)
-                }
-                if !localOnlyMessages.isEmpty {
-                    backendThread.messages.append(contentsOf: localOnlyMessages)
-                    backendThread.messages.sort { $0.createdAt < $1.createdAt }
-                }
-                backendThread.updatedAt = max(backendThread.updatedAt, localThread.updatedAt)
-            }
-            merged[backendThread.id] = backendThread
-        }
-        threads = Array(merged.values).sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    private func preservingLocalMessageState(backendThread: MessageThread, localThread: MessageThread) -> MessageThread {
-        var thread = backendThread
-        let localMessages = Dictionary(uniqueKeysWithValues: localThread.messages.map { ($0.id, $0) })
-        thread.messages = thread.messages.map { backendMessage in
-            guard let localMessage = localMessages[backendMessage.id] else { return backendMessage }
-            var message = backendMessage
-            if message.imageData == nil {
-                message.imageData = localMessage.imageData
-            }
-            if message.imageObjectKey.isEmpty {
-                message.imageObjectKey = localMessage.imageObjectKey
-            }
-            return message
-        }
-        return thread
+        threads = MessageMerging.merge(local: threads, remote: backendThreads, userID: currentUserID, preserveHistory: true)
     }
 
     private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = true, _ operation: @escaping (String, UUID) async throws -> Void) {
@@ -828,8 +796,15 @@ final class MockAppStore: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    func mergeUnreadSnapshot(_ count: Int?, cursor: String?) {
+        guard let count, let cursor, let value = Int64(cursor), unreadSnapshotCursor == nil || value > unreadSnapshotCursor! else { return }
+        totalUnreadMessageCount = max(0, count)
+        unreadSnapshotCursor = value
+    }
+
     var unreadMessageCount: Int {
-        messageThreads.reduce(0) { total, thread in
+        if let totalUnreadMessageCount { return totalUnreadMessageCount }
+        return messageThreads.reduce(0) { total, thread in
             total + max(thread.unreadCount, 0)
         }
     }
@@ -1829,7 +1804,6 @@ final class MockAppStore: ObservableObject {
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
         let thread = threads[index]
-        persistThreads()
         syncMessageToBackendIfNeeded(thread: thread, message: message, successToast: "已分享给站内好友")
     }
 
@@ -1854,7 +1828,6 @@ final class MockAppStore: ObservableObject {
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
         let thread = threads[index]
-        persistThreads()
         syncMessageToBackendIfNeeded(thread: thread, message: message, successToast: "已分享给站内好友")
     }
 
@@ -1901,7 +1874,6 @@ final class MockAppStore: ObservableObject {
             )
             threads.append(thread)
         }
-        persistThreads()
     }
 
     private func threadID(forRecipient userID: String, relatedPostID: String?) -> String? {
@@ -1927,7 +1899,6 @@ final class MockAppStore: ObservableObject {
             updatedAt: Date()
         )
         threads.insert(thread, at: 0)
-        persistThreads()
         return threadID
     }
 
@@ -1958,7 +1929,6 @@ final class MockAppStore: ObservableObject {
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
         let thread = threads[index]
-        persistThreads()
         syncMessageToBackendIfNeeded(thread: thread, message: message)
         return true
     }
@@ -1990,7 +1960,6 @@ final class MockAppStore: ObservableObject {
         threads[index].updatedAt = Date()
         threads[index].unreadCount = 0
         let thread = threads[index]
-        persistThreads()
         syncMessageToBackendIfNeeded(thread: thread, message: message)
         return true
     }
@@ -1998,7 +1967,6 @@ final class MockAppStore: ObservableObject {
     private func appendFailedMessage(_ message: DirectMessage, toThreadAt index: Int) {
         threads[index].messages.append(message)
         threads[index].updatedAt = Date()
-        persistThreads()
     }
 
     func retryFailedMessage(threadID: String, messageID: String) {
@@ -2007,8 +1975,7 @@ final class MockAppStore: ObservableObject {
               threads[threadIndex].messages[messageIndex].deliveryStatus.isFailed else { return }
         if let failureStatus = localBlockFailureStatus(forPeer: peerUserID(for: threads[threadIndex])) {
             threads[threadIndex].messages[messageIndex].deliveryStatus = failureStatus
-            persistThreads()
-            if failureStatus == .failedBlockedByPeer {
+                if failureStatus == .failedBlockedByPeer {
                 showToast("你已被对方拉黑，无法发送消息")
             } else {
                 showToast("你已拉黑对方，解除拉黑后才能发送")
@@ -2021,12 +1988,11 @@ final class MockAppStore: ObservableObject {
         }
         guard canAttemptCloudMessage() else { return }
         var message = threads[threadIndex].messages.remove(at: messageIndex)
-        message.deliveryStatus = .sent
+        message.deliveryStatus = .sending
         message.createdAt = Date()
         threads[threadIndex].messages.append(message)
         threads[threadIndex].updatedAt = Date()
         let thread = threads[threadIndex]
-        persistThreads()
         syncMessageToBackendIfNeeded(thread: thread, message: message)
     }
 
@@ -2076,9 +2042,13 @@ final class MockAppStore: ObservableObject {
             return
         }
         let recipientUserID = peerUserID(for: thread)
+        updateLocalMessage(threadID: thread.id, messageID: message.id) { $0.deliveryStatus = .sending }
         runSessionTask { [self] session in
             do {
                 var outgoingMessage = message
+                if outgoingMessage.body == "[图片]", outgoingMessage.imageData == nil, outgoingMessage.imageObjectKey.isEmpty {
+                    throw NSError(domain: "MessageCache", code: 1, userInfo: [NSLocalizedDescriptionKey: "本机图片已不可用，请重新选择图片发送"])
+                }
                 if let imageData = outgoingMessage.imageData, outgoingMessage.imageObjectKey.isEmpty {
                     let objectKey = try await backendClient.uploadMessageImage(token: backendToken, data: imageData)
                     guard isCurrentSession(session) else { return }
@@ -2120,7 +2090,6 @@ final class MockAppStore: ObservableObject {
         guard let threadIndex = localThreadIndex(threadID: threadID, messageID: messageID),
               let messageIndex = threads[threadIndex].messages.firstIndex(where: { $0.id == messageID }) else { return }
         update(&threads[threadIndex].messages[messageIndex])
-        persistThreads()
     }
 
     private func localThreadIndex(threadID: String, messageID: String? = nil) -> Int? {
@@ -2149,8 +2118,8 @@ final class MockAppStore: ObservableObject {
     func markThreadRead(threadID: String) {
         guard let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }),
               threads[index].unreadCount > 0 else { return }
+        if let totalUnreadMessageCount { self.totalUnreadMessageCount = max(0, totalUnreadMessageCount - threads[index].unreadCount) }
         threads[index].unreadCount = 0
-        persistThreads()
         if isBackendEnabled, let backendToken {
             runSessionTask { [self] session in
                 try? await backendClient.markDirectMessageThreadRead(token: backendToken, threadID: threadID)
@@ -2162,7 +2131,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func canRevokeMessage(_ message: DirectMessage) -> Bool {
-        message.senderID == currentUserID && Date().timeIntervalSince(message.createdAt) <= 120
+        message.senderID == currentUserID && message.deliveryStatus == .sent && !message.isRevoked && !message.isDeletedForMe && Date().timeIntervalSince(message.createdAt) <= 120
     }
 
     func deleteMessage(threadID: String, messageID: String) {
@@ -2171,7 +2140,6 @@ final class MockAppStore: ObservableObject {
         let actualThreadID = threads[threadIndex].id
         threads[threadIndex].messages[messageIndex].isDeletedForMe = true
         threads[threadIndex].updatedAt = Date()
-        persistThreads()
         showToast("已从你的聊天中删除")
         guard isBackendEnabled, let backendToken else { return }
         runSessionTask { [self] session in
@@ -2200,7 +2168,6 @@ final class MockAppStore: ObservableObject {
         let actualThreadID = threads[threadIndex].id
         threads[threadIndex].messages[messageIndex].isRevoked = true
         threads[threadIndex].updatedAt = Date()
-        persistThreads()
         showToast("已撤回")
         guard isBackendEnabled, let backendToken else { return }
         runSessionTask { [self] session in

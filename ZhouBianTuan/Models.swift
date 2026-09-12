@@ -209,15 +209,18 @@ struct MessageThread: Identifiable, Hashable, Codable {
     var messages: [DirectMessage]
     var unreadCount: Int
     var updatedAt: Date
+    var revision: Int? = nil
 }
 
 enum MessageDeliveryStatus: String, Hashable, Codable {
     case sent
+    case sending
     case failedNetwork
     case failedBlockedPeer
     case failedBlockedByPeer
 
-    var isFailed: Bool { self != .sent }
+    var isFailed: Bool { self != .sent && self != .sending }
+    var isOutbox: Bool { self != .sent }
 }
 
 struct DirectMessage: Identifiable, Hashable, Codable {
@@ -233,6 +236,8 @@ struct DirectMessage: Identifiable, Hashable, Codable {
     var sharedPostID: String? = nil
     var sharedProfileUserID: String? = nil
     var deliveryStatus: MessageDeliveryStatus = .sent
+    var revision: Int = 1
+    var localImageFileName: String = ""
 
     init(
         id: String,
@@ -246,7 +251,8 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         isDeletedForMe: Bool = false,
         sharedPostID: String? = nil,
         sharedProfileUserID: String? = nil,
-        deliveryStatus: MessageDeliveryStatus = .sent
+        deliveryStatus: MessageDeliveryStatus = .sent,
+        revision: Int = 1
     ) {
         self.id = id
         self.senderID = senderID
@@ -260,6 +266,7 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         self.sharedPostID = sharedPostID
         self.sharedProfileUserID = sharedProfileUserID
         self.deliveryStatus = deliveryStatus
+        self.revision = revision
     }
 
     enum CodingKeys: String, CodingKey {
@@ -275,6 +282,8 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         case sharedPostID
         case sharedProfileUserID
         case deliveryStatus
+        case revision
+        case localImageFileName
     }
 
     init(from decoder: Decoder) throws {
@@ -290,6 +299,8 @@ struct DirectMessage: Identifiable, Hashable, Codable {
         isDeletedForMe = try container.decodeIfPresent(Bool.self, forKey: .isDeletedForMe) ?? false
         sharedPostID = try container.decodeIfPresent(String.self, forKey: .sharedPostID)
         sharedProfileUserID = try container.decodeIfPresent(String.self, forKey: .sharedProfileUserID)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        localImageFileName = try container.decodeIfPresent(String.self, forKey: .localImageFileName) ?? ""
         deliveryStatus = (try? container.decode(MessageDeliveryStatus.self, forKey: .deliveryStatus)) ?? .sent
     }
 }

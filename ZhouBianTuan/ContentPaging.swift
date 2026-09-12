@@ -8,6 +8,8 @@ struct ContentQuery: Hashable {
         components.queryItems = parameters.keys.sorted().map { URLQueryItem(name: $0, value: parameters[$0]) }
         return path + "?" + (components.percentEncodedQuery ?? "")
     }
+    var isThreadPage: Bool { path == "/messages/threads" }
+    var isMessagePage: Bool { path.hasSuffix("/messages") }
     var isUserPage: Bool { path == "/users" }
     var isCollectionPage: Bool { path == "/collections" }
     var isCommentPage: Bool { path.hasSuffix("/comments") }
@@ -17,6 +19,8 @@ struct ContentQuery: Hashable {
     static func comments(_ postID: String) -> Self { .init(path: "/posts/\(postID)/comments") }
     static let favorites = Self(parameters: ["favorites": "true"])
     static let likes = Self(parameters: ["likes": "true"])
+    static let threads = Self(path: "/messages/threads")
+    static func messages(_ threadID: String) -> Self { .init(path: "/messages/threads/\(threadID)/messages") }
     static let following = Self(parameters: ["following": "true"])
 }
 
@@ -30,10 +34,14 @@ struct ContentPageState {
 }
 
 struct BackendContentPage: Decodable {
+    var unreadMessageCount: Int?
+    var unreadCursor: String?
     var posts: [BackendPost]?
     var users: [BackendUser]?
     var collections: [BackendCollection]?
     var comments: [BackendComment]?
+    var thread: BackendMessageThread?
+    var messageThreads: [BackendMessageThread]?
     var post: BackendPost?
     var nextCursor: String?
     var hasMore: Bool?
@@ -93,7 +101,13 @@ extension MockAppStore {
             let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken)
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
             mergeContentPage(page)
-            let ids = query.isUserPage ? page.users?.map(\.id) ?? [] : query.isCollectionPage ? page.collections?.map(\.id) ?? [] : query.isCommentPage ? page.comments?.map(\.id) ?? [] : page.posts?.map(\.id) ?? []
+            let ids: [String]
+            if query.isThreadPage { ids = page.messageThreads?.map(\.id) ?? [] }
+            else if query.isMessagePage { ids = page.thread?.messages.map(\.id) ?? [] }
+            else if query.isUserPage { ids = page.users?.map(\.id) ?? [] }
+            else if query.isCollectionPage { ids = page.collections?.map(\.id) ?? [] }
+            else if query.isCommentPage { ids = page.comments?.map(\.id) ?? [] }
+            else { ids = page.posts?.map(\.id) ?? [] }
             if reset { state.ids = ids } else { let known = Set(state.ids); state.ids += ids.filter { !known.contains($0) } }
             state.isLoaded = true
             state.hasMore = page.hasMore ?? false
@@ -107,6 +121,8 @@ extension MockAppStore {
     }
 
     func mergeContentPage(_ page: BackendContentPage) {
+        mergeUnreadSnapshot(page.unreadMessageCount, cursor: page.unreadCursor)
+        mergeChangedMessageThreads(from: page.messageThreads?.map { $0.localThread() } ?? page.thread.map { [$0.localThread()] } ?? [])
         mergeUsers(page.users?.map { $0.localUser() } ?? [])
         mergePosts(page.posts?.map { $0.localPost() } ?? page.post.map { [$0.localPost()] } ?? [])
         mergeCollections(page.collections?.map { $0.localCollection() } ?? [])
@@ -142,6 +158,7 @@ extension MockAppStore {
 struct ContentPageFooter: View {
     @EnvironmentObject private var store: MockAppStore
     let query: ContentQuery
+    var loadMore: (() async -> Void)? = nil
 
     var body: some View {
         let state = store.pageState(query)
@@ -151,10 +168,10 @@ struct ContentPageFooter: View {
             else if let error = state.error {
                 VStack(spacing: 8) {
                     Text(error).font(.footnote).foregroundStyle(Theme.subtext)
-                    Button("重试加载") { Task { await store.loadContentPage(query, reset: !state.isLoaded) } }
+                    Button("重试加载") { Task { await load(reset: !state.isLoaded) } }
                 }.padding()
             } else if state.hasMore {
-                Button(state.isLoaded ? "加载更多" : "加载内容") { Task { await store.loadContentPage(query) } }.padding()
+                Button(state.isLoaded ? "加载更多" : "加载内容") { Task { await load() } }.padding()
             } else if state.ids.isEmpty {
                 Text("暂无内容").font(.subheadline).foregroundStyle(Theme.muted).padding()
             }
@@ -163,5 +180,10 @@ struct ContentPageFooter: View {
         .task(id: "\(store.authSessionVersion)-\(store.contentPageEpoch)-\(query.key)") {
             if !store.pageState(query).isLoaded { await store.loadContentPage(query) }
         }
+    }
+
+    private func load(reset: Bool = false) async {
+        if !reset, let loadMore { await loadMore() }
+        else { await store.loadContentPage(query, reset: reset) }
     }
 }

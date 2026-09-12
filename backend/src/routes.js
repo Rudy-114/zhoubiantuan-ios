@@ -13,7 +13,7 @@ import { submitReport, listReports, decideReport } from "./reports.js";
 import { postsPage, postDetail, collectionsPage, commentsPage, usersPage } from "./contentPages.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
-import { loadMessageThreadForUser } from "./messages.js";
+import { loadMessageThreadForUser, loadThreadsPage, messageHistoryPage } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { objectStorage as defaultObjectStorage } from "./oss.js";
@@ -850,6 +850,13 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
+  router.get("/messages/threads", requireAuth, asyncRoute(async (req, res) => {
+    res.json(await loadThreadsPage({ query }, req.user.id, req.query));
+  }));
+  router.get("/messages/threads/:threadId/messages", requireAuth, asyncRoute(async (req, res) => {
+    res.json(await messageHistoryPage(req.user.id, req.params.threadId, req.query));
+  }));
+
   router.post("/messages/threads/:id/messages", requireAuth, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
@@ -882,9 +889,14 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
       }
 
       if (relatedPostID) {
-        const post = await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [relatedPostID]);
-        if (!post.rows[0]) throw badRequest("关联帖子不存在");
+        const association = await query("SELECT 1 FROM message_threads WHERE id=$1 AND related_post_id=$2 AND $3 IN(buyer_user_id,publisher_user_id)", [threadId, relatedPostID, req.user.id]);
+        if (!association.rowCount) {
+          const post = await query(`SELECT p.id FROM posts p WHERE p.id=$1 AND ${visiblePostSQL("p", "$2")}`, [relatedPostID, req.user.id]);
+          if (!post.rowCount) throw badRequest("关联帖子不存在或不可见");
+        }
       }
+      if (sharedPostID && !(await query(`SELECT 1 FROM posts p WHERE p.id=$1 AND ${visiblePostSQL("p", "$2")}`, [sharedPostID, req.user.id])).rowCount) throw badRequest("分享的帖子不存在或不可见");
+      if (sharedProfileUserID && !(await query(`SELECT 1 FROM users u WHERE u.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND ${unblockedSQL("u.id", "$2")}`, [sharedProfileUserID, req.user.id])).rowCount) throw badRequest("分享的用户不存在或不可见");
 
       const { thread, syncEvents } = await withTransaction(async (client) => {
         if (imageObjectKey) await assertReadyUploads(req.user.id, [imageObjectKey], client, { markReferenced: true });
@@ -956,7 +968,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           });
         }
         return {
-          thread: await loadMessageThreadForUser(client, actualThreadId, req.user.id),
+          thread: await loadMessageThreadForUser(client, actualThreadId, req.user.id, { messageIDs: [messageId] }),
           syncEvents
         };
       });
@@ -991,6 +1003,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
            ON CONFLICT (thread_id, user_id) DO UPDATE SET read_at = EXCLUDED.read_at`,
           [threadId, req.user.id]
         );
+        await client.query("UPDATE message_threads SET revision=revision WHERE id=$1", [threadId]);
         const peerUserID = thread.buyer_user_id === req.user.id ? thread.publisher_user_id : thread.buyer_user_id;
         return createThreadSyncEvents(client, {
           userIds: [req.user.id, peerUserID],
@@ -1024,6 +1037,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
            WHERE id = $1`,
           [message.id, req.user.id]
         );
+        await client.query("UPDATE message_threads SET revision=revision WHERE id=$1", [thread.id]);
         const syncEvents = await createThreadSyncEvents(client, {
           userIds: [req.user.id],
           eventType: "message.deleted",
@@ -1032,7 +1046,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           threadId: thread.id
         });
         return {
-          thread: await loadMessageThreadForUser(client, thread.id, req.user.id),
+          thread: await loadMessageThreadForUser(client, thread.id, req.user.id, { messageIDs: [message.id] }),
           syncEvents
         };
       });
@@ -1066,7 +1080,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           threadId: thread.id
         });
         return {
-          thread: await loadMessageThreadForUser(client, thread.id, req.user.id),
+          thread: await loadMessageThreadForUser(client, thread.id, req.user.id, { messageIDs: [message.id] }),
           syncEvents
         };
       });

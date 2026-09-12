@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		0E5D56442875779D34DFE6D1 /* SessionIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */; };
+		378378AF12A9304E8F8EEF8A /* MessageConsistencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */; };
+		50402D5CE53C32E98FCB7691 /* MessageMerging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B604123493D0B684AFB21B06 /* MessageMerging.swift */; };
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
 		7D4E6E4B2C8A4A5100A10001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */; };
@@ -38,6 +40,7 @@
 		7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */; };
 		8860DF79402457AD79EBFEEB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 98E2B2B491589A3229D8BFF3 /* Foundation.framework */; };
 		AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC92AFDAFEFFD87760019198 /* ContentPaging.swift */; };
+		F50A070706C513B87E7830B6 /* MessageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +54,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageCache.swift; sourceTree = "<group>"; };
+		5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageConsistencyTests.swift; sourceTree = "<group>"; };
 		604D56F548AA8D065B77F364 /* ZhouBianTuanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZhouBianTuanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionIsolationTests.swift; sourceTree = "<group>"; };
 		7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZhouBianTuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -100,6 +105,7 @@
 		7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStore.swift; sourceTree = "<group>"; };
 		7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStatusViews.swift; sourceTree = "<group>"; };
 		98E2B2B491589A3229D8BFF3 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		B604123493D0B684AFB21B06 /* MessageMerging.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageMerging.swift; sourceTree = "<group>"; };
 		DC92AFDAFEFFD87760019198 /* ContentPaging.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentPaging.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -126,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */,
+				5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */,
 			);
 			name = ZhouBianTuanTests;
 			path = ZhouBianTuanTests;
@@ -185,6 +192,8 @@
 				7D4E6E392C8A4A5100A10001 /* App Icons */,
 				7D4E6E2B2C8A4A5100A10001 /* Images */,
 				DC92AFDAFEFFD87760019198 /* ContentPaging.swift */,
+				B604123493D0B684AFB21B06 /* MessageMerging.swift */,
+				316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */,
 			);
 			path = ZhouBianTuan;
 			sourceTree = "<group>";
@@ -359,6 +368,8 @@
 				7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,
 				AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */,
+				50402D5CE53C32E98FCB7691 /* MessageMerging.swift in Sources */,
+				F50A070706C513B87E7830B6 /* MessageCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -367,6 +378,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0E5D56442875779D34DFE6D1 /* SessionIsolationTests.swift in Sources */,
+				378378AF12A9304E8F8EEF8A /* MessageConsistencyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

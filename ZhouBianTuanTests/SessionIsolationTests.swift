@@ -280,4 +280,14 @@ final class SessionIsolationTests: XCTestCase {
         store.logOut()
         XCTAssertTrue(store.contentPages.isEmpty)
     }
+
+    func testSwitchingAccountsDoesNotCarryAnUnsentMessageInASharedConversation() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        store.threads = [MessageThread(id: "t-shared", buyerUserID: "A", publisherUserID: "B", relatedPostID: nil,
+            messages: [DirectMessage(id: "m-private-draft", senderID: "A", body: "A has not sent this", createdAt: Date(), deliveryStatus: .sending)], unreadCount: 0, updatedAt: Date())]
+        await login("B", store: store)
+        XCTAssertTrue(store.threads.isEmpty)
+    }
 }
