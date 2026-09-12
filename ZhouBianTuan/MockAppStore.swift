@@ -80,7 +80,7 @@ final class MockAppStore: ObservableObject {
     private static let localDataResetDefaultsKey = "zhoubiantuan.localDataResetVersion"
     private static let currentLocalDataResetVersion = 1
     private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
-    private static let backendFallbackGraceInterval: TimeInterval = 3
+    private static let backendHealthySyncInterval: TimeInterval = 60
     let backendClient: AliyunBackendClient
     private let persistsData: Bool
     private let automaticallyRefresh: Bool
@@ -101,7 +101,9 @@ final class MockAppStore: ObservableObject {
     private var pendingPostUploads: [String: (originals: [String], previews: [String])] = [:]
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
-    private var lastRealtimeActivityAt = Date.distantPast
+    private var nextFallbackSyncAt = Date.distantPast
+    private var fallbackAttempt = 0
+    private var syncHintPending = false
     var backendToken: String? {
         get {
             if !persistsData { return cachedBackendToken }
@@ -388,6 +390,9 @@ final class MockAppStore: ObservableObject {
         realtimeConnection?.disconnect()
         realtimeConnection = nil
         isRealtimeConnected = false
+        syncHintPending = false
+        fallbackAttempt = 0
+        nextFallbackSyncAt = .distantPast
     }
 
     func backendModeChanged() {
@@ -442,7 +447,10 @@ final class MockAppStore: ObservableObject {
     func syncFromBackend(reason: String = "manual") async {
         let session = authSessionVersion
         guard isBackendEnabled, let backendToken else { return }
-        guard !isRefreshingFromBackend, !isSyncingFromBackend else { return }
+        guard !isRefreshingFromBackend, !isSyncingFromBackend else {
+            if reason.hasPrefix("websocket") { syncHintPending = true }
+            return
+        }
         guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
             await refreshFromBackend(silent: true)
             guard isCurrentSession(session) else { return }
@@ -450,7 +458,18 @@ final class MockAppStore: ObservableObject {
         }
         let requestID = UUID()
         syncRequestID = requestID
-        defer { if syncRequestID == requestID { syncRequestID = nil } }
+        defer {
+            if syncRequestID == requestID {
+                syncRequestID = nil
+                if syncHintPending {
+                    syncHintPending = false
+                    runSessionTask { [self] owner in
+                        guard isCurrentSession(owner) else { return }
+                        await syncFromBackend(reason: "websocket.coalesced")
+                    }
+                }
+            }
+        }
         do {
             let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
             guard isCurrentSession(session) else { return }
@@ -459,6 +478,7 @@ final class MockAppStore: ObservableObject {
                 guard isCurrentSession(session) else { return }
                 return
             }
+            if isRealtimeConnected { nextFallbackSyncAt = Date().addingTimeInterval(Self.backendHealthySyncInterval) }
             applySyncPayload(payload)
             if payload.contentRefreshRequired == true {
                 await refreshFromBackend(silent: true)
@@ -504,7 +524,8 @@ final class MockAppStore: ObservableObject {
 
     private func handleRealtimeStateChange(_ connected: Bool) {
         isRealtimeConnected = connected
-        lastRealtimeActivityAt = Date()
+        fallbackAttempt = 0
+        nextFallbackSyncAt = Date().addingTimeInterval(connected ? Self.backendHealthySyncInterval : 3)
         if connected {
             runSessionTask { [self] session in
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -517,13 +538,16 @@ final class MockAppStore: ObservableObject {
 
     private func handleRealtimeEvent(_ event: BackendRealtimeEvent) async {
         guard event.type == "sync.available" else { return }
-        lastRealtimeActivityAt = Date()
         await syncFromBackend(reason: "websocket.\(event.eventType ?? "event")")
     }
 
     private func runFallbackSyncIfNeeded() async {
         guard isBackendEnabled, backendToken != nil else { return }
-        guard Date().timeIntervalSince(lastRealtimeActivityAt) >= Self.backendFallbackGraceInterval else { return }
+        guard Date() >= nextFallbackSyncAt || syncHintPending else { return }
+        syncHintPending = false
+        let delay = isRealtimeConnected ? Self.backendHealthySyncInterval : min(30, 5 * pow(2, Double(min(fallbackAttempt, 3))))
+        fallbackAttempt = min(fallbackAttempt + 1, 3)
+        nextFallbackSyncAt = Date().addingTimeInterval(delay * Double.random(in: 0.85...1.15))
         await syncFromBackend(reason: "fallback")
     }
 

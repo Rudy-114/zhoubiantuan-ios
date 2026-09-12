@@ -872,17 +872,16 @@ final class RealtimeConnection {
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private var token: String?
     private var shouldReconnect = false
     private var reconnectAttempt = 0
     private var isConnected = false
+    private var generation = UUID()
+    private var lastPongAt = Date.distantPast
 
-    init(
-        backendClient: AliyunBackendClient,
-        session: URLSession = .shared,
-        onEvent: @escaping (BackendRealtimeEvent) async -> Void,
-        onStateChange: @escaping (Bool) -> Void
-    ) {
+    init(backendClient: AliyunBackendClient, session: URLSession = .shared,
+         onEvent: @escaping (BackendRealtimeEvent) async -> Void, onStateChange: @escaping (Bool) -> Void) {
         self.backendClient = backendClient
         self.session = session
         self.onEvent = onEvent
@@ -890,18 +889,23 @@ final class RealtimeConnection {
     }
 
     func connect(token: String) {
+        if self.token != token { disconnect() }
         self.token = token
         shouldReconnect = true
-        guard webSocketTask == nil else { return }
+        guard webSocketTask == nil, reconnectTask == nil else { return }
         open()
     }
 
     func disconnect() {
         shouldReconnect = false
+        token = nil
+        generation = UUID()
         reconnectTask?.cancel()
         reconnectTask = nil
         receiveTask?.cancel()
         receiveTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         updateConnected(false)
@@ -909,76 +913,78 @@ final class RealtimeConnection {
 
     private func open() {
         guard shouldReconnect, let token else { return }
-        reconnectTask?.cancel()
         reconnectTask = nil
-
+        generation = UUID()
+        let owner = generation
         var request = URLRequest(url: backendClient.webSocketURL)
         request.timeoutInterval = 15
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
         let task = session.webSocketTask(with: request)
         webSocketTask = task
+        lastPongAt = Date()
         task.resume()
-        updateConnected(true)
-        startReceiveLoop(for: task)
-        resetAttemptAfterStableConnection()
-    }
-
-    private func startReceiveLoop(for task: URLSessionWebSocketTask) {
-        receiveTask?.cancel()
         receiveTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
                     let message = try await task.receive()
-                    await self?.handle(message)
+                    guard let self, self.generation == owner, !Task.isCancelled else { return }
+                    let data: Data?
+                    switch message {
+                    case .string(let value): data = value.data(using: .utf8)
+                    case .data(let value): data = value
+                    @unknown default: data = nil
+                    }
+                    guard let data, let event = try? JSONDecoder().decode(BackendRealtimeEvent.self, from: data) else { continue }
+                    if event.type == "connection.ready" {
+                        self.lastPongAt = Date()
+                        self.updateConnected(true)
+                    } else if self.isConnected { await self.onEvent(event) }
                 } catch {
-                    self?.handleDisconnect()
+                    self?.handleDisconnect(owner: owner)
                     return
+                }
+            }
+        }
+        heartbeatTask = Task { [weak self] in
+            let openedAt = Date()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+                guard let self, self.generation == owner, !Task.isCancelled else { return }
+                guard self.isConnected, Date().timeIntervalSince(self.lastPongAt) < 45 else {
+                    self.handleDisconnect(owner: owner)
+                    return
+                }
+                if Date().timeIntervalSince(openedAt) >= 45 { self.reconnectAttempt = 0 }
+                task.sendPing { [weak self] error in
+                    Task { @MainActor in
+                        guard let self, self.generation == owner else { return }
+                        if error != nil { self.handleDisconnect(owner: owner) }
+                        else { self.lastPongAt = Date() }
+                    }
                 }
             }
         }
     }
 
-    private func handle(_ message: URLSessionWebSocketTask.Message) async {
-        let data: Data?
-        switch message {
-        case .string(let string):
-            data = string.data(using: .utf8)
-        case .data(let incomingData):
-            data = incomingData
-        @unknown default:
-            data = nil
-        }
-        guard let data,
-              let event = try? JSONDecoder().decode(BackendRealtimeEvent.self, from: data) else { return }
-        reconnectAttempt = 0
-        await onEvent(event)
-    }
-
-    private func handleDisconnect() {
-        webSocketTask = nil
+    private func handleDisconnect(owner: UUID) {
+        guard generation == owner else { return }
+        generation = UUID()
         receiveTask?.cancel()
         receiveTask = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
         updateConnected(false)
-        scheduleReconnectIfNeeded()
-    }
-
-    private func scheduleReconnectIfNeeded() {
         guard shouldReconnect, reconnectTask == nil else { return }
-        let delays: [UInt64] = [1, 2, 5, 10, 30]
-        let delay = delays[min(reconnectAttempt, delays.count - 1)]
+        let delays: [Double] = [1, 2, 5, 10, 30]
+        let delay = delays[min(reconnectAttempt, delays.count - 1)] * Double.random(in: 0.8...1.2)
         reconnectAttempt += 1
+        let retryOwner = generation
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
-            self?.open()
-        }
-    }
-
-    private func resetAttemptAfterStableConnection() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let self, self.isConnected else { return }
-            self.reconnectAttempt = 0
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            guard let self, self.generation == retryOwner, !Task.isCancelled else { return }
+            self.open()
         }
     }
 
