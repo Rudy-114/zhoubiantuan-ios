@@ -1,3 +1,18 @@
+# 最新部署状态（2026-09-12）
+
+以下历史交接记录描述旧阶段；当前状态以本段和部署记录为准。用户已明确授权部署，正式服务器已完成更新。
+
+- 当前维护工作树：`/Users/rudy2009/Documents/欧美团app/.worktrees/deploy-diagnostics-20260912`，分支 `codex/deploy-diagnostics-20260912`。
+- 已部署源码：`913f05a0cf01bd31739690728e656df777af3710`，Node 24.21.0，全部 31 个迁移已应用。
+- 原诊断工作树和 report-safety-system 工作树里的用户改动保持原样。
+- 详细变更、备份、验证及限制：`docs/operations/verification/2026-09-12-diagnostic-deployment.md`。
+- 后端、独立管理员网页、图片网关与旧 CDN 权限切换均已验证；安全 AI 预算仍为 0，自动处置关闭。
+- 新 iOS Build 12 已通过 111 项原生测试、27 项核心测试、Release 模拟器构建与正式首页展示检查，尚未上传 TestFlight/App Store。
+- 后续若继续手机端发布，应在此工作树验证最新 Git 状态，准备签名真机 Archive 和 App Store Connect 上传；不得把旧工作树直接覆盖服务器。
+- 不要将旧服务直接接回新同步表；备份恢复前先停止全部写入。
+
+---
+
 # Codex Conversation Handoff
 
 Status: `d31e34d` 最终独立代码质量复核与修复已完成；仍停留在总阶段 4，子任务 5 尚未开始
