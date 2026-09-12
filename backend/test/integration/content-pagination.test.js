@@ -20,6 +20,10 @@ test('old favorites and author/search results survive the bootstrap cutoff and c
   await query("INSERT INTO group_collections(id,owner_id,name,deadline) VALUES($1,$2,'Paged collection',now()+interval '1 day')",[collectionID,author.id]);
   await query(`INSERT INTO posts(id,author_id,collection_id,title,deadline,created_at)
     SELECT $1||'-'||n,$2,$3,$4,now()+interval '1 day','2026-01-01'::timestamptz + (n/3)*interval '0.000001 second' FROM generate_series(1,215) n`,[prefix,author.id,collectionID,phrase]);
+  const bootstrap = await api.request('/bootstrap', { token: author.token }).then(r => r.json());
+  const collection = bootstrap.collections.find(c => c.id === collectionID);
+  assert.equal(collection.postCount, 215);
+  assert.equal(collection.postIDs.length, 50);
   const oldest=prefix+'-1';
   await query('INSERT INTO post_favorites(user_id,post_id) VALUES($1,$2)',[reader.id,oldest]);
   const favorites=await collect('/feed?favorites=true',reader.token,'posts');

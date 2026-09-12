@@ -323,8 +323,7 @@ struct Reminder: Identifiable, Hashable {
     var userID: String
     var postID: String
     var deadline: Date
-    var remindAt: Date
-    var hasReminded: Bool
+    var isUpcoming: Bool
 }
 
 struct ReportEvidence: Decodable, Hashable {

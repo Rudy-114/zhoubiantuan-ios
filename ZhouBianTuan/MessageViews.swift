@@ -11,7 +11,7 @@ struct MessagesView: View {
             if store.isLoggedIn {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 18) {
-                        HeaderTitle(title: "消息", subtitle: "站内咨询、截团提醒和治理通知")
+                        HeaderTitle(title: "消息", subtitle: "站内咨询与收藏截团日期")
                         VStack(spacing: 10) {
                             ForEach(store.currentUserReminders.prefix(3)) { reminder in
                                 if let post = store.post(id: reminder.postID) {
@@ -22,8 +22,13 @@ struct MessagesView: View {
                                 }
                             }
                             if store.currentUserReminders.isEmpty {
-                                MessagesEmptyPanel(title: "暂无截团提醒", icon: "bell")
+                                MessagesEmptyPanel(title: "暂无待截团收藏", icon: "bell")
                             }
+                        }
+                        .padding(.horizontal, 16)
+                        NavigationLink(value: Route.reminders) {
+                            Text("查看收藏截团日期 · 需打开 App 查看")
+                                .font(.system(size: 12)).foregroundStyle(Theme.subtext)
                         }
                         .padding(.horizontal, 16)
 

@@ -167,12 +167,11 @@ async function loadCollectionsForSync(userId, collectionIds) {
   if (!ids.length) return [];
   const { rows } = await query(
     `SELECT c.*,
-        COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
+        ARRAY(SELECT p.id FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL("p", "$1", true)} ORDER BY p.created_at DESC,p.id DESC LIMIT 50) AS post_ids,
+        (SELECT count(*) FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL("p", "$1", true)}) AS post_count
       FROM group_collections c
-      LEFT JOIN posts p ON p.collection_id = c.id AND ${visiblePostSQL("p", "$1", true)}
       WHERE c.id = ANY($2::text[])
         AND ${visibleCollectionSQL("c", "$1", true)}
-      GROUP BY c.id
       ORDER BY c.created_at DESC`,
     [userId, ids]
   );

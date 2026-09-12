@@ -290,7 +290,7 @@ struct PostCard: View {
                             .padding(8)
                     }
                     .overlay(alignment: .topTrailing) {
-                        PostCardDeadlineBadge(text: livePost.deadline.shortDeadlineText)
+                        PostCardDeadlineBadge(text: isEnded ? "已结团" : livePost.deadline.shortDeadlineText)
                             .padding(8)
                     }
 
@@ -354,17 +354,6 @@ struct PostCard: View {
             .buttonStyle(.plain)
             .saturation(isEnded ? 0 : 1)
             .opacity(isEnded ? 0.58 : 1)
-            .overlay(alignment: .topLeading) {
-                if isEnded {
-                    Text("已结团")
-                        .font(.system(size: 11, weight: .black))
-                        .foregroundStyle(Theme.subtext)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Theme.panelRaised.opacity(0.92), in: Capsule())
-                        .padding(8)
-                }
-            }
 
             if !isEnded {
                 PostLikeCountButton(postID: livePost.id)

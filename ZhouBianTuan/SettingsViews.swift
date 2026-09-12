@@ -29,7 +29,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
                         NavigationLink(destination: NotificationSettingsView()) {
-                            SettingsRow(icon: "bell", title: "通知设置")
+                            SettingsRow(icon: "bell", title: "通知说明")
                         }
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
@@ -144,46 +144,16 @@ struct GeneralSettingsView: View {
 
 struct NotificationSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var receiveMessages = false
-    @State private var likesAndFavorites = true
-    @State private var newFollowers = true
-    @State private var shares = true
-    @State private var privateMessageMode = "接收"
 
     var body: some View {
-        SettingsDetailScaffold(title: "通知设置", dismiss: dismiss) {
+        SettingsDetailScaffold(title: "通知说明", dismiss: dismiss) {
             SettingsDetailGroup {
-                SettingsToggleRow(title: "接收消息通知", isOn: $receiveMessages)
+                SettingsValueRow(title: "系统推送", value: "暂未提供")
             }
-
-            Text("互动通知")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("私信和互动在打开 App 后更新。收藏的截团日期可在 App 内查看，目前不会在截团前发送系统通知。")
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.subtext)
                 .padding(.horizontal, 14)
-
-            SettingsDetailGroup {
-                SettingsToggleRow(title: "赞和收藏", isOn: $likesAndFavorites)
-                SettingsSeparator()
-                SettingsToggleRow(title: "新增关注", isOn: $newFollowers)
-                SettingsSeparator()
-                SettingsToggleRow(title: "分享", isOn: $shares)
-            }
-
-            Text("私信通知")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-
-            SettingsDetailGroup {
-                Button {
-                    privateMessageMode = privateMessageMode == "接收" ? "不接收" : "接收"
-                } label: {
-                    SettingsValueRow(title: "私信", value: privateMessageMode)
-                }
-                .buttonStyle(.plain)
-            }
         }
     }
 }

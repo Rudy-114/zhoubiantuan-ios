@@ -20,7 +20,6 @@ final class MockAppStore: ObservableObject {
     @Published private var totalUnreadMessageCount: Int?
     private var unreadSnapshotCursor: Int64?
     @Published var reports: [Report]
-    @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
@@ -331,7 +330,6 @@ final class MockAppStore: ObservableObject {
         threads = []
         moderationReviews = []
         reports = []
-        reminders = []
         likedPostIDs = []
         favoritePostIDs = []
         followedUserIDs = []
@@ -834,9 +832,12 @@ final class MockAppStore: ObservableObject {
     }
 
     var currentUserReminders: [Reminder] {
-        reminders
-            .filter { $0.userID == currentUserID }
+        activePosts.filter { favoritePostIDs.contains($0.id) && !$0.isEnded }
             .sorted { $0.deadline < $1.deadline }
+            .map { post in
+                Reminder(id: "deadline-\(post.id)", userID: currentUserID, postID: post.id,
+                         deadline: post.deadline, isUpcoming: post.deadline.timeIntervalSinceNow <= 3 * 3600)
+            }
     }
 
     func messageThread(id: String) -> MessageThread? {
@@ -1120,8 +1121,7 @@ final class MockAppStore: ObservableObject {
         if favoritePostIDs.contains(postID) {
             favoritePostIDs.remove(postID)
             posts[index].favoriteCount = max(0, posts[index].favoriteCount - 1)
-            reminders.removeAll { $0.postID == postID && $0.userID == currentUserID }
-            showToast("已取消收藏和截团提醒")
+            showToast("已取消收藏")
             runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
                 guard isCurrentSession(session) else { return }
@@ -1129,9 +1129,7 @@ final class MockAppStore: ObservableObject {
         } else {
             favoritePostIDs.insert(postID)
             posts[index].favoriteCount += 1
-            let post = posts[index]
-            reminders.append(Reminder(id: "re-\(postID)-\(Int(Date().timeIntervalSince1970))", userID: currentUserID, postID: postID, deadline: post.deadline, remindAt: post.deadline.addingTimeInterval(-3600 * 3), hasReminded: false))
-            showToast("已收藏，截团前会提醒你")
+            showToast("已收藏，可在收藏中查看截团日期")
             runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
                 guard isCurrentSession(session) else { return }
@@ -1609,7 +1607,6 @@ final class MockAppStore: ObservableObject {
         threads.removeAll()
         reports.removeAll()
         moderationReviews.removeAll()
-        reminders.removeAll()
         likedPostIDs.removeAll()
         favoritePostIDs.removeAll()
         followedUserIDs.removeAll()
@@ -2384,7 +2381,6 @@ final class MockAppStore: ObservableObject {
         posts[postIndex].status = .deleted
         likedPostIDs.remove(postID)
         favoritePostIDs.remove(postID)
-        reminders.removeAll { $0.postID == postID }
         browsingHistoryIDs.removeAll { $0 == postID }
         for collectionIndex in collections.indices {
             collections[collectionIndex].postIDs.removeAll { $0 == postID }

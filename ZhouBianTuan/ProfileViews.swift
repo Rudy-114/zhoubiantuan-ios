@@ -2001,6 +2001,9 @@ struct ReminderCenterView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                Text("显示收藏中尚未截团的内容。请打开 App 查看；目前不会发送系统通知。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.subtext)
                 ForEach(store.currentUserReminders) { reminder in
                     if let post = store.post(id: reminder.postID) {
                         NavigationLink(value: Route.postDetail(post.id)) {
@@ -2010,14 +2013,16 @@ struct ReminderCenterView: View {
                     }
                 }
                 if store.currentUserReminders.isEmpty {
-                    ProfileEmptyState(text: "暂无截团提醒", icon: "bell")
+                    ProfileEmptyState(text: "暂无待截团收藏", icon: "bell")
                         .frame(height: 360)
                 }
             }
             .padding(16)
+            ContentPageFooter(query: .favorites)
         }
+        .refreshable { await store.loadContentPage(.favorites, reset: true) }
         .background(Theme.background.ignoresSafeArea())
-        .navigationTitle("截团提醒")
+        .navigationTitle("收藏截团日期")
     }
 }
 

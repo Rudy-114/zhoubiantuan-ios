@@ -72,8 +72,7 @@ struct BundleImage: View {
     let name: String
 
     var body: some View {
-        if let url = Bundle.main.url(forResource: name, withExtension: "png"),
-           let image = UIImage(contentsOfFile: url.path) {
+        if let image = UIImage(named: name) ?? Bundle.main.url(forResource: name, withExtension: "png").flatMap({ UIImage(contentsOfFile: $0.path) }) {
             Image(uiImage: image)
                 .resizable()
         } else {
@@ -569,13 +568,13 @@ struct ReminderMiniCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: reminder.hasReminded ? "bell.badge.fill" : "bell.fill")
+            Image(systemName: reminder.isUpcoming ? "bell.badge.fill" : "bell.fill")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Theme.hotPink)
                 .frame(width: 44, height: 44)
                 .background(Theme.hotPink.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.hasReminded ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
+                Text(reminder.isUpcoming ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Theme.text)
                 Text("《\(post.title)》\(post.deadline.shortDeadlineText)")
@@ -608,9 +607,9 @@ struct ReminderLargeCard: View {
                 Text("截团：\(post.deadline.fullDisplay)")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.subtext)
-                Text(reminder.hasReminded ? "即将截团" : "请留意截团时间")
+                Text(reminder.isUpcoming ? "即将截团" : "请留意截团时间")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(reminder.hasReminded ? Color.green : Theme.hotPink)
+                    .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.hotPink)
             }
             Spacer()
         }
