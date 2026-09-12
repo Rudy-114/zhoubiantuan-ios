@@ -8,6 +8,7 @@ import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
 import { requestHash, assertPostReplay } from "./idempotency.js";
+import { assertRevision, editPost, validateRoles } from "./contentEditing.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
@@ -522,9 +523,12 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
       const collection = collectionId
         ? (await query("SELECT * FROM group_collections WHERE id = $1 AND owner_id = $2 AND status = 'active'", [collectionId, req.user.id])).rows[0]
         : null;
+      if (!collection) throw badRequest("请选择自己已通过审核的合集");
+      const roles = validateRoles(req.body.unsoldRoles ?? []);
       const deadline = collection?.deadline || parseDate(req.body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
       const imageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.imageObjectKeys), ["post"]);
       const previewImageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.previewImageObjectKeys), ["post"]);
+      if (imageObjectKeys.length < 1 || imageObjectKeys.length > 16) throw badRequest("请选择 1 至 16 张产品图片");
       const reviewedImageKeys = [...new Set([...imageObjectKeys, ...previewImageObjectKeys])];
       await assertReadyUploads(req.user.id, reviewedImageKeys);
       const postSnapshot = postModerationSnapshot(req.body, collection, title);
@@ -539,6 +543,9 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["post-submission:" + postId]);
         const committed = (await client.query("SELECT * FROM posts WHERE id=$1", [postId])).rows[0];
         if (committed) return { post: assertPostReplay(committed, req.user.id, submissionHash), syncEvents: [], replayed: true };
+        const latestCollection = (await client.query("SELECT * FROM group_collections WHERE id=$1 FOR SHARE", [collectionId])).rows[0];
+        assertRevision(latestCollection, collection.revision);
+        if (latestCollection.status !== "active" || latestCollection.owner_id !== req.user.id) throw badRequest("合集当前不可用");
         let previousPost;
         if (replacingPostId) {
           previousPost = (await client.query("SELECT * FROM posts WHERE id=$1 AND author_id=$2 FOR UPDATE", [replacingPostId, req.user.id])).rows[0];
@@ -582,7 +589,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
             Number(req.body.imageAspect || 1.08),
             trimmedString(req.body.pingguAveragePrice),
             trimmedString(req.body.pingguNote),
-            JSON.stringify(Array.isArray(req.body.unsoldRoles) ? req.body.unsoldRoles : []),
+            JSON.stringify(roles),
             submissionHash
           ]
         );
@@ -618,6 +625,12 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
       next(error);
     }
   });
+
+  router.patch("/posts/:id", requireAuth, contentLimiter, asyncRoute(async (req, res) => {
+    const { post, moderation, syncEvents } = await editPost(req.user.id, req.params.id, req.body);
+    notifySyncEvents(syncEvents);
+    res.json({ post, moderation });
+  }));
 
   router.delete("/posts/:id", requireAuth, async (req, res, next) => {
     try {
@@ -1477,10 +1490,19 @@ async function assertReportTargetExists(targetType, targetId) {
 async function createCollection(userId, body) {
   const name = trimmedString(body.name);
   if (!name) throw badRequest("请填写合集名称");
+  const collectionId = trimmedString(body.id) || `col-${randomUUID()}`;
+  if (!/^col-[A-Za-z0-9_-]{1,120}$/.test(collectionId)) throw badRequest("合集编号无效");
+  const submissionHash = requestHash(body);
+  const assertReplay = row => {
+    if (row.owner_id !== userId || row.submission_hash !== submissionHash || row.status === 'deleted') {
+      const error = badRequest('提交编号已使用，请重新加载合集'); error.status = 409; throw error;
+    }
+    return { collection: collectionToClient(row, []), syncEvents: [] };
+  };
+  const existing = (await query('SELECT * FROM group_collections WHERE id=$1', [collectionId])).rows[0];
+  if (existing) return assertReplay(existing);
   await assertCollectionNameAvailable({ ownerId: userId, name });
   const deadline = parseDate(body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
-  const requestedId = trimmedString(body.id);
-  const collectionId = requestedId.startsWith("col-") ? requestedId : `col-${randomUUID()}`;
   const snapshot = collectionSnapshot(body, { name });
   const moderation = await reviewSubmission({
     targetType: "collection",
@@ -1489,9 +1511,13 @@ async function createCollection(userId, body) {
     text: publicContentModerationText(snapshot)
   });
   return withTransaction(async client => {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["collection-names:" + userId]);
+  const committed = (await client.query('SELECT * FROM group_collections WHERE id=$1', [collectionId])).rows[0];
+  if (committed) return assertReplay(committed);
+  await assertCollectionNameAvailable({ ownerId: userId, name, executor: client });
   const { rows } = await client.query(
-    `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status, submission_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING *`,
     [
       collectionId,
@@ -1503,7 +1529,8 @@ async function createCollection(userId, body) {
       snapshot.groupInfo,
       deadline,
       snapshot.defaultNote,
-      moderation.status
+      moderation.status,
+      submissionHash
     ]
   );
   if (moderation.status !== "active") {
@@ -1528,6 +1555,7 @@ async function updateCollection(userId, collectionId, body) {
     error.status = 404;
     throw error;
   }
+  assertRevision(current, body.revision);
   const name = trimmedString(body.name, current.name);
   if (!name) throw badRequest("请填写合集名称");
   await assertCollectionNameAvailable({ ownerId: userId, name, excludingId: collectionId });
@@ -1547,6 +1575,10 @@ async function updateCollection(userId, collectionId, body) {
     text: publicContentModerationText(snapshot)
   });
   return withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["collection-names:" + userId]);
+    const latest = (await client.query("SELECT * FROM group_collections WHERE id=$1 AND owner_id=$2 FOR UPDATE", [collectionId, userId])).rows[0];
+    assertRevision(latest, body.revision);
+    await assertCollectionNameAvailable({ ownerId: userId, name, excludingId: collectionId, executor: client });
     const { rows } = await client.query(
       `UPDATE group_collections
        SET name = $3,
@@ -1594,14 +1626,14 @@ async function updateCollection(userId, collectionId, body) {
   });
 }
 
-async function assertCollectionNameAvailable({ ownerId, name, excludingId = "" }) {
+async function assertCollectionNameAvailable({ ownerId, name, excludingId = "", executor = { query } }) {
   const params = [ownerId, name];
   let idClause = "";
   if (excludingId) {
     params.push(excludingId);
     idClause = "AND id <> $3";
   }
-  const { rows } = await query(
+  const { rows } = await executor.query(
     `SELECT id
      FROM group_collections
      WHERE owner_id = $1

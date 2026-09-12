@@ -763,219 +763,113 @@ struct GroupBuyInfoCard: View {
 struct PingguRoleAvailabilityCard: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isEditing = false
-    @State private var newRoleName = ""
-    @State private var newRoleQuantity = "1"
-    @State private var newRolePriceAdjustment = ""
+    @State private var isSaving = false
+    @State private var draftRoles: [UnsoldRole] = []
+    @State private var revision = 1
+    @State private var saveFailed = false
     let postID: String
 
     var body: some View {
         if let post = store.post(id: postID) {
-            let isOwner = post.authorID == store.currentUserID
-            let roles = isEditing ? post.unsoldRoles : store.availableRoles(for: postID)
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Label("未被购买角色", systemImage: "person.crop.rectangle.stack.fill")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Theme.text)
                     Spacer()
-                    if isOwner {
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                                isEditing.toggle()
-                            }
-                        } label: {
-                            Text(isEditing ? "完成" : "编辑")
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundStyle(post.groupType.accent)
+                    if post.authorID == store.currentUserID && post.status == .active {
+                        Button(isEditing ? "取消" : "编辑") {
+                            draftRoles = post.unsoldRoles
+                            revision = post.revision
+                            saveFailed = false
+                            isEditing.toggle()
                         }
-                        .buttonStyle(.plain)
+                        .disabled(isSaving)
                     }
                 }
-
-                if !post.pingguAveragePrice.isEmpty || !post.pingguNote.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !post.pingguAveragePrice.isEmpty {
-                            Text(post.pingguAveragePrice)
-                                .font(.system(size: 17, weight: .black))
-                                .foregroundStyle(post.groupType.accent)
-                        }
-                        if !post.pingguNote.isEmpty {
-                            Text(post.pingguNote)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Theme.subtext)
+                if !post.pingguAveragePrice.isEmpty { Text(post.pingguAveragePrice).font(.headline) }
+                if !post.pingguNote.isEmpty { Text(post.pingguNote).font(.subheadline).foregroundStyle(Theme.subtext) }
+                if isEditing {
+                    ForEach($draftRoles) { $role in
+                        EditableRoleRow(role: $role) { draftRoles.removeAll { $0.id == role.id } }
+                    }
+                    Button("添加角色", systemImage: "plus") {
+                        draftRoles.append(UnsoldRole(name: "", quantity: 1))
+                    }
+                    .disabled(draftRoles.count >= 64)
+                    if saveFailed {
+                        Text("草稿已保留。若有版本冲突，请重新加载后再编辑。")
+                            .font(.footnote).foregroundStyle(Theme.subtext)
+                        Button("重新加载最新库存") {
+                            draftRoles = post.unsoldRoles
+                            revision = post.revision
+                            saveFailed = false
                         }
                     }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(post.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-
-                if roles.isEmpty {
-                    Text(isEditing ? "还没有录入角色，添加后会出现在拼谷搜索里。" : "当前没有可购买角色。")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
+                    Button(isSaving ? "正在保存…" : "保存库存") {
+                        let session = store.authSessionVersion
+                        isSaving = true
+                        Task { @MainActor in
+                            guard store.isCurrentSession(session) else { return }
+                            let saved = await store.saveRoles(postID: postID, revision: revision, roles: draftRoles)
+                            guard store.isCurrentSession(session) else { return }
+                            isSaving = false
+                            saveFailed = !saved
+                            if saved { isEditing = false }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
                 } else {
-                    VStack(spacing: 8) {
-                        ForEach(roles) { role in
-                            if isEditing {
-                                EditableRoleRow(postID: postID, role: role)
-                            } else {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(role.name)
-                                            .font(.system(size: 16, weight: .bold))
-                                            .foregroundStyle(Theme.text)
-                                        if role.priceAdjustment != 0 {
-                                            Text("角色调价 \(role.priceAdjustmentText)")
-                                                .font(.system(size: 12, weight: .black))
-                                                .foregroundStyle(post.groupType.accent)
-                                        }
-                                    }
-                                    Spacer()
-                                    Text("(\(role.quantity))")
-                                        .font(.system(size: 16, weight: .black))
-                                        .foregroundStyle(post.groupType.accent)
-                                }
-                                .padding(12)
-                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    let roles = store.availableRoles(for: postID)
+                    if roles.isEmpty { Text("当前没有可购买角色。").foregroundStyle(Theme.muted) }
+                    ForEach(roles) { role in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(role.name).font(.headline)
+                                if role.priceAdjustment != 0 { Text("角色调价 \(role.priceAdjustmentText)").font(.caption).foregroundStyle(post.groupType.accent) }
                             }
+                            Spacer()
+                            Text("余量 \(role.quantity)").font(.headline).foregroundStyle(post.groupType.accent)
                         }
+                        .padding(12)
+                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
                     }
-                }
-
-                if isOwner && isEditing {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("添加角色")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Theme.subtext)
-                        HStack(spacing: 8) {
-                            TextField("角色名", text: $newRoleName)
-                                .foregroundStyle(Theme.text)
-                                .padding(12)
-                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
-                            TextField("数量", text: $newRoleQuantity)
-                                .keyboardType(.numberPad)
-                                .foregroundStyle(Theme.text)
-                                .frame(width: 66)
-                                .padding(12)
-                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
-                            TextField("调价", text: $newRolePriceAdjustment)
-                                .keyboardType(.numbersAndPunctuation)
-                                .foregroundStyle(Theme.text)
-                                .frame(width: 76)
-                                .padding(12)
-                                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
-                            Button {
-                                store.addUnsoldRole(postID: postID, name: newRoleName, quantity: Int(newRoleQuantity) ?? 1, priceAdjustment: parsePriceAdjustment(newRolePriceAdjustment))
-                                newRoleName = ""
-                                newRoleQuantity = "1"
-                                newRolePriceAdjustment = ""
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 17, weight: .black))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 44, height: 44)
-                                    .background(post.groupType.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                if !isOwner {
-                    Text("只有团长可维护角色余量。")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
                 }
             }
+            .foregroundStyle(Theme.text)
+            .tint(post.groupType.accent)
             .padding(16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8).stroke(post.groupType.accent.opacity(0.28), lineWidth: 1)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+            .disabled(isSaving)
+            .onChange(of: store.authSessionVersion) { _, _ in
+                isEditing = false
+                isSaving = false
+                draftRoles = []
             }
         }
     }
 }
 
 struct EditableRoleRow: View {
-    @EnvironmentObject private var store: MockAppStore
-    let postID: String
-    let role: UnsoldRole
-
-    var nameBinding: Binding<String> {
-        Binding(
-            get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name },
-            set: { newValue in
-                let quantity = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity
-                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
-                store.updateUnsoldRole(postID: postID, roleID: role.id, name: newValue, quantity: quantity, priceAdjustment: adjustment)
-            }
-        )
-    }
-
-    var quantityBinding: Binding<Int> {
-        Binding(
-            get: { store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.quantity ?? role.quantity },
-            set: { newValue in
-                let name = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.name ?? role.name
-                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
-                store.updateUnsoldRole(postID: postID, roleID: role.id, name: name, quantity: newValue, priceAdjustment: adjustment)
-            }
-        )
-    }
-
-    var adjustmentBinding: Binding<String> {
-        Binding(
-            get: {
-                let adjustment = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id })?.priceAdjustment ?? role.priceAdjustment
-                return formatPlainAmount(adjustment)
-            },
-            set: { newValue in
-                let current = store.post(id: postID)?.unsoldRoles.first(where: { $0.id == role.id }) ?? role
-                store.updateUnsoldRole(
-                    postID: postID,
-                    roleID: role.id,
-                    name: current.name,
-                    quantity: current.quantity,
-                    priceAdjustment: parsePriceAdjustment(newValue)
-                )
-            }
-        )
-    }
+    @Binding var role: UnsoldRole
+    var onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            TextField("角色名", text: nameBinding)
-                .foregroundStyle(Theme.text)
-                .padding(11)
-                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
-            Stepper(value: quantityBinding, in: 0...99) {
-                Text("\(quantityBinding.wrappedValue)")
-                    .font(.system(size: 16, weight: .black))
-                    .foregroundStyle(quantityBinding.wrappedValue > 0 ? Color(red: 0.25, green: 0.78, blue: 0.72) : Theme.muted)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                TextField("角色名", text: $role.name)
+                Button("删除", systemImage: "trash", action: onDelete).labelStyle(.iconOnly).tint(Theme.hotPink)
             }
-            .labelsHidden()
-            .frame(width: 100)
-            TextField("调价", text: adjustmentBinding)
-                .keyboardType(.numbersAndPunctuation)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Theme.text)
-                .frame(width: 72)
-                .padding(11)
-                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
-            Button {
-                store.removeUnsoldRole(postID: postID, roleID: role.id)
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
-                    .frame(width: 36, height: 36)
+            HStack {
+                Text("余量")
+                TextField("数量", value: $role.quantity, format: .number).keyboardType(.numberPad)
+                Text("调价 ¥")
+                TextField("调价", value: $role.priceAdjustment, format: .number).keyboardType(.numbersAndPunctuation)
             }
-            .buttonStyle(.plain)
+            .font(.subheadline)
         }
+        .textFieldStyle(.roundedBorder)
+        .padding(12)
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -67,6 +67,7 @@ struct GroupBuyPost: Identifiable, Hashable {
     var pingguAveragePrice: String = ""
     var pingguNote: String = ""
     var unsoldRoles: [UnsoldRole] = []
+    var revision: Int = 1
 
     var isEnded: Bool {
         deadline <= Date()
@@ -167,6 +168,7 @@ struct GroupCollection: Identifiable, Hashable {
     var postIDs: [String]
     var createdAt: Date
     var status: ContentStatus = .active
+    var revision: Int = 1
 
     var isEnded: Bool {
         deadline <= Date()

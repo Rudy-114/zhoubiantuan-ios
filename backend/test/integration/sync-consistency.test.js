@@ -80,7 +80,7 @@ test('collection hiding invalidates child visibility; nonempty collection deleti
   const post = await makePost(author, 'active', collection);
   assert.equal((await api.request(`/collections/${collection}`, { method: 'DELETE', token: author.token })).status, 409);
   const cursor = await getCurrentSyncCursor();
-  assert.equal((await api.request(`/collections/${collection}`, { method: 'PATCH', token: author.token, body: { name: '触发人工审核', wechat: 'test-contact' } })).status, 200);
+  assert.equal((await api.request(`/collections/${collection}`, { method: 'PATCH', token: author.token, body: { revision: 1, name: '触发人工审核', wechat: 'test-contact' } })).status, 200);
   const payload = await loadSyncPayload(reader.id, { cursor });
   assert.equal(payload.contentRefreshRequired, true);
   assert.ok(payload.removedCollectionIDs.includes(collection));

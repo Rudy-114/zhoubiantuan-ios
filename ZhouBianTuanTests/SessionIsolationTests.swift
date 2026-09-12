@@ -190,4 +190,46 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertTrue(store.posts.isEmpty)
         XCTAssertEqual(store.toastMessage, "Temporary failure")
     }
+
+    func testStockIsOnlyChangedAfterServerConfirmationAndConflictReloadsTheWinner() async throws {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        var post: [String: Any] = [
+            "id": "p-stock", "title": "Stock", "authorID": "A", "collectionID": "col-stock",
+            "imageNames": [], "groupType": "splitGoods", "categoryTags": [], "fandomTags": [],
+            "price": "10", "deposit": "", "deadline": "2026-12-01T00:00:00Z", "condition": "",
+            "isFormed": false, "description": "", "wechat": "contact", "qq": "", "groupInfo": "",
+            "externalLink": "", "createdAt": "2026-09-01T00:00:00Z", "likedCount": 0,
+            "favoriteCount": 0, "commentCount": 0, "reportCount": 0, "status": "active",
+            "imageAspect": 1.0, "pingguAveragePrice": "", "pingguNote": "", "revision": 1,
+            "unsoldRoles": [["id": "role-a", "name": "A", "quantity": 3, "priceAdjustment": 0]]
+        ]
+        store.posts = [try JSONDecoder().decode(BackendPost.self, from: JSONSerialization.data(withJSONObject: post)).localPost()]
+        let held = RequestSlot(), started = expectation(description: "Stock save in flight")
+        StubProtocol.handler = { request in held.set(request); started.fulfill() }
+        let edit = Task { await store.saveRoles(postID: "p-stock", revision: 1, roles: [UnsoldRole(id: "role-a", name: "A", quantity: 4)]) }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertEqual(store.posts.first?.unsoldRoles.first?.quantity, 3)
+        post["revision"] = 2
+        post["unsoldRoles"] = [["id": "role-a", "name": "A", "quantity": 4, "priceAdjustment": 0]]
+        held.take().reply(["post": post])
+        let saved = await edit.value
+        XCTAssertTrue(saved)
+        XCTAssertEqual(store.posts.first?.revision, 2)
+        XCTAssertEqual(store.posts.first?.unsoldRoles.first?.quantity, 4)
+
+        var latest = payload("A")
+        latest.removeValue(forKey: "token")
+        latest["posts"] = [post]
+        StubProtocol.handler = { request in
+            if request.request.httpMethod == "PATCH" { request.reply(["error": "Version conflict"], status: 409) }
+            else if request.request.url?.path.contains("blocked-users") == true { request.reply(["blockedUsers": []]) }
+            else { request.reply(latest) }
+        }
+        let conflict = await store.saveRoles(postID: "p-stock", revision: 1, roles: [UnsoldRole(id: "role-a", name: "A", quantity: 9)])
+        XCTAssertFalse(conflict)
+        XCTAssertEqual(store.posts.first?.unsoldRoles.first?.quantity, 4)
+        XCTAssertEqual(store.toastMessage, "Version conflict")
+    }
 }

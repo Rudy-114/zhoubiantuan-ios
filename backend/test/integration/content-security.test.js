@@ -117,7 +117,9 @@ test('feed, detail, bootstrap and interactions consistently exclude blocked or u
 
 test('publication rejects unverified upload keys and reviews every preview image', async () => {
   const user = await makeUser();
-  const base = { title: 'Normal post', description: 'Normal content', deadline: new Date(Date.now() + 86400000).toISOString() };
+  const collectionID = id('col');
+  await query("INSERT INTO group_collections(id,owner_id,name,deadline) VALUES($1,$2,'Upload collection',now()+interval '1 day')", [collectionID, user.id]);
+  const base = { collectionID, title: 'Normal post', description: 'Normal content', deadline: new Date(Date.now() + 86400000).toISOString() };
   let response = await api.request('/posts', { method: 'POST', token: user.token, body: { ...base, imageObjectKeys: [`post/${user.id}/arbitrary.jpg`] } });
   assert.equal(response.status, 400);
   const original = await uploaded(user), preview = await uploaded(user);

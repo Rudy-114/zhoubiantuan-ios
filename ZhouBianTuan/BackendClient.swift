@@ -190,6 +190,7 @@ struct BackendPost: Decodable {
     let pingguAveragePrice: String
     let pingguNote: String
     let unsoldRoles: [BackendRole]
+    let revision: Int?
 
     func localPost() -> GroupBuyPost {
         GroupBuyPost(
@@ -227,7 +228,8 @@ struct BackendPost: Decodable {
             imageAspect: imageAspect,
             pingguAveragePrice: pingguAveragePrice,
             pingguNote: pingguNote,
-            unsoldRoles: unsoldRoles.map { $0.localRole() }
+            unsoldRoles: unsoldRoles.map { $0.localRole() },
+            revision: revision ?? 1
         )
     }
 }
@@ -245,6 +247,7 @@ struct BackendCollection: Decodable {
     let postIDs: [String]
     let createdAt: String
     let status: String?
+    let revision: Int?
 
     func localCollection() -> GroupCollection {
         GroupCollection(
@@ -259,7 +262,8 @@ struct BackendCollection: Decodable {
             defaultNote: defaultNote,
             postIDs: postIDs,
             createdAt: BackendDateParser.date(from: createdAt),
-            status: ContentStatus.backendValue(status ?? "active")
+            status: ContentStatus.backendValue(status ?? "active"),
+            revision: revision ?? 1
         )
     }
 }
@@ -538,8 +542,8 @@ final class AliyunBackendClient {
         return try await request("/me", method: "PATCH", token: token, body: body)
     }
 
-    func createCollection(token: String, collection: GroupCollection) async throws {
-        let _: EmptyResponse = try await request("/collections", method: "POST", token: token, body: [
+    func createCollection(token: String, collection: GroupCollection) async throws -> BackendCollectionMutationResponse {
+        return try await request("/collections", method: "POST", token: token, body: [
             "id": collection.id,
             "name": collection.name,
             "wechat": collection.contactWechat,
@@ -554,6 +558,7 @@ final class AliyunBackendClient {
     @discardableResult
     func updateCollection(token: String, collection: GroupCollection) async throws -> BackendCollectionMutationResponse {
         try await request("/collections/\(collection.id)", method: "PATCH", token: token, body: [
+            "revision": collection.revision,
             "name": collection.name,
             "wechat": collection.contactWechat,
             "qq": collection.contactQQ,
@@ -562,6 +567,15 @@ final class AliyunBackendClient {
             "deadline": BackendDateParserString.string(from: collection.deadline),
             "defaultNote": collection.defaultNote
         ])
+    }
+
+    func editPost(token: String, postID: String, revision: Int, roles: [UnsoldRole]? = nil, collectionID: String? = nil) async throws -> BackendPostMutationResponse {
+        var body: [String: Any] = ["revision": revision]
+        if let roles {
+            body["unsoldRoles"] = roles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity, "priceAdjustment": $0.priceAdjustment] as [String: Any] }
+        }
+        if let collectionID { body["collectionID"] = collectionID }
+        return try await request("/posts/\(postID)", method: "PATCH", token: token, body: body)
     }
 
     func deleteCollection(token: String, collectionID: String) async throws {

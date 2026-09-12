@@ -695,6 +695,7 @@ final class MockAppStore: ObservableObject {
         var postsByID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
         var order = posts.map(\.id)
         for post in backendPosts {
+            if let current = postsByID[post.id], current.revision > post.revision { continue }
             if postsByID[post.id] == nil {
                 guard post.status != .deleted else { continue }
                 order.insert(post.id, at: 0)
@@ -709,6 +710,7 @@ final class MockAppStore: ObservableObject {
         var collectionsByID = Dictionary(uniqueKeysWithValues: collections.map { ($0.id, $0) })
         var order = collections.map(\.id)
         for collection in backendCollections {
+            if let current = collectionsByID[collection.id], current.revision > collection.revision { continue }
             if collectionsByID[collection.id] == nil {
                 guard collection.status != .deleted else { continue }
                 order.append(collection.id)
@@ -770,7 +772,7 @@ final class MockAppStore: ObservableObject {
         return thread
     }
 
-    private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String, UUID) async throws -> Void) {
+    private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = true, _ operation: @escaping (String, UUID) async throws -> Void) {
         guard isBackendEnabled, let backendToken else { return }
         runSessionTask { [self] session in
             do {
@@ -2203,7 +2205,9 @@ final class MockAppStore: ObservableObject {
     // MARK: - Collections and Posts
 
     @discardableResult
-    func createCollection(name: String, wechat: String, qq: String, groupNumber: String, groupInfo: String, deadline: Date, defaultNote: String) -> String? {
+    func createCollection(name: String, wechat: String, qq: String, groupNumber: String, groupInfo: String, deadline: Date, defaultNote: String, submissionID: String) async -> String? {
+        let session = authSessionVersion
+        guard requireLogin(prompt: "登录后才能创建合集") else { return nil }
         let trimmedName = name.trimmed
         guard !trimmedName.isEmpty else {
             showToast("请先填写合集名称")
@@ -2214,7 +2218,7 @@ final class MockAppStore: ObservableObject {
             return nil
         }
         let collection = GroupCollection(
-            id: "col-\(UUID().uuidString)",
+            id: submissionID,
             ownerID: currentUserID,
             name: trimmedName,
             contactWechat: wechat.trimmed,
@@ -2226,30 +2230,40 @@ final class MockAppStore: ObservableObject {
             postIDs: [],
             createdAt: Date()
         )
-        collections.insert(collection, at: 0)
-        showToast("已创建拼团合集")
-        runBackendMutation { [self] token, session in
-            try await self.backendClient.createCollection(token: token, collection: collection)
-            guard isCurrentSession(session) else { return }
+        do {
+            let saved: GroupCollection
+            if isBackendEnabled {
+                guard let backendToken else { return nil }
+                saved = try await backendClient.createCollection(token: backendToken, collection: collection).collection.localCollection()
+                guard isCurrentSession(session) else { return nil }
+            } else { saved = collection }
+            mergeCollections([saved])
+            showToast(saved.status == .active ? "已创建拼团合集" : "合集已提交审核")
+            return saved.id
+        } catch {
+            guard isCurrentSession(session) else { return nil }
+            showToast(error.localizedDescription)
+            return nil
         }
-        return collection.id
     }
 
-    func updateCollection(id: String, name: String, wechat: String, qq: String, groupNumber: String, groupInfo: String, deadline: Date, defaultNote: String) {
-        guard let index = collections.firstIndex(where: { $0.id == id && $0.ownerID == currentUserID }) else { return }
+    func updateCollection(id: String, revision: Int, name: String, wechat: String, qq: String, groupNumber: String, groupInfo: String, deadline: Date, defaultNote: String) async -> Bool {
+        let session = authSessionVersion
+        guard let index = collections.firstIndex(where: { $0.id == id && $0.ownerID == currentUserID }) else { return false }
         guard !name.trimmed.isEmpty else {
             showToast("请先填写合集名称")
-            return
+            return false
         }
         guard !wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty else {
             showToast("微信、QQ、QQ群号至少填写一个")
-            return
+            return false
         }
         guard !defaultNote.trimmed.isEmpty else {
             showToast("请填写默认说明")
-            return
+            return false
         }
         var updated = collections[index]
+        updated.revision = revision
         updated.name = name.trimmed
         updated.contactWechat = wechat.trimmed
         updated.contactQQ = qq.trimmed
@@ -2257,71 +2271,92 @@ final class MockAppStore: ObservableObject {
         updated.groupInfo = groupInfo.trimmed
         updated.deadline = deadline
         updated.defaultNote = defaultNote.trimmed.isEmpty ? "该合集内帖子共享联系方式、截团时间和默认说明。" : defaultNote.trimmed
-        collections[index] = updated
-        showToast("合集信息已保存")
-        if isBackendEnabled {
-            runSessionTask { [self] session in
-                guard let backendToken else { return }
-                do {
-                    let response = try await backendClient.updateCollection(token: backendToken, collection: updated)
-                    guard isCurrentSession(session) else { return }
-                    mergeCollections([response.collection.localCollection()])
-                    await syncFromBackend(reason: "collection.updated")
-                    guard isCurrentSession(session) else { return }
-                    showToast("合集信息已同步")
-                } catch {
-                    guard isCurrentSession(session) else { return }
-                    showToast(error.localizedDescription)
-                    await refreshFromBackend(silent: true)
-                    guard isCurrentSession(session) else { return }
+        do {
+            if isBackendEnabled {
+                guard let backendToken else { return false }
+                updated = try await backendClient.updateCollection(token: backendToken, collection: updated).collection.localCollection()
+                guard isCurrentSession(session) else { return false }
+            }
+            mergeCollections([updated])
+            showToast(updated.status == .active ? "合集信息已保存" : "合集修改已提交审核")
+            return true
+        } catch {
+            guard isCurrentSession(session) else { return false }
+            await refreshFromBackend(silent: true)
+            guard isCurrentSession(session) else { return false }
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    func deleteCollections(ids: Set<String>) async -> Bool {
+        let session = authSessionVersion
+        let ownedIDs = collections.filter { ids.contains($0.id) && $0.ownerID == currentUserID }.map(\.id)
+        guard !ownedIDs.isEmpty else { showToast("请选择要删除的合集"); return false }
+        do {
+            for id in ownedIDs {
+                if isBackendEnabled {
+                    guard let backendToken else { return false }
+                    try await backendClient.deleteCollection(token: backendToken, collectionID: id)
+                    guard isCurrentSession(session) else { return false }
+                } else if posts.contains(where: { $0.collectionID == id && $0.status != .deleted }) {
+                    showToast("请先移动或删除合集中的帖子")
+                    return false
                 }
+                collections.removeAll { $0.id == id }
             }
+            showToast("所选合集已删除")
+            return true
+        } catch {
+            guard isCurrentSession(session) else { return false }
+            showToast(error.localizedDescription)
+            return false
         }
     }
 
-    func deleteCollections(ids: Set<String>) {
-        let ownedIDs = Set(collections.filter { ids.contains($0.id) && $0.ownerID == currentUserID }.map(\.id))
-        guard !ownedIDs.isEmpty else {
-            showToast("请选择要删除的合集")
-            return
-        }
-        collections.removeAll { ownedIDs.contains($0.id) }
-        for index in posts.indices {
-            if let collectionID = posts[index].collectionID, ownedIDs.contains(collectionID) {
-                posts[index].collectionID = nil
-            }
-        }
-        showToast("已删除 \(ownedIDs.count) 个拼团合集")
-        runBackendMutation(refreshAfterFailure: true) { [self] token, session in
-            for collectionID in ownedIDs {
-                try await self.backendClient.deleteCollection(token: token, collectionID: collectionID)
-                guard isCurrentSession(session) else { return }
-            }
-        }
+    func addPost(_ postID: String, to collectionID: String) async -> Bool {
+        guard let post = post(id: postID), post.authorID == currentUserID,
+              let destination = collection(id: collectionID), destination.ownerID == currentUserID,
+              destination.status == .active else { showToast("请选择自己的可用合集"); return false }
+        return await savePostEdit(post: post, revision: post.revision, collectionID: collectionID)
     }
 
-    func addPost(_ postID: String, to collectionID: String) {
-        guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
-              let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
-        for index in collections.indices where collections[index].id != collectionID {
-            collections[index].postIDs.removeAll { $0 == postID }
+    func saveRoles(postID: String, revision: Int, roles: [UnsoldRole]) async -> Bool {
+        guard let post = post(id: postID), post.authorID == currentUserID else { return false }
+        guard roles.count <= 64, roles.allSatisfy({ !$0.name.trimmed.isEmpty && $0.name.count <= 80 && (0...999999).contains($0.quantity) && $0.priceAdjustment.isFinite && abs($0.priceAdjustment) <= 999999 }) else {
+            showToast("请检查角色名称、数量和调价")
+            return false
         }
-        if !collections[collectionIndex].postIDs.contains(postID) {
-            collections[collectionIndex].postIDs.append(postID)
-        }
-        posts[postIndex].collectionID = collectionID
-        showToast("已加入合集")
+        return await savePostEdit(post: post, revision: revision, roles: roles)
     }
 
-    func removePost(_ postID: String, from collectionID: String) {
-        guard let collectionIndex = collections.firstIndex(where: { $0.id == collectionID }),
-              let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
-        if posts[postIndex].collectionID == collectionID {
-            showToast("帖子必须保留在一个合集里")
-            return
+    private func savePostEdit(post: GroupBuyPost, revision: Int, roles: [UnsoldRole]? = nil, collectionID: String? = nil) async -> Bool {
+        let session = authSessionVersion
+        do {
+            var saved = post
+            if isBackendEnabled {
+                guard let backendToken else { return false }
+                saved = try await backendClient.editPost(token: backendToken, postID: post.id, revision: revision, roles: roles, collectionID: collectionID).post.localPost()
+                guard isCurrentSession(session) else { return false }
+            } else {
+                if let roles { saved.unsoldRoles = roles }
+                if let collectionID { saved.collectionID = collectionID }
+                saved.revision += 1
+            }
+            mergePosts([saved])
+            for index in collections.indices {
+                collections[index].postIDs.removeAll { $0 == post.id }
+                if collections[index].id == saved.collectionID { collections[index].postIDs.append(post.id) }
+            }
+            showToast(saved.status == .active ? "修改已保存" : "修改已提交审核")
+            return true
+        } catch {
+            guard isCurrentSession(session) else { return false }
+            await refreshFromBackend(silent: true)
+            guard isCurrentSession(session) else { return false }
+            showToast(error.localizedDescription)
+            return false
         }
-        collections[collectionIndex].postIDs.removeAll { $0 == postID }
-        showToast("已移出合集")
     }
 
     func deleteOwnPost(postID: String) {
@@ -2346,29 +2381,6 @@ final class MockAppStore: ObservableObject {
         for collectionIndex in collections.indices {
             collections[collectionIndex].postIDs.removeAll { $0 == postID }
         }
-    }
-
-    func addUnsoldRole(postID: String, name: String, quantity: Int, priceAdjustment: Double = 0) {
-        let trimmed = name.trimmed
-        guard !trimmed.isEmpty,
-              quantity > 0,
-              let index = posts.firstIndex(where: { $0.id == postID }) else { return }
-        posts[index].unsoldRoles.append(UnsoldRole(name: trimmed, quantity: quantity, priceAdjustment: priceAdjustment))
-        showToast("已更新角色余量")
-    }
-
-    func updateUnsoldRole(postID: String, roleID: String, name: String, quantity: Int, priceAdjustment: Double) {
-        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
-              let roleIndex = posts[postIndex].unsoldRoles.firstIndex(where: { $0.id == roleID }) else { return }
-        posts[postIndex].unsoldRoles[roleIndex].name = name.trimmed
-        posts[postIndex].unsoldRoles[roleIndex].quantity = max(0, quantity)
-        posts[postIndex].unsoldRoles[roleIndex].priceAdjustment = priceAdjustment
-    }
-
-    func removeUnsoldRole(postID: String, roleID: String) {
-        guard let postIndex = posts.firstIndex(where: { $0.id == postID }) else { return }
-        posts[postIndex].unsoldRoles.removeAll { $0.id == roleID }
-        showToast("已删除角色")
     }
 
     func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole], replacingPostID: String? = nil, submissionID: String = "p-\(UUID().uuidString)") async -> Bool {

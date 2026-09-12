@@ -34,6 +34,7 @@ export function postToClient(row, counts = {}) {
   const previewImageKeys = row.preview_image_object_keys || [];
   return {
     id: row.id,
+    revision: row.revision,
     title: row.title,
     imageNames: row.image_names || [],
     remoteImageURLs: imageKeys.map((key) => publicAssetUrl(key)),
@@ -74,6 +75,7 @@ export function postToClient(row, counts = {}) {
 export function collectionToClient(row, postIDs = []) {
   return {
     id: row.id,
+    revision: row.revision,
     ownerID: row.owner_id,
     name: row.name,
     contactWechat: row.contact_wechat || "",

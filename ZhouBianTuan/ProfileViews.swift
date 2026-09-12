@@ -780,6 +780,7 @@ struct ProfileCollectionsPanel: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isCreatingCollection = false
     @State private var isManaging = false
+    @State private var isDeletingCollections = false
     @State private var selectedCollectionIDs: Set<String> = []
     let ownerID: String
     let canManage: Bool
@@ -864,9 +865,15 @@ struct ProfileCollectionsPanel: View {
             if canManage && isManaging {
                 Button {
                     let ids = selectedCollectionIDs
-                    store.deleteCollections(ids: ids)
-                    selectedCollectionIDs.removeAll()
-                    isManaging = false
+                    let session = store.authSessionVersion
+                    isDeletingCollections = true
+                    Task { @MainActor in
+                        guard store.isCurrentSession(session) else { return }
+                        let deleted = await store.deleteCollections(ids: ids)
+                        guard store.isCurrentSession(session) else { return }
+                        isDeletingCollections = false
+                        if deleted { selectedCollectionIDs.removeAll(); isManaging = false }
+                    }
                 } label: {
                     Text(selectedCollectionIDs.isEmpty ? "选择要删除的合集" : "删除 \(selectedCollectionIDs.count) 个合集")
                         .font(.system(size: 16, weight: .black))
@@ -878,7 +885,7 @@ struct ProfileCollectionsPanel: View {
                         .padding(.top, 8)
                         .padding(.bottom, 8)
                 }
-                .disabled(selectedCollectionIDs.isEmpty)
+                .disabled(selectedCollectionIDs.isEmpty || isDeletingCollections)
                 .buttonStyle(.plain)
                 .background(.ultraThinMaterial)
             }
@@ -972,6 +979,10 @@ struct CreateCollectionSheet: View {
     @EnvironmentObject private var store: MockAppStore
     let editingCollection: GroupCollection?
     var onCreated: ((String) -> Void)? = nil
+    @State private var isSaving = false
+    @State private var saveFailed = false
+    @State private var submissionID = "col-\(UUID().uuidString)"
+    @State private var revision = 1
     @State private var name = ""
     @State private var wechat = ""
     @State private var qq = ""
@@ -982,6 +993,7 @@ struct CreateCollectionSheet: View {
 
     init(editingCollection: GroupCollection? = nil, onCreated: ((String) -> Void)? = nil) {
         self.editingCollection = editingCollection
+        _revision = State(initialValue: editingCollection?.revision ?? 1)
         self.onCreated = onCreated
         _name = State(initialValue: editingCollection?.name ?? "")
         _wechat = State(initialValue: editingCollection?.contactWechat ?? "")
@@ -1019,14 +1031,25 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
-                        if let editingCollection {
-                            store.updateCollection(id: editingCollection.id, name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
-                        } else if let collectionID = store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note) {
-                            onCreated?(collectionID)
+                        let session = store.authSessionVersion
+                        isSaving = true
+                        Task { @MainActor in
+                            guard store.isCurrentSession(session) else { return }
+                            let saved: Bool
+                            if let editingCollection {
+                                saved = await store.updateCollection(id: editingCollection.id, revision: revision, name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note)
+                            } else if let collectionID = await store.createCollection(name: name, wechat: wechat, qq: qq, groupNumber: groupNumber, groupInfo: groupInfo, deadline: deadline, defaultNote: note, submissionID: submissionID) {
+                                guard store.isCurrentSession(session) else { return }
+                                onCreated?(collectionID)
+                                saved = true
+                            } else { saved = false }
+                            guard store.isCurrentSession(session) else { return }
+                            isSaving = false
+                            saveFailed = !saved
+                            if saved { dismiss() }
                         }
-                        dismiss()
                     } label: {
-                        Text(canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段")
+                        Text(isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
                             .font(.system(size: 17, weight: .bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
@@ -1036,10 +1059,22 @@ struct CreateCollectionSheet: View {
                     .buttonStyle(.plain)
                     .disabled(!canCreate)
                     .padding(.top, 8)
+                    if saveFailed, let editingCollection {
+                        Button("重新加载最新合集信息") {
+                            guard let latest = store.collection(id: editingCollection.id) else { return }
+                            name = latest.name; wechat = latest.contactWechat; qq = latest.contactQQ
+                            groupNumber = latest.contactGroupNumber; groupInfo = latest.groupInfo
+                            deadline = latest.deadline; note = latest.defaultNote; revision = latest.revision
+                            saveFailed = false
+                        }
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
+            .disabled(isSaving)
+            .interactiveDismissDisabled(isSaving)
+            .onChange(of: store.authSessionVersion) { _, _ in dismiss() }
             .background(Theme.background.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1118,6 +1153,7 @@ struct CollectionDetailView: View {
 
 struct CollectionPostManager: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var isSaving = false
     let collection: GroupCollection
 
     var manageablePosts: [GroupBuyPost] {
@@ -1155,7 +1191,14 @@ struct CollectionPostManager: View {
                             .background(Theme.panelRaised, in: Capsule())
                     } else {
                         Button {
-                            store.addPost(post.id, to: collection.id)
+                            let session = store.authSessionVersion
+                            isSaving = true
+                            Task { @MainActor in
+                                guard store.isCurrentSession(session) else { return }
+                                _ = await store.addPost(post.id, to: collection.id)
+                                guard store.isCurrentSession(session) else { return }
+                                isSaving = false
+                            }
                         } label: {
                             Text("移入")
                                 .font(.system(size: 13, weight: .black))
@@ -1169,6 +1212,8 @@ struct CollectionPostManager: View {
                 }
             }
         }
+        .disabled(isSaving)
+        .onChange(of: store.authSessionVersion) { _, _ in isSaving = false }
         .padding(14)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
