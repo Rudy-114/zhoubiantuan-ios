@@ -50,12 +50,15 @@ class RealtimeHub {
 
   notifySyncEvents(events) {
     for (const event of events) {
-      this.sendToUser(event.userID, {
+      const payload = {
         type: "sync.available",
         cursor: event.id,
         eventType: event.eventType,
         threadID: event.threadID
-      });
+      };
+      if (event.userID == null) {
+        for (const userID of this.connectionsByUserID.keys()) this.sendToUser(userID, payload);
+      } else this.sendToUser(event.userID, payload);
     }
   }
 

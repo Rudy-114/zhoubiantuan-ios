@@ -39,8 +39,8 @@ export async function loadBootstrap(userId) {
       [userId]
     ),
     query("SELECT * FROM reports WHERE reporter_id = $1 ORDER BY created_at DESC LIMIT 100", [userId]),
-    query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
-    query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
+    query(`SELECT r.post_id FROM post_likes r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
+    query(`SELECT r.post_id FROM post_favorites r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
     query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId]),
     query(

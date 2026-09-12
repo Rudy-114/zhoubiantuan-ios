@@ -360,6 +360,12 @@ struct BackendCollectionMutationResponse: Decodable {
 struct BackendSyncPayload: Decodable {
     let nextCursor: String
     let hasMore: Bool
+    let resetRequired: Bool?
+    let contentRefreshRequired: Bool?
+    let removedUserIDs: [String]?
+    let removedPostIDs: [String]?
+    let removedCollectionIDs: [String]?
+    let removedCommentIDs: [String]?
     let events: [BackendSyncEvent]
     let users: [BackendUser]?
     let posts: [BackendPost]?

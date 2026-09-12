@@ -367,7 +367,15 @@ final class MockAppStore: ObservableObject {
         defer { isSyncingFromBackend = false }
         do {
             let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
+            if payload.resetRequired == true {
+                await refreshFromBackend(silent: true)
+                return
+            }
             applySyncPayload(payload)
+            if payload.contentRefreshRequired == true {
+                await refreshFromBackend(silent: true)
+                return
+            }
             if payload.hasMore {
                 Task { await syncFromBackend(reason: "\(reason).more") }
             }
@@ -559,6 +567,34 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applySyncPayload(_ payload: BackendSyncPayload) {
+        let removedUsers = Set(payload.removedUserIDs ?? [])
+        let removedCollections = Set(payload.removedCollectionIDs ?? []).union(collections.filter { removedUsers.contains($0.ownerID) }.map(\.id))
+        let removedPosts = Set(payload.removedPostIDs ?? []).union(posts.filter {
+            removedUsers.contains($0.authorID) || ($0.collectionID.map { removedCollections.contains($0) } ?? false)
+        }.map(\.id))
+        let removedComments = Set(payload.removedCommentIDs ?? [])
+        users.removeAll { removedUsers.contains($0.id) }
+        collections.removeAll { removedCollections.contains($0.id) }
+        posts.removeAll { removedPosts.contains($0.id) }
+        comments.removeAll { removedComments.contains($0.id) || removedPosts.contains($0.postID) || removedUsers.contains($0.authorID) }
+        if !removedUsers.isEmpty {
+            threads = threads.map { thread in
+                var updated = thread
+                updated.messages = thread.messages.map { message in
+                    guard removedUsers.contains(message.senderID) else { return message }
+                    var revoked = message
+                    revoked.isRevoked = true
+                    revoked.body = ""
+                    revoked.imageData = nil
+                    revoked.remoteImageURL = ""
+                    return revoked
+                }
+                return updated
+            }
+        }
+        likedPostIDs.subtract(removedPosts)
+        favoritePostIDs.subtract(removedPosts)
+        followedUserIDs.subtract(removedUsers)
         mergeUsers(payload.users?.map { $0.localUser() } ?? [])
         mergePosts(payload.posts?.map { $0.localPost() } ?? [])
         mergeCollections(payload.collections?.map { $0.localCollection() } ?? [])
@@ -701,7 +737,7 @@ final class MockAppStore: ObservableObject {
     // MARK: - Queries
 
     var activePosts: [GroupBuyPost] {
-        posts.filter { $0.status == .active && canShowContent(from: $0.authorID) }
+        posts.filter { $0.status == .active && post(id: $0.id) != nil }
     }
 
     func profilePosts(userID: String) -> [GroupBuyPost] {

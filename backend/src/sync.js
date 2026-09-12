@@ -1,8 +1,9 @@
-import { query } from "./db.js";
+import { query, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
+import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
 
 const DEFAULT_SYNC_LIMIT = 100;
 const MAX_SYNC_LIMIT = 200;
@@ -10,14 +11,17 @@ const SYNC_EVENT_RETENTION_DAYS = 7;
 const SYNC_EVENT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 export async function getCurrentSyncCursor(client = { query }) {
-  const { rows } = await client.query("SELECT COALESCE(MAX(id), 0)::text AS cursor FROM sync_events");
+  const { rows } = await client.query("SELECT cursor::text FROM sync_state WHERE singleton");
   return rows[0]?.cursor || "0";
 }
 
 export async function createSyncEvent(client, { userId, eventType, entityType, entityId, threadId = null }) {
+  // Allocate only after business writes; callers must not acquire more business
+  // row locks after publishing events. The counter lock serializes commit order.
   const { rows } = await client.query(
-    `INSERT INTO sync_events (user_id, event_type, entity_type, entity_id, thread_id)
-     VALUES ($1, $2, $3, $4, $5)
+    `WITH allocated AS (UPDATE sync_state SET cursor = cursor + 1 WHERE singleton RETURNING cursor)
+     INSERT INTO sync_events (id, user_id, event_type, entity_type, entity_id, thread_id)
+     SELECT cursor, $1, $2, $3, $4, $5 FROM allocated
      RETURNING id::text, user_id, event_type, entity_type, entity_id, thread_id, created_at`,
     [userId, eventType, entityType, entityId, threadId]
   );
@@ -30,7 +34,7 @@ export async function createThreadSyncEvents(client, { userIds, eventType, entit
 
 export async function createSyncEventsForUsers(client, { userIds, eventType, entityType, entityId, threadId = null }) {
   const events = [];
-  for (const userId of [...new Set(userIds.filter(Boolean))]) {
+  for (const userId of [...new Set(userIds.filter(value => value === null || Boolean(value)))]) {
     events.push(await createSyncEvent(client, { userId, eventType, entityType, entityId, threadId }));
   }
   return events;
@@ -39,18 +43,26 @@ export async function createSyncEventsForUsers(client, { userIds, eventType, ent
 export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   const safeCursor = normalizeCursor(cursor);
   const safeLimit = normalizeLimit(limit);
-  const eventsResult = await query(
-    `SELECT id::text, user_id, event_type, entity_type, entity_id, thread_id, created_at
-     FROM sync_events
-     WHERE user_id = $1 AND id > $2::bigint
-     ORDER BY id ASC
-     LIMIT $3`,
+  // State and events share a single MVCC snapshot, including concurrent pruning.
+  const snapshot = await query(
+    `SELECT s.cursor::text AS current_cursor, s.pruned_through::text, e.*
+     FROM sync_state s LEFT JOIN LATERAL (
+       SELECT id::text, user_id, event_type, entity_type, entity_id, thread_id, created_at
+       FROM sync_events WHERE (user_id = $1 OR user_id IS NULL) AND id > $2::bigint
+       ORDER BY sync_events.id ASC LIMIT $3
+     ) e ON true WHERE s.singleton ORDER BY e.id::bigint ASC`,
     [userId, safeCursor, safeLimit + 1]
   );
+  const state = snapshot.rows[0];
+  if (BigInt(safeCursor) < BigInt(state.pruned_through) || BigInt(safeCursor) > BigInt(state.current_cursor)) {
+    return { nextCursor: state.current_cursor, hasMore: false, resetRequired: true, events: [], messageThreads: [], unreadMessageCount: 0 };
+  }
+  const eventsResult = { rows: snapshot.rows.filter(row => row.id != null) };
   const rows = eventsResult.rows.slice(0, safeLimit);
   const hasMore = eventsResult.rows.length > safeLimit;
   const events = rows.map(syncEventToClient);
-  const nextCursor = rows.length ? rows[rows.length - 1].id : safeCursor;
+  const nextCursor = rows.length ? rows[rows.length - 1].id : state.current_cursor;
+  if (!rows.length) return { nextCursor, hasMore: false, events: [], messageThreads: [], unreadMessageCount: 0 };
   const threadIds = rows.map((row) => row.thread_id).filter(Boolean);
   const commentIds = unique(rows.filter((row) => row.entity_type === "comment").map((row) => row.entity_id));
   const initialPostIds = unique(rows.filter((row) => row.entity_type === "post").map((row) => row.entity_id));
@@ -59,9 +71,9 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
 
   const [messageThreads, unreadMessageCount, comments, relationships] = await Promise.all([
     loadMessageThreadsForUser({ query }, threadIds, userId),
-    loadUnreadMessageCount(userId),
+    threadIds.length ? loadUnreadMessageCount(userId) : 0,
     loadCommentsForSync(userId, commentIds),
-    loadRelationshipState(userId)
+    rows.some(row => row.entity_type === "user" || /liked|favorit|follow|block/.test(row.event_type)) ? loadRelationshipState(userId) : {}
   ]);
   const postIds = unique([...initialPostIds, ...comments.map((comment) => comment.postID)]);
   const posts = await loadPostsForSync(userId, postIds);
@@ -69,6 +81,8 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   const collections = await loadCollectionsForSync(userId, collectionIds);
   const userIds = unique([
     ...initialUserIds,
+    ...messageThreads.flatMap(thread => [thread.buyerUserID, thread.publisherUserID]),
+    ...messageThreads.flatMap(thread => thread.messages.map(message => message.senderID)),
     ...posts.map((post) => post.authorID),
     ...comments.map((comment) => comment.authorID),
     ...collections.map((collection) => collection.ownerID)
@@ -80,9 +94,14 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
     hasMore,
     events,
     users,
+    removedUserIDs: initialUserIds.filter(id => !users.some(user => user.id === id)),
     posts,
+    removedPostIDs: postIds.filter(id => !posts.some(post => post.id === id)),
     collections,
+    removedCollectionIDs: collectionIds.filter(id => !collections.some(collection => collection.id === id)),
     comments,
+    removedCommentIDs: commentIds.filter(id => !comments.some(comment => comment.id === id)),
+    contentRefreshRequired: rows.some(row => row.entity_type === "collection" || ["user.blocked", "user.unblocked", "user.deleted"].includes(row.event_type)),
     messageThreads,
     unreadMessageCount,
     ...relationships
@@ -91,7 +110,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
 
 function normalizeCursor(value) {
   const text = String(value ?? "0").trim();
-  if (!/^\d+$/.test(text)) return "0";
+  if (!/^\d{1,19}$/.test(text) || BigInt(text) > 9223372036854775807n) return "0";
   return text;
 }
 
@@ -150,10 +169,7 @@ async function loadPostsForSync(userId, postIds) {
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM posts p
       WHERE p.id = ANY($2::text[])
-        AND (
-          p.status IN ('active', 'deleted')
-          OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
-        )
+        AND ${visiblePostSQL("p", "$1", true)}
       ORDER BY p.created_at DESC`,
     [userId, ids]
   );
@@ -168,14 +184,9 @@ async function loadCollectionsForSync(userId, collectionIds) {
     `SELECT c.*,
         COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
       FROM group_collections c
-      LEFT JOIN posts p ON p.collection_id = c.id AND (
-        p.status = 'active' OR (p.author_id = $1 AND p.status IN ('pending', 'review', 'rejected', 'hidden', 'removed'))
-      )
+      LEFT JOIN posts p ON p.collection_id = c.id AND ${visiblePostSQL("p", "$1", true)}
       WHERE c.id = ANY($2::text[])
-        AND (
-          c.status = 'active'
-          OR (c.owner_id = $1 AND c.status IN ('pending', 'review', 'rejected'))
-        )
+        AND ${visibleCollectionSQL("c", "$1", true)}
       GROUP BY c.id
       ORDER BY c.created_at DESC`,
     [userId, ids]
@@ -192,10 +203,7 @@ async function loadCommentsForSync(userId, commentIds) {
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'comment' AND mr.target_id = cm.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM comments cm
       WHERE cm.id = ANY($2::text[])
-        AND (
-          cm.status IN ('active', 'deleted')
-          OR (cm.author_id = $1 AND cm.status IN ('pending', 'review', 'rejected'))
-        )
+        AND ${visibleCommentSQL("cm", "$1", true)}
       ORDER BY cm.created_at ASC`,
     [userId, ids]
   );
@@ -204,8 +212,8 @@ async function loadCommentsForSync(userId, commentIds) {
 
 async function loadRelationshipState(userId) {
   const [likedResult, favoriteResult, followedResult, followsResult, blockedResult, blockedByResult] = await Promise.all([
-    query("SELECT post_id FROM post_likes WHERE user_id = $1", [userId]),
-    query("SELECT post_id FROM post_favorites WHERE user_id = $1", [userId]),
+    query(`SELECT r.post_id FROM post_likes r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
+    query(`SELECT r.post_id FROM post_favorites r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
     query("SELECT follower_id, following_id FROM follows WHERE follower_id = $1 OR following_id = $1", [userId]),
     query("SELECT blocked_id FROM user_blocks WHERE blocker_id = $1", [userId]),
@@ -246,8 +254,15 @@ function syncEventToClient(row) {
 
 export async function pruneOldSyncEvents(retentionDays = SYNC_EVENT_RETENTION_DAYS) {
   const days = Math.max(1, Number(retentionDays) || SYNC_EVENT_RETENTION_DAYS);
-  const { rowCount } = await query("DELETE FROM sync_events WHERE created_at < now() - ($1::text)::interval", [`${days} days`]);
-  return rowCount;
+  return withTransaction(async client => {
+    // Lock the counter first, then prune. No publisher can allocate during this transaction.
+    await client.query("SELECT cursor FROM sync_state WHERE singleton FOR UPDATE");
+    const { rows } = await client.query(`WITH removed AS (
+      DELETE FROM sync_events WHERE created_at < now() - ($1::text)::interval RETURNING id
+    ) SELECT count(*)::int AS count, COALESCE(max(id), 0)::text AS last FROM removed`, [`${days} days`]);
+    await client.query("UPDATE sync_state SET pruned_through = GREATEST(pruned_through, $1::bigint) WHERE singleton", [rows[0].last]);
+    return rows[0].count;
+  });
 }
 
 export function startSyncEventPruner({ intervalMs = SYNC_EVENT_PRUNE_INTERVAL_MS } = {}) {

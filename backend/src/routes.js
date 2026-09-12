@@ -12,7 +12,7 @@ import { collectionToClient, commentToClient, moderationReviewToClient, postToCl
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
-import { deleteObjects, objectStorage as defaultObjectStorage } from "./oss.js";
+import { objectStorage as defaultObjectStorage } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
@@ -205,7 +205,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   router.delete("/me", requireAuth, async (req, res, next) => {
     try {
       const userId = req.user.id;
-      const objectKeys = await withTransaction(async (client) => {
+      const { objectKeys, syncEvents } = await withTransaction(async (client) => {
         // Collect this user's OSS object keys before scrubbing, for cleanup.
         const ownImages = await client.query(
           "SELECT avatar_object_key, background_object_key FROM users WHERE id = $1",
@@ -248,11 +248,14 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
         await client.query("DELETE FROM post_favorites WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1", [userId]);
 
-        return keys;
+        await client.query("UPDATE direct_messages SET body = '', image_object_key = NULL, revoked_at = COALESCE(revoked_at, now()) WHERE sender_id = $1", [userId]);
+        const syncEvents = await createSyncEventsForUsers(client, { userIds: [null], eventType: "user.deleted", entityType: "user", entityId: userId });
+        return { objectKeys: keys, syncEvents };
       });
 
       // Best-effort OSS cleanup outside the transaction; never block deletion on it.
-      deleteObjects(objectKeys).catch(() => {});
+      void (async () => { for (const key of objectKeys) { try { await objectStorage.removeImage(key); } catch { /* Retry through operations if needed. */ } } })();
+      notifySyncEvents(syncEvents);
       logger.info("account.deleted", { userID: userId, objectKeys: objectKeys.length });
       res.status(204).end();
     } catch (error) {
@@ -322,7 +325,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
         ? await reviewSubmission({ targetType: "profileBackground", targetId: req.user.id, ownerId: req.user.id, imageObjectKeys: [backgroundObjectKey] })
         : null;
 
-      const user = await withTransaction(async (client) => {
+      const { user, syncEvents } = await withTransaction(async (client) => {
         await assertReadyUploads(req.user.id, profileKeys, client, { retainKeys: retainedProfileKeys, markReferenced: true });
         const applyText = textResult.status === "active";
         const applyAvatar = !avatarResult || avatarResult.status === "active";
@@ -381,8 +384,10 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
             snapshot: { backgroundObjectKey, backgroundImageName }
           });
         }
-        return rows[0];
+        const syncEvents = await createSyncEventsForUsers(client, { userIds: [req.user.id, null], eventType: "user.updated", entityType: "user", entityId: req.user.id });
+        return { user: rows[0], syncEvents };
       });
+      notifySyncEvents(syncEvents);
       res.json({ user: userToClient(user, {}, req.user.id), moderation: moderationResponse([textResult, avatarResult, backgroundResult].filter(Boolean)) });
     } catch (error) {
       next(error);
@@ -458,7 +463,8 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
 
   router.post("/collections", requireAuth, contentLimiter, async (req, res, next) => {
     try {
-      const collection = await createCollection(req.user.id, req.body);
+      const { collection, syncEvents } = await createCollection(req.user.id, req.body);
+      notifySyncEvents(syncEvents);
       res.status(201).json({ collection });
     } catch (error) {
       next(error);
@@ -480,8 +486,17 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
 
   router.delete("/collections/:id", requireAuth, async (req, res, next) => {
     try {
-      const { rowCount } = await query("DELETE FROM group_collections WHERE id = $1 AND owner_id = $2", [req.params.id, req.user.id]);
-      if (!rowCount) return res.status(404).json({ error: "合集不存在" });
+      const syncEvents = await withTransaction(async client => {
+        const current = (await client.query("SELECT id FROM group_collections WHERE id=$1 AND owner_id=$2 AND status <> 'deleted' FOR UPDATE", [req.params.id, req.user.id])).rows[0];
+        if (!current) return null;
+        if ((await client.query("SELECT 1 FROM posts WHERE collection_id=$1 AND status <> 'deleted' LIMIT 1", [req.params.id])).rows.length) {
+          const error = badRequest("请先移动或删除合集中的帖子"); error.status = 409; throw error;
+        }
+        await client.query("UPDATE group_collections SET status='deleted', updated_at=now() WHERE id=$1", [req.params.id]);
+        return createSyncEventsForUsers(client, { userIds: [req.user.id, null], eventType: "collection.deleted", entityType: "collection", entityId: req.params.id });
+      });
+      if (!syncEvents) return res.status(404).json({ error: "合集不存在" });
+      notifySyncEvents(syncEvents);
       res.status(204).end();
     } catch (error) {
       next(error);
@@ -585,12 +600,14 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   router.delete("/posts/:id", requireAuth, async (req, res, next) => {
     try {
       const syncEvents = await withTransaction(async (client) => {
+        const existing = (await client.query("SELECT status FROM posts WHERE id=$1 AND author_id=$2 FOR UPDATE", [req.params.id, req.user.id])).rows[0];
+        if (!existing) return null;
         const { rows } = await client.query(
           "UPDATE posts SET status = 'deleted', updated_at = now() WHERE id = $1 AND author_id = $2 RETURNING id, author_id",
           [req.params.id, req.user.id]
         );
         if (!rows[0]) return null;
-        const audience = uniqueIds([req.user.id, rows[0].author_id]);
+        const audience = [...uniqueIds([req.user.id, rows[0].author_id]), ...(["active", "hidden", "removed"].includes(existing.status) ? [null] : [])];
         return createSyncEventsForUsers(client, {
           userIds: audience,
           eventType: "post.deleted",
@@ -678,7 +695,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           [req.params.id, req.user.id]
         );
         if (!rows[0]) return null;
-        const audience = uniqueIds([req.user.id, rows[0].author_id, rows[0].post_author_id]);
+        const audience = [...uniqueIds([req.user.id, rows[0].author_id, rows[0].post_author_id]), null];
         return createSyncEventsForUsers(client, {
           userIds: audience,
           eventType: "comment.deleted",
@@ -1124,7 +1141,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     try {
       const decision = moderationDecision(req.body.decision);
       const adminReason = trimmedString(req.body.reason);
-      const review = await withTransaction(async (client) => {
+      const { review, syncEvents } = await withTransaction(async (client) => {
         const selected = await client.query("SELECT * FROM moderation_reviews WHERE id = $1 FOR UPDATE", [req.params.id]);
         const row = selected.rows[0];
         if (!row) {
@@ -1132,6 +1149,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           error.status = 404;
           throw error;
         }
+        await assertReviewCurrent(client, row, decision);
         await applyModerationDecision(client, row, decision);
         const updated = await client.query(
           `UPDATE moderation_reviews
@@ -1141,8 +1159,12 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
            RETURNING *`,
           [row.id, decision.reviewStatus, decision.decision, adminReason, req.user.id]
         );
-        return updated.rows[0];
+        const entityType = ["post", "comment", "collection"].includes(row.target_type) ? row.target_type : "user";
+        const syncEvents = await createSyncEventsForUsers(client, { userIds: [row.owner_id, null], eventType: entityType + ".moderated", entityType,
+          entityId: entityType === "user" ? row.owner_id : row.target_id });
+        return { review: updated.rows[0], syncEvents };
       });
+      notifySyncEvents(syncEvents);
       res.json({ review: moderationReviewToClient(review) });
     } catch (error) {
       next(error);
@@ -1269,8 +1291,8 @@ async function authPayload(user) {
   };
 }
 
-async function syncAudienceForPublicContent(_client, seedUserIds, _shouldBroadcast) {
-  return uniqueIds(seedUserIds);
+async function syncAudienceForPublicContent(_client, seedUserIds, shouldBroadcast) {
+  return [...uniqueIds(seedUserIds), ...(shouldBroadcast ? [null] : [])];
 }
 
 async function setPostReaction({ userId, postId, table, eventType, enabled }) {
@@ -1444,7 +1466,8 @@ async function createCollection(userId, body) {
     ownerId: userId,
     text: publicContentModerationText(snapshot)
   });
-  const { rows } = await query(
+  return withTransaction(async client => {
+  const { rows } = await client.query(
     `INSERT INTO group_collections (id, owner_id, name, contact_wechat, contact_qq, contact_group_number, group_info, deadline, default_note, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
@@ -1462,7 +1485,7 @@ async function createCollection(userId, body) {
     ]
   );
   if (moderation.status !== "active") {
-    await createModerationReview(null, {
+    await createModerationReview(client, {
       targetType: "collection",
       targetId: collectionId,
       ownerId: userId,
@@ -1471,7 +1494,9 @@ async function createCollection(userId, body) {
       snapshot
     });
   }
-  return collectionToClient(rows[0], []);
+  const syncEvents = await createSyncEventsForUsers(client, { userIds: [userId, ...(moderation.status === "active" ? [null] : [])], eventType: "collection.created", entityType: "collection", entityId: collectionId });
+  return { collection: collectionToClient(rows[0], []), syncEvents };
+  });
 }
 
 async function updateCollection(userId, collectionId, body) {
@@ -1538,7 +1563,7 @@ async function updateCollection(userId, collectionId, body) {
     }
     const postIds = await collectionPostIds(client, collectionId, userId);
     const syncEvents = await createSyncEventsForUsers(client, {
-      userIds: [userId],
+      userIds: [userId, null],
       eventType: "collection.updated",
       entityType: "collection",
       entityId: collectionId
@@ -1658,6 +1683,19 @@ function moderationDecision(value) {
     return { decision, reviewStatus: "ignored", targetStatus: null };
   default:
     throw badRequest("审核处理动作无效");
+  }
+}
+
+async function assertReviewCurrent(client, review, decision) {
+  if (decision.decision === "ignore") return;
+  const table = ({ post: "posts", comment: "comments", collection: "group_collections" })[review.target_type] || "users";
+  const targetId = table === "users" ? review.owner_id : review.target_id;
+  const target = (await client.query(`SELECT *, ${table === "comments" ? "false" : "updated_at > (SELECT created_at FROM moderation_reviews WHERE id=$2)"} AS stale FROM ${table} WHERE id=$1 FOR UPDATE`, table === "comments" ? [targetId] : [targetId, review.id])).rows[0];
+  if (!target || target.status === "deleted" || target.deleted_at) {
+    const error = badRequest("内容已删除，无法继续审核"); error.status = 409; throw error;
+  }
+  if (decision.decision === "approve" && target.stale) {
+    const error = badRequest("内容已变更，请刷新后审核最新版本"); error.status = 409; throw error;
   }
 }
 
