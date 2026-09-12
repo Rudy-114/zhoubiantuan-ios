@@ -16,6 +16,7 @@ struct PostDetailView: View {
 
     var body: some View {
         detailBody
+            .task(id: "\(store.authSessionVersion)-\(postID)") { await store.loadPostDetail(postID) }
             .navigationDestination(isPresented: $isAuthorProfilePresented) {
                 if let authorProfileUserID {
                     UserProfileView(userID: authorProfileUserID)
@@ -153,8 +154,13 @@ struct PostDetailView: View {
         } else if store.isPostHiddenByBlock(id: postID) {
             hiddenByBlockBody
         } else {
-            ContentUnavailableView("内容不存在", systemImage: "exclamationmark.triangle", description: Text("这条团购可能已下架或被隐藏。"))
-                .background(Theme.background)
+            VStack(spacing: 16) {
+                if store.postDetailRequests[postID] != nil { ProgressView("正在加载内容…") }
+                else {
+                    ContentUnavailableView("暂时无法显示", systemImage: "exclamationmark.triangle", description: Text(store.postDetailErrors[postID] ?? "这条团购可能已下架或被隐藏。"))
+                    Button("重新加载") { Task { await store.loadPostDetail(postID) } }
+                }
+            }.background(Theme.background)
         }
     }
 
@@ -997,10 +1003,10 @@ struct CommentSection: View {
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) { ContentPageFooter(query: .comments(postID)) }
         .padding(.bottom, 80)
     }
 }
-
 struct CommentRow: View {
     @EnvironmentObject private var store: MockAppStore
     let comment: Comment

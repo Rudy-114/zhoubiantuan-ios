@@ -10,6 +10,7 @@ import { logger } from "./logger.js";
 import { requestHash, assertPostReplay } from "./idempotency.js";
 import { assertRevision, editPost, validateRoles } from "./contentEditing.js";
 import { submitReport, listReports, decideReport } from "./reports.js";
+import { postsPage, postDetail, collectionsPage, commentsPage, usersPage } from "./contentPages.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
@@ -397,72 +398,21 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.get("/feed", optionalAuth, async (req, res, next) => {
-    try {
-      const limit = boundedFeedLimit(req.query.limit);
-      const { rows: postRows } = await query(
-        `SELECT p.*
-        FROM posts p
-        WHERE ${visiblePostSQL("p", "$2")}
-        ORDER BY p.created_at DESC
-        LIMIT $1`,
-        [limit, req.user?.id || ""]
-      );
-      const postsWithCounts = await attachPostCounts(postRows);
-      const authorIds = uniqueIds(postsWithCounts.map((row) => row.author_id));
-      const collectionIds = uniqueIds(postsWithCounts.map((row) => row.collection_id));
-      const [usersResult, collectionsResult] = await Promise.all([
-        authorIds.length
-          ? query(
-              `SELECT u.*,
-                (SELECT count(*) FROM follows f WHERE f.follower_id = u.id) AS following_count,
-                (SELECT count(*) FROM follows f WHERE f.following_id = u.id) AS followers_count,
-                (SELECT count(*) FROM posts p WHERE p.author_id = u.id AND p.status = 'active') AS post_count
-              FROM users u
-              WHERE u.id = ANY($1::text[])
-                AND u.deleted_at IS NULL
-                AND u.status = 'active'`,
-              [authorIds]
-            )
-          : { rows: [] },
-        collectionIds.length
-          ? query(
-              `SELECT c.*,
-                COALESCE(array_agg(p.id ORDER BY p.created_at DESC) FILTER (WHERE p.id IS NOT NULL), ARRAY[]::text[]) AS post_ids
-              FROM group_collections c
-              LEFT JOIN posts p ON p.collection_id = c.id AND p.status = 'active'
-              WHERE c.id = ANY($1::text[])
-                AND c.status = 'active'
-              GROUP BY c.id`,
-              [collectionIds]
-            )
-          : { rows: [] }
-      ]);
-      res.json({
-        users: usersResult.rows.map((row) => userToClient(row, row)),
-        posts: postsWithCounts.map((row) => postToClient(row, row)),
-        collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids))
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  router.get("/posts/:id", optionalAuth, async (req, res, next) => {
-    try {
-      const { rows } = await query(
-        `SELECT p.*
-        FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2", true)}`,
-        [req.params.id, req.user?.id || ""]
-      );
-      if (!rows[0]) return res.status(404).json({ error: "帖子不存在" });
-      const [post] = await attachPostCounts([rows[0]]);
-      const comments = await query(`SELECT cm.* FROM comments cm WHERE cm.post_id = $1 AND ${visibleCommentSQL("cm", "$2", true)} ORDER BY cm.created_at ASC`, [req.params.id, req.user?.id || ""]);
-      res.json({ post: postToClient(post, post), comments: comments.rows.map(commentToClient) });
-    } catch (error) {
-      next(error);
-    }
-  });
+  router.get("/feed", optionalAuth, asyncRoute(async (req, res) => {
+    res.json(await postsPage(req.user?.id || "", req.query));
+  }));
+  router.get("/collections", optionalAuth, asyncRoute(async (req, res) => {
+    res.json(await collectionsPage(req.user?.id || "", req.query));
+  }));
+  router.get("/users", optionalAuth, asyncRoute(async (req, res) => {
+    res.json(await usersPage(req.user?.id || "", req.query));
+  }));
+  router.get("/posts/:id/comments", optionalAuth, asyncRoute(async (req, res) => {
+    res.json(await commentsPage(req.params.id, req.user?.id || "", req.query));
+  }));
+  router.get("/posts/:id", optionalAuth, asyncRoute(async (req, res) => {
+    res.json(await postDetail(req.params.id, req.user?.id || ""));
+  }));
 
   router.post("/collections", requireAuth, contentLimiter, async (req, res, next) => {
     try {

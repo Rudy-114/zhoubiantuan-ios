@@ -250,6 +250,7 @@ struct BackendCollection: Decodable {
     let createdAt: String
     let status: String?
     let revision: Int?
+    let postCount: Int?
 
     func localCollection() -> GroupCollection {
         GroupCollection(
@@ -265,7 +266,8 @@ struct BackendCollection: Decodable {
             postIDs: postIDs,
             createdAt: BackendDateParser.date(from: createdAt),
             status: ContentStatus.backendValue(status ?? "active"),
-            revision: revision ?? 1
+            revision: revision ?? 1,
+            postCount: postCount
         )
     }
 }
@@ -780,7 +782,7 @@ final class AliyunBackendClient {
         return keys
     }
 
-    private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
+    func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
         try Task.checkCancellation()
         let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let requestURL: URL

@@ -170,6 +170,7 @@ struct GroupCollection: Identifiable, Hashable {
     var createdAt: Date
     var status: ContentStatus = .active
     var revision: Int = 1
+    var postCount: Int? = nil
 
     var isEnded: Bool {
         deadline <= Date()

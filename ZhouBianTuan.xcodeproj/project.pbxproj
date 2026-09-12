@@ -37,6 +37,7 @@
 		7D4E6EA62C8A4A5100A10001 /* ModerationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */; };
 		7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */; };
 		8860DF79402457AD79EBFEEB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 98E2B2B491589A3229D8BFF3 /* Foundation.framework */; };
+		AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC92AFDAFEFFD87760019198 /* ContentPaging.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -99,6 +100,7 @@
 		7D4E6E962C8A4A5100A10001 /* ModerationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStore.swift; sourceTree = "<group>"; };
 		7D4E6E972C8A4A5100A10001 /* ModerationStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModerationStatusViews.swift; sourceTree = "<group>"; };
 		98E2B2B491589A3229D8BFF3 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		DC92AFDAFEFFD87760019198 /* ContentPaging.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentPaging.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +184,7 @@
 				7D4E6E0E2C8A4A5100A10001 /* Assets.xcassets */,
 				7D4E6E392C8A4A5100A10001 /* App Icons */,
 				7D4E6E2B2C8A4A5100A10001 /* Images */,
+				DC92AFDAFEFFD87760019198 /* ContentPaging.swift */,
 			);
 			path = ZhouBianTuan;
 			sourceTree = "<group>";
@@ -355,6 +358,7 @@
 				7D4E6EA62C8A4A5100A10001 /* ModerationStore.swift in Sources */,
 				7D4E6EA72C8A4A5100A10001 /* ModerationStatusViews.swift in Sources */,
 				7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */,
+				AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

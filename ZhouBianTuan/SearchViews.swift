@@ -81,7 +81,17 @@ struct SearchView: View {
         return Array((unique.isEmpty ? pool.filter { SearchMatcher.matches(query: String(keyword.prefix(1)), candidate: $0) } : unique).prefix(9))
     }
 
+    var searchPageQuery: ContentQuery {
+        if selectedTab == "团长" { return .init(path: "/users", parameters: ["q": activeQuery]) }
+        var parameters = ["q": activeQuery]
+        if selectedTab == "拼谷角色" { parameters["roles"] = "true" }
+        if selectedFilter == "拼谷有货" { parameters["inStock"] = "true" }
+        if selectedFilter == "跟团" { parameters["groupType"] = "followGroup" }
+        return .init(parameters: parameters)
+    }
+
     var results: [GroupBuyPost] {
+        if store.isBackendEnabled { return store.pagePosts(searchPageQuery) }
         let keyword = activeQuery
         var result = store.activePosts
         if !keyword.isEmpty {
@@ -121,7 +131,8 @@ struct SearchView: View {
     }
 
     var leaderResults: [User] {
-        store.groupLeaderUsers(matching: activeQuery)
+        if store.isBackendEnabled { return store.pageUsers(searchPageQuery) }
+        return store.groupLeaderUsers(matching: activeQuery)
     }
 
     var body: some View {
@@ -197,7 +208,8 @@ struct SearchView: View {
                         filters: filters,
                         selectedFilter: $selectedFilter,
                         results: results,
-                        users: leaderResults
+                        users: leaderResults,
+                        pagingQuery: store.isBackendEnabled ? searchPageQuery : nil
                     )
                     .transition(AppMotion.sideCoverTransition)
                 }
@@ -512,9 +524,10 @@ struct SearchResultsContent: View {
     @Binding var selectedFilter: String
     let results: [GroupBuyPost]
     let users: [User]
+    var pagingQuery: ContentQuery? = nil
 
     private var resultContentID: String {
-        "\(query)-\(selectedTab)-\(selectedFilter)-\(results.map(\.id).joined(separator: ","))-\(users.map(\.id).joined(separator: ","))"
+        "\(query)-\(selectedTab)-\(selectedFilter)"
     }
 
     var body: some View {
@@ -618,6 +631,7 @@ struct SearchResultsContent: View {
                     .id(resultContentID)
                     .transition(AppMotion.sideCoverTransition)
                     .animation(AppMotion.quick, value: resultContentID)
+                    if let pagingQuery { ContentPageFooter(query: pagingQuery) }
                 }
             }
         }

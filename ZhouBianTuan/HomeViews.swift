@@ -4,8 +4,11 @@ struct HomeView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var feed: HomeFeed = .followGroup
 
+    var pageQuery: ContentQuery { .init(parameters: ["groupType": feed == .splitGoods ? "splitGoods" : "followGroup"]) }
+
     var posts: [GroupBuyPost] {
-        switch feed {
+        if store.isBackendEnabled { return store.pagePosts(pageQuery) }
+        return switch feed {
         case .followGroup:
             store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .followGroup })
         case .splitGoods:
@@ -17,6 +20,7 @@ struct HomeView: View {
         VStack(spacing: 0) {
             HomeHeader(feed: $feed, onSelect: selectFeed)
             ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
                 if posts.isEmpty && store.isLoadingInitialFeed {
                     HomeFeedSkeletonGrid()
                         .padding(.horizontal, 12)
@@ -28,7 +32,10 @@ struct HomeView: View {
                         .padding(.top, 12)
                         .padding(.bottom, 28)
                 }
+                ContentPageFooter(query: pageQuery)
+                }
             }
+            .refreshable { await store.loadContentPage(pageQuery, reset: true) }
             .id(feed)
             .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
             .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)

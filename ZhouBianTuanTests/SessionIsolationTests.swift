@@ -254,4 +254,30 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertEqual(store.reports.count, 1)
         XCTAssertEqual(store.reports.first?.target, .message("dm-test"))
     }
+
+    func testPaginationForwardsTheCursorAndMergesPagesWithoutDuplicateRows() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        let query = ContentQuery(path: "/users", parameters: ["q": "Search"])
+        let first = [user("A"), user("B")], second = [user("B"), user("C")]
+        StubProtocol.handler = { $0.reply(["users": first, "hasMore": true, "nextCursor": "opaque-cursor"]) }
+        await store.loadContentPage(query)
+        XCTAssertEqual(store.pageState(query).ids, ["A", "B"])
+        XCTAssertTrue(store.pageState(query).hasMore)
+        let requested = expectation(description: "Next cursor was sent")
+        StubProtocol.handler = { request in
+            let items = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            XCTAssertEqual(items?.first { $0.name == "cursor" }?.value, "opaque-cursor")
+            requested.fulfill()
+            request.reply(["users": second, "hasMore": false])
+        }
+        await store.loadContentPage(query)
+        await fulfillment(of: [requested], timeout: 3)
+        XCTAssertEqual(store.pageState(query).ids, ["A", "B", "C"])
+        XCTAssertFalse(store.pageState(query).hasMore)
+        XCTAssertEqual(store.pageUsers(query).map(\.id), ["A", "B", "C"])
+        store.logOut()
+        XCTAssertTrue(store.contentPages.isEmpty)
+    }
 }

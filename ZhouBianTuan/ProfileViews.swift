@@ -516,6 +516,7 @@ struct ProfileNotesPanel: View {
     }
 
     var body: some View {
+        VStack(spacing: 12) {
         if posts.isEmpty && attentionPosts.isEmpty {
             ProfileEmptyNotesView()
         } else {
@@ -582,6 +583,8 @@ struct ProfileNotesPanel: View {
                     .padding(.bottom, 28)
                 }
             }
+        }
+            ContentPageFooter(query: .author(userID))
         }
     }
 }
@@ -725,6 +728,7 @@ struct ProfileLikedPostsPanel: View {
     }
 
     var body: some View {
+        VStack(spacing: 12) {
         if posts.isEmpty {
             ProfileEmptyState(text: "你还没有赞过", icon: "heart")
         } else {
@@ -732,6 +736,8 @@ struct ProfileLikedPostsPanel: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 14)
                 .padding(.bottom, 28)
+        }
+            ContentPageFooter(query: .likes)
         }
     }
 }
@@ -746,6 +752,7 @@ struct ProfileFavoritePostsPanel: View {
     }
 
     var body: some View {
+        VStack(spacing: 12) {
         if posts.isEmpty {
             ProfileEmptyState(text: "你还没有收藏过", icon: "star")
         } else {
@@ -753,6 +760,8 @@ struct ProfileFavoritePostsPanel: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 14)
                 .padding(.bottom, 28)
+        }
+            ContentPageFooter(query: .favorites)
         }
     }
 }
@@ -853,6 +862,7 @@ struct ProfileCollectionsPanel: View {
                     }
                 }
             }
+            ContentPageFooter(query: .collections(ownerID))
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -909,7 +919,7 @@ struct CollectionCard: View {
     var onToggle: (() -> Void)? = nil
 
     var body: some View {
-        let visibleCount = collection.postIDs.compactMap(store.post).filter { $0.status == .active }.count
+        let visibleCount = collection.postCount ?? collection.postIDs.compactMap(store.post).filter { $0.status == .active }.count
         let isEnded = collection.isEnded
         Group {
             if isManaging {
@@ -1135,7 +1145,9 @@ struct CollectionDetailView: View {
                     }
                 }
                 .padding(.bottom, 28)
+                ContentPageFooter(query: .collection(collectionID))
             }
+            .refreshable { await store.loadContentPage(.collection(collectionID), reset: true) }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -1166,7 +1178,7 @@ struct CollectionPostManager: View {
                 .font(.system(size: 16, weight: .black))
                 .foregroundStyle(Theme.text)
             ForEach(manageablePosts) { post in
-                let isIncluded = collection.postIDs.contains(post.id)
+                let isIncluded = post.collectionID == collection.id
                 HStack(spacing: 10) {
                     PostImageView(post: post)
                         .scaledToFill()
@@ -1212,6 +1224,7 @@ struct CollectionPostManager: View {
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) { ContentPageFooter(query: .author(store.currentUserID)) }
         .disabled(isSaving)
         .onChange(of: store.authSessionVersion) { _, _ in isSaving = false }
         .padding(14)
@@ -1971,9 +1984,12 @@ struct FavoritesView: View {
 
     var body: some View {
         ScrollView {
-            WaterfallGrid(posts: favoritePosts)
-                .padding(12)
+            VStack {
+                WaterfallGrid(posts: favoritePosts).padding(12)
+                ContentPageFooter(query: .favorites)
+            }
         }
+        .refreshable { await store.loadContentPage(.favorites, reset: true) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("我的收藏")
     }
@@ -2296,6 +2312,7 @@ struct UserProfileView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.bottom, 28)
                         }
+                        if selectedTab == "制品" { ContentPageFooter(query: .author(userID)) }
                     }
                     .background(Theme.background)
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
@@ -2308,6 +2325,9 @@ struct UserProfileView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .task(id: "\(store.authSessionVersion)-\(userID)") {
+            await store.loadContentPage(.init(path: "/users", parameters: ["id": userID]), reset: true)
+        }
         .alert(
             Text(pendingBlockConfirmation?.isUnblock == true ? "确认解除拉黑该用户？" : "确认拉黑该用户？"),
             isPresented: Binding(

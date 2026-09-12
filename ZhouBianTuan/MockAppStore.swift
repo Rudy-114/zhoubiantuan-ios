@@ -15,6 +15,10 @@ final class MockAppStore: ObservableObject {
         }
     }
     @Published var moderationReviews: [ModerationReview]
+    @Published var contentPages: [String: ContentPageState] = [:]
+    @Published var contentPageEpoch = UUID()
+    @Published var postDetailErrors: [String: String] = [:]
+    @Published var postDetailRequests: [String: UUID] = [:]
     @Published var reports: [Report]
     @Published var reminders: [Reminder]
     @Published var likedPostIDs: Set<String>
@@ -268,6 +272,8 @@ final class MockAppStore: ObservableObject {
         sessionTasks.values.forEach { $0.cancel() }
         sessionTasks.removeAll()
         pendingPostUploads.removeAll()
+        invalidateContentPages()
+        postDetailErrors.removeAll()
         stopBackendAutoRefresh()
         refreshRequestID = nil
         syncRequestID = nil
@@ -520,6 +526,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applyBackendPayload(_ payload: BackendPayload) {
+        invalidateContentPages()
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
         if payload.token != nil || (payload.currentUser?.id != nil && payload.currentUser?.id != previousUserID) || (!previousLoggedIn && payload.currentUser != nil) {
@@ -679,7 +686,7 @@ final class MockAppStore: ObservableObject {
         SyncCursorStore.set(payload.nextCursor, for: currentUserID)
     }
 
-    private func mergeUsers(_ backendUsers: [User]) {
+    func mergeUsers(_ backendUsers: [User]) {
         guard !backendUsers.isEmpty else { return }
         var usersByID = Dictionary(uniqueKeysWithValues: users.map { ($0.id, $0) })
         var order = users.map(\.id)
@@ -692,7 +699,7 @@ final class MockAppStore: ObservableObject {
         users = order.compactMap { usersByID[$0] }
     }
 
-    private func mergePosts(_ backendPosts: [GroupBuyPost]) {
+    func mergePosts(_ backendPosts: [GroupBuyPost]) {
         guard !backendPosts.isEmpty else { return }
         var postsByID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
         var order = posts.map(\.id)
@@ -707,7 +714,7 @@ final class MockAppStore: ObservableObject {
         posts = order.compactMap { postsByID[$0] }
     }
 
-    private func mergeCollections(_ backendCollections: [GroupCollection]) {
+    func mergeCollections(_ backendCollections: [GroupCollection]) {
         guard !backendCollections.isEmpty else { return }
         var collectionsByID = Dictionary(uniqueKeysWithValues: collections.map { ($0.id, $0) })
         var order = collections.map(\.id)
@@ -722,7 +729,7 @@ final class MockAppStore: ObservableObject {
         collections = order.compactMap { collectionsByID[$0] }
     }
 
-    private func mergeComments(_ backendComments: [Comment]) {
+    func mergeComments(_ backendComments: [Comment]) {
         guard !backendComments.isEmpty else { return }
         var commentsByID = Dictionary(uniqueKeysWithValues: comments.map { ($0.id, $0) })
         var order = comments.map(\.id)
@@ -955,6 +962,9 @@ final class MockAppStore: ObservableObject {
 
     func posts(in collectionID: String) -> [GroupBuyPost] {
         guard let collection = collection(id: collectionID) else { return [] }
+        if isBackendEnabled {
+            return sortedFeedPosts(posts.filter { $0.collectionID == collectionID && $0.status == .active && post(id: $0.id) != nil })
+        }
         return sortedFeedPosts(collection.postIDs.compactMap(post).filter { $0.status == .active })
     }
 

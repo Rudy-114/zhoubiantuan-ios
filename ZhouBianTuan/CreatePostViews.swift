@@ -1092,6 +1092,7 @@ struct CollectionPickerSummary: View {
 }
 
 struct CollectionPickerSheet: View {
+    @EnvironmentObject private var store: MockAppStore
     @Environment(\.dismiss) private var dismiss
     @State private var isCreatingCollection = false
     let collections: [GroupCollection]
@@ -1126,10 +1127,10 @@ struct CollectionPickerSheet: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
-                    ForEach(collections) { collection in
+                    ForEach(store.isBackendEnabled ? store.collections(ownerID: store.currentUserID).filter { $0.status == .active } : collections) { collection in
                         CollectionPickerOption(
                             title: collection.name,
-                            subtitle: "\(collection.deadline.fullDisplay) 截团 · \(collection.isEnded ? "已结团" : "\(collection.postIDs.count) 篇内容")",
+                            subtitle: "\(collection.deadline.fullDisplay) 截团 · \(collection.isEnded ? "已结团" : "\(collection.postCount ?? collection.postIDs.count) 篇内容")",
                             icon: "rectangle.stack.fill",
                             isSelected: selectedCollectionID == collection.id,
                             isEnded: collection.isEnded
@@ -1139,6 +1140,7 @@ struct CollectionPickerSheet: View {
                         }
                     }
 
+                    ContentPageFooter(query: .collections(store.currentUserID))
                     Button {
                         isCreatingCollection = true
                     } label: {

@@ -546,6 +546,11 @@ struct ChatBubble: View {
                 }
             }
             .sheet(isPresented: $isReporting) { ReportForm(target: .message(message.id)) }
+            .task(id: "\(store.authSessionVersion)-\(message.sharedPostID ?? "")") {
+                if !message.isRevoked, let sharedID = message.sharedPostID, store.post(id: sharedID) == nil {
+                    await store.loadPostDetail(sharedID)
+                }
+            }
             .fullScreenCover(item: $previewImage) { item in
                 ChatImagePreviewView(image: item.image)
                     .environmentObject(store)

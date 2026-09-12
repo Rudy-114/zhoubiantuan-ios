@@ -86,6 +86,7 @@ export function collectionToClient(row, postIDs = []) {
     deadline: row.deadline.toISOString(),
     defaultNote: row.default_note || "",
     postIDs,
+    postCount: Number(row.post_count ?? postIDs.length),
     createdAt: row.created_at.toISOString(),
     status: row.status || "active"
   };

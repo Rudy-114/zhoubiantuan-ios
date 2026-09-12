@@ -4,7 +4,8 @@ struct MarketView: View {
     @EnvironmentObject private var store: MockAppStore
 
     var posts: [GroupBuyPost] {
-        store.sortedFeedPosts(store.activePosts.filter { store.followedUserIDs.contains($0.authorID) })
+        if store.isBackendEnabled { return store.pagePosts(.following) }
+        return store.sortedFeedPosts(store.activePosts.filter { store.followedUserIDs.contains($0.authorID) })
     }
 
     var body: some View {
@@ -32,9 +33,12 @@ struct MarketView: View {
                     }
 
                     ScrollView(showsIndicators: false) {
-                        FollowingFeedView(posts: posts)
-                            .padding(.top, 2)
+                        VStack {
+                            FollowingFeedView(posts: posts).padding(.top, 2)
+                            ContentPageFooter(query: .following)
+                        }
                     }
+                    .refreshable { await store.loadContentPage(.following, reset: true) }
                 }
                 .background(Theme.background.ignoresSafeArea())
             } else {
