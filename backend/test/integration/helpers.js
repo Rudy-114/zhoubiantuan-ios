@@ -30,7 +30,7 @@ export async function startTestApp(options = {}) {
     app, base,
     request: (path, { token, body, method = 'GET' } = {}) => fetch(`${base}${path}`, {
       method, signal: AbortSignal.timeout(15000),
-      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
+      headers: { "X-ZBT-Protocol": "2", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {})
     }),
     close: async () => { await new Promise(resolve => server.close(resolve)); await pool.end(); }

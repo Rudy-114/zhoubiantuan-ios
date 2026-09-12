@@ -13,16 +13,21 @@ export class RealtimeHub {
     this.connectionsByUserID = new Map();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
     this.pending = 0;
+    this.pendingSockets = new Set();
     this.closed = false;
     this.instanceID = randomUUID();
     this.wss.on("connection", (socket, _request, user, token) => this.addConnection(user.id, socket, token));
   }
 
   attach(server) {
+    if (this.closed) throw new Error("Realtime hub is closed");
+    if (this.server === server) return this;
+    if (this.server) throw new Error("Realtime hub is attached to a different server");
     this.upgrade = async (request, socket, head) => {
       if (this.closed || request.url?.split("?")[0] !== "/api/ws") return socket.destroy();
       if (this.pending >= this.maxPending || this.wss.clients.size >= this.maxConnections) return rejectUpgrade(socket, 503);
       this.pending += 1;
+      this.pendingSockets.add(socket);
       const deadline = setTimeout(() => socket.destroy(), 10000);
       try {
         const token = (request.headers.authorization || "").match(/^Bearer\s+(.+)$/i)?.[1] || "";
@@ -36,7 +41,7 @@ export class RealtimeHub {
       } catch (error) {
         if (!socket.destroyed) rejectUpgrade(socket, 503);
         logger.warn("websocket.authentication_unavailable", { code: error.code });
-      } finally { clearTimeout(deadline); this.pending -= 1; }
+      } finally { clearTimeout(deadline); this.pending -= 1; this.pendingSockets.delete(socket); }
     };
     server.on("upgrade", this.upgrade);
     this.server = server;
@@ -61,7 +66,14 @@ export class RealtimeHub {
     });
     socket.on("error", () => socket.terminate());
     // A receipt proves the authenticated handshake completed; resume() alone does not.
-    this.send(socket, { type: "connection.ready" });
+    if (typeof token === "string") this.send(socket, { type: "connection.ready" });
+  }
+
+  removeConnection(userID, socket) {
+    const sockets = this.connectionsByUserID.get(userID);
+    sockets?.delete(socket);
+    if (!sockets?.size) this.connectionsByUserID.delete(userID);
+    socket.authToken = undefined;
   }
 
   async checkConnections() {
@@ -136,8 +148,15 @@ export class RealtimeHub {
     } catch { recover(); }
   }
 
-  async close() {
+  close() {
+    if (this.closePromise) return this.closePromise;
+    this.closePromise = this.closeResources();
+    return this.closePromise;
+  }
+
+  async closeResources() {
     this.closed = true;
+    for (const socket of this.pendingSockets) socket.destroy();
     clearInterval(this.heartbeat);
     clearTimeout(this.listenerRetry);
     this.server?.off("upgrade", this.upgrade);
@@ -151,8 +170,9 @@ function rejectUpgrade(socket, status) {
   socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
 }
 export const realtimeHub = new RealtimeHub({ distributed: true });
-export function attachRealtime(server) { return realtimeHub.attach(server); }
+export function createRealtimeHub(options = {}) { return new RealtimeHub({ ...options, heartbeatMs: options.heartbeatIntervalMs ?? options.heartbeatMs ?? 30000 }); }
+export function attachRealtime(server, options) { return (options ? createRealtimeHub(options) : realtimeHub).attach(server); }
 export function notifySyncEvents(events) {
   // Tests create HTTP applications without attaching a hub; no live listener or publication then.
-  if (realtimeHub.server) realtimeHub.notifySyncEvents(events);
+  if (realtimeHub.server || realtimeHub.connectionsByUserID.size) realtimeHub.notifySyncEvents(events, Boolean(realtimeHub.server));
 }

@@ -1,4 +1,5 @@
-import { query, withTransaction } from "./db.js";
+import { safetyReportToBootstrapClient } from "./safety/reportMapper.js";
+import { query, withTransaction, beforeCommit } from "./db.js";
 import { logger } from "./logger.js";
 import { collectionToClient, commentToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser, loadUnreadSnapshot } from "./messages.js";
@@ -16,6 +17,13 @@ export async function getCurrentSyncCursor(client = { query }) {
 }
 
 export async function createSyncEvent(client, { userId, eventType, entityType, entityId, threadId = null }) {
+  const event = {};
+  const input = { userId, eventType, entityType, entityId, threadId };
+  if (beforeCommit(client, async () => Object.assign(event, await insertSyncEvent(client, input)))) return event;
+  return insertSyncEvent(client, input);
+}
+
+async function insertSyncEvent(client, { userId, eventType, entityType, entityId, threadId }) {
   // Allocate only after business writes; callers must not acquire more business
   // row locks after publishing events. The counter lock serializes commit order.
   const { rows } = await client.query(
@@ -75,7 +83,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
 
   const [messageThreads, unread, comments, relationships] = await Promise.all([
     loadMessageThreadsForUser({ query }, threadIds, userId, messageIdsByThread),
-    threadIds.length || rows.some(row => row.event_type === "user.deleted") ? loadUnreadSnapshot(userId) : {},
+    threadIds.length || rows.some(row => row.event_type === "user.deleted" || row.entity_type === "safety_visibility") ? loadUnreadSnapshot(userId) : {},
     loadCommentsForSync(userId, commentIds),
     rows.some(row => row.entity_type === "user" || /liked|favorit|follow|block/.test(row.event_type)) ? loadRelationshipState(userId) : {}
   ]);
@@ -93,7 +101,8 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
   ]);
   const users = await loadUsersForSync(userId, userIds);
   const reportIds = unique(rows.filter(row => row.entity_type === "report").map(row => row.entity_id));
-  const reports = reportIds.length ? (await query("SELECT * FROM reports WHERE id=ANY($1::text[]) AND reporter_id=$2", [reportIds, userId])).rows.map(row => reportToClient(row)) : [];
+  const caseIds = unique(rows.filter(row => row.entity_type === "safety_case").map(row => row.entity_id));
+  const reports = reportIds.length || caseIds.length ? (await query("SELECT r.*, sc.status AS case_status FROM reports r LEFT JOIN safety_cases sc ON sc.id=r.case_id WHERE (r.id=ANY($1::text[]) OR r.case_id=ANY($3::text[])) AND r.reporter_id=$2", [reportIds, userId, caseIds])).rows.map(row => safetyReportToBootstrapClient(row, userId)) : [];
 
   return {
     nextCursor,
@@ -108,7 +117,7 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
     removedCollectionIDs: collectionIds.filter(id => !collections.some(collection => collection.id === id)),
     comments,
     removedCommentIDs: commentIds.filter(id => !comments.some(comment => comment.id === id)),
-    contentRefreshRequired: rows.some(row => row.entity_type === "collection" || ["user.blocked", "user.unblocked", "user.deleted"].includes(row.event_type)),
+    contentRefreshRequired: rows.some(row => ["collection", "safety_visibility"].includes(row.entity_type) || ["user.blocked", "user.unblocked", "user.deleted"].includes(row.event_type)),
     messageThreads,
     ...unread,
     ...relationships

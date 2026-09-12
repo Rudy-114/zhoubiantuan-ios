@@ -1,9 +1,8 @@
 import { query } from "./db.js";
-import { isModerationAdmin } from "./moderation/index.js";
 import { visiblePostSQL, unblockedSQL } from "./visibility.js";
 
-export async function canReadAsset(key, user) {
-  if (!/^(guarded\/)?(post|avatar|background|message)\//.test(key) || key.includes("..")) return false;
+export async function canReadAsset(key, user, adminSession = false) {
+  if (!/^(guarded\/)?(post|avatar|background|message|report)\//.test(key) || key.includes("..")) return false;
   const viewer = user?.id || "";
   const { rows } = await query(`SELECT (
     EXISTS (SELECT 1 FROM posts p WHERE ($1 = ANY(p.image_object_keys) OR $1 = ANY(p.preview_image_object_keys))
@@ -12,13 +11,16 @@ export async function canReadAsset(key, user) {
       AND u.status = 'active' AND u.deleted_at IS NULL AND ${unblockedSQL("u.id", "$2")})
     OR EXISTS (SELECT 1 FROM direct_messages dm JOIN message_threads mt ON mt.id = dm.thread_id
       WHERE dm.image_object_key = $1 AND $2 IN (mt.buyer_user_id, mt.publisher_user_id)
-        AND dm.revoked_at IS NULL AND NOT ($2 = ANY(dm.deleted_for_user_ids)))
+        AND dm.safety_status = 'active' AND dm.revoked_at IS NULL AND NOT ($2 = ANY(dm.deleted_for_user_ids)))
     OR EXISTS (SELECT 1 FROM moderation_reviews mr WHERE $1 = ANY(mr.image_object_keys)
-      AND ($3 OR mr.owner_id = NULLIF($2, '')) AND mr.status IN ('pending','review','rejected')
+      AND ($3 OR $4 OR mr.owner_id = NULLIF($2, '')) AND ($4 OR mr.status IN ('pending','review','rejected'))
       AND (mr.target_type <> 'post' OR EXISTS (SELECT 1 FROM posts rp WHERE rp.id = mr.target_id AND rp.status <> 'deleted')))
-    OR EXISTS (SELECT 1 FROM reports r WHERE $3 AND r.status='pending' AND $1=ANY(r.image_object_keys))
+    OR EXISTS (SELECT 1 FROM safety_evidence e WHERE $4 AND e.redacted_at IS NULL AND $1=ANY(e.object_keys))
+    OR EXISTS (SELECT 1 FROM content_revisions cr WHERE ($4 OR cr.owner_id = NULLIF($2, ''))
+      AND ($1=ANY(cr.object_keys) OR (cr.snapshot->'imageObjectKeys') ? $1 OR (cr.snapshot->'previewImageObjectKeys') ? $1))
+    OR EXISTS (SELECT 1 FROM safety_appeals sa WHERE $4 AND $1=ANY(sa.object_keys))
     OR EXISTS (SELECT 1 FROM upload_tickets ut WHERE ut.object_key = $1 AND ut.user_id = NULLIF($2, '')
       AND ut.status = 'ready' AND ut.referenced_at IS NULL)
-  ) AS allowed`, [key, viewer, isModerationAdmin(user)]);
+  ) AS allowed`, [key, viewer, false, adminSession]);
   return Boolean(rows[0]?.allowed);
 }

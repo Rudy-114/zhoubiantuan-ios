@@ -9,7 +9,9 @@
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "test": "node --import ./test/setup.js --test test/*.test.js",
-    "test:integration": "node --import ./test/setup.js --test --test-concurrency=1 test/integration/*.test.js"
+    "test:integration": "node --import ./test/setup.js --test --test-concurrency=1 test/integration/*.test.js",
+    "admin:create": "node scripts/create-admin.js",
+    "test:db": "bash scripts/run-db-tests.sh"
   },
   "dependencies": {
     "@alicloud/pop-core": "^1.8.0",
@@ -25,7 +27,8 @@
     "nodemailer": "^9.1.1",
     "pg": "^8.13.1",
     "sharp": "0.35.4",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "ajv": "^8.17.1"
   },
   "overrides": {
     "express": {

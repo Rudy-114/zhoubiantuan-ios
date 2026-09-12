@@ -477,9 +477,9 @@ enum LegalDocument: String, CaseIterable, Identifiable {
             ]
         case .privacyPolicy:
             return [
-                LegalSection(title: "我们收集的信息", body: "为提供账号和社区功能，我们会收集邮箱、昵称、个人资料、你主动发布的帖子、评论、私信、举报内容，以及你主动选择上传的图片。"),
-                LegalSection(title: "使用目的", body: "这些信息用于注册登录、验证码发送、账号展示、内容发布、互动通知、私信沟通、内容安全、举报处理、客服支持和基础运营维护。"),
-                LegalSection(title: "存储与安全", body: "账号密码以哈希形式保存，登录状态使用令牌维护。图片上传到云存储，后端服务访问数据库和对象存储时使用服务端密钥，密钥不会放入 iOS 客户端。"),
+                LegalSection(title: "我们收集的信息", body: "为提供账号和社区功能，我们会收集账号标识、邮箱、昵称、个人资料、你主动填写的外部联系方式、你发布的帖子、评论、私信、举报内容、点赞收藏等互动记录，以及你主动选择上传的图片。"),
+                LegalSection(title: "使用目的", body: "这些信息用于注册登录、验证码发送、账号展示、内容发布、互动通知、私信沟通、内容安全、举报处理、反滥用、客服支持和基础运营维护。"),
+                LegalSection(title: "存储与安全", body: "账号密码以哈希形式保存，登录状态使用令牌维护。图片上传到云存储；基础错误日志和短期反滥用哈希用于保障服务安全。后端密钥不会放入 iOS 客户端。"),
                 LegalSection(title: "你的选择", body: "你可以退出登录、编辑资料、删除本地浏览记录，或在「设置 - 账号与安全 - 删除账号」中直接删除账号。如需更正信息或寻求帮助，可在「设置 - 帮助与反馈」通过客服邮箱联系我们。我们不会将上述信息用于跨 App 或跨网站追踪。")
             ]
         case .minorsPolicy:
@@ -491,8 +491,9 @@ enum LegalDocument: String, CaseIterable, Identifiable {
             ]
         case .personalInfoList:
             return [
-                LegalSection(title: "账号信息", body: "邮箱用于注册、登录和验证码发送；昵称、头像、简介、地区等资料用于账号展示和社区互动。"),
+                LegalSection(title: "账号与联系信息", body: "内部账号标识和邮箱用于注册、登录和验证码发送；昵称、头像、简介、地区、小红书号以及你主动填写的微信、QQ、群号等资料用于账号展示和社区沟通。"),
                 LegalSection(title: "用户内容", body: "帖子、评论、私信、举报理由和详情用于展示、沟通、内容管理和安全处理。"),
+                LegalSection(title: "互动与安全信息", body: "点赞、收藏、关注、拉黑、举报和内容处理记录用于提供社区功能并防止滥用；服务器会短期保存不可逆的反滥用哈希。"),
                 LegalSection(title: "图片信息", body: "你主动选择的商品图片、头像或背景图会用于帖子和资料展示。App 只在你选择图片时访问相册。"),
                 LegalSection(title: "本地偏好", body: "App 使用 UserDefaults 保存登录状态、深色模式、浏览记录、搜索历史、后端调试偏好等仅本 App 可访问的信息。")
             ]

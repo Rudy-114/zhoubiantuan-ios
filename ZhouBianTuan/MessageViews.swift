@@ -136,6 +136,9 @@ struct ThreadRow: View {
     }
 
     private func previewText(_ message: DirectMessage) -> String {
+        if message.isSafetyHidden {
+            return SafetyReportEntryPolicy.hiddenMessagePlaceholder
+        }
         if message.imageData != nil || !message.remoteImageURL.isEmpty || message.body == "[图片]" {
             return "[图片]"
         }
@@ -152,6 +155,7 @@ struct ChatView: View {
     @State private var prefersEmojiKeyboard = false
     @State private var isPhotoLibraryPresented = false
     @State private var isCameraPresented = false
+    @State private var reportSource: SafetyReportSource?
     let threadID: String
 
     var body: some View {
@@ -202,7 +206,14 @@ struct ChatView: View {
                                         .foregroundStyle(Theme.muted)
                                         .padding(.top, index == 0 ? 18 : 10)
                                 }
-                                ChatBubble(threadID: thread.id, message: message)
+                                ChatBubble(
+                                    threadID: thread.id,
+                                    peerUserID: peer.id,
+                                    message: message,
+                                    onReportRequested: { source in
+                                        reportSource = source
+                                    }
+                                )
                                     .id(message.id)
                             }
                         }
@@ -293,6 +304,9 @@ struct ChatView: View {
                     _ = store.sendImageMessage(threadID: threadID, imageData: data)
                 }
                 .ignoresSafeArea()
+            }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 30)
@@ -535,32 +549,64 @@ struct ChatAttachmentOption: View {
     }
 }
 
+struct SafetyMessageDeliveryPresentation: Equatable {
+    let failureMessage: String?
+    let allowsRetry: Bool
+}
+
+enum SafetyMessageDeliveryPolicy {
+    static func presentation(
+        isSafetyHidden: Bool,
+        isMine: Bool,
+        deliveryStatus: MessageDeliveryStatus
+    ) -> SafetyMessageDeliveryPresentation {
+        guard !isSafetyHidden, isMine else {
+            return SafetyMessageDeliveryPresentation(failureMessage: nil, allowsRetry: false)
+        }
+
+        let failureMessage: String?
+        switch deliveryStatus {
+        case .failedBlockedByPeer: failureMessage = "你已被对方拉黑，无法发送消息"
+        case .failedBlockedPeer: failureMessage = "你已拉黑对方，解除拉黑后才能发送"
+        case .failedNetwork: failureMessage = "发送失败，请稍后重试"
+        case .sent, .sending: failureMessage = nil
+        }
+        return SafetyMessageDeliveryPresentation(
+            failureMessage: failureMessage,
+            allowsRetry: failureMessage != nil
+        )
+    }
+}
+
 struct ChatBubble: View {
     @EnvironmentObject private var store: MockAppStore
-    @State private var isReporting = false
     @State private var previewImage: ChatImagePreviewItem?
     @State private var isLoadingPreview = false
     let threadID: String
+    let peerUserID: String
     let message: DirectMessage
+    let onReportRequested: (SafetyReportSource) -> Void
 
     var isMine: Bool { message.senderID == store.currentUserID }
 
     var body: some View {
         content
             .contextMenu {
-                if !message.isRevoked && !message.isDeletedForMe && message.deliveryStatus == .sent {
-                    Button("举报私信") { isReporting = true }
-                }
                 Button("删除") {
                     store.deleteMessage(threadID: threadID, messageID: message.id)
                 }
-                if store.canRevokeMessage(message) {
+                if SafetyReportEntryPolicy.canReportMessage(message, currentUserID: store.currentUserID) {
+                    Button("举报", role: .destructive) {
+                        guard store.requireLogin(prompt: "登录后才能举报") else { return }
+                        onReportRequested(SafetyReportSourceFactory.directMessage(message, peerUserID: peerUserID))
+                    }
+                }
+                if !message.isSafetyHidden && store.canRevokeMessage(message) {
                     Button("撤回", role: .destructive) {
                         store.revokeMessage(threadID: threadID, messageID: message.id)
                     }
                 }
             }
-            .sheet(isPresented: $isReporting) { ReportForm(target: .message(message.id)) }
             .task(id: "\(store.authSessionVersion)-\(message.sharedPostID ?? "")") {
                 if !message.isRevoked, let sharedID = message.sharedPostID, store.post(id: sharedID) == nil {
                     await store.loadPostDetail(sharedID)
@@ -576,6 +622,19 @@ struct ChatBubble: View {
     private var content: some View {
         if message.isRevoked || message.isDeletedForMe {
             Text(message.isDeletedForMe ? "消息已删除" : "消息已撤回").font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
+        } else if message.isSafetyHidden {
+            HStack(alignment: .bottom, spacing: 8) {
+                if isMine { Spacer(minLength: 48) }
+                if !isMine {
+                    avatar(for: store.user(id: message.senderID), size: 34)
+                }
+                hiddenMessageBubble
+                if isMine {
+                    avatar(for: store.currentUser, size: 34)
+                } else {
+                    Spacer(minLength: 48)
+                }
+            }
         } else if let sharedPostID = message.sharedPostID,
            let post = store.post(id: sharedPostID) {
             HStack(alignment: .top, spacing: 10) {
@@ -646,14 +705,25 @@ struct ChatBubble: View {
         }
     }
 
+    private var hiddenMessageBubble: some View {
+        Text(SafetyReportEntryPolicy.hiddenMessagePlaceholder)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
+            .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
     private var failureReasonText: String? {
-        guard isMine else { return nil }
-        switch message.deliveryStatus {
-        case .failedBlockedByPeer: return "你已被对方拉黑，无法发送消息"
-        case .failedBlockedPeer: return "你已拉黑对方，解除拉黑后才能发送"
-        case .failedNetwork: return "发送失败，请稍后重试"
-        case .sent, .sending: return nil
-        }
+        deliveryPresentation.failureMessage
+    }
+
+    private var deliveryPresentation: SafetyMessageDeliveryPresentation {
+        SafetyMessageDeliveryPolicy.presentation(
+            isSafetyHidden: message.isSafetyHidden,
+            isMine: isMine,
+            deliveryStatus: message.deliveryStatus
+        )
     }
 
     @ViewBuilder
@@ -661,14 +731,16 @@ struct ChatBubble: View {
         if let failureReasonText {
             VStack(alignment: .trailing, spacing: 5) {
                 HStack(spacing: 8) {
-                    Button {
-                        store.retryFailedMessage(threadID: threadID, messageID: message.id)
-                    } label: {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.red)
+                    if deliveryPresentation.allowsRetry {
+                        Button {
+                            store.retryFailedMessage(threadID: threadID, messageID: message.id)
+                        } label: {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                     bubble
                 }
                 Text(failureReasonText)

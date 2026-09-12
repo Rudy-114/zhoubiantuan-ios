@@ -1,3 +1,4 @@
+import { assertUnrestrictedUser } from "./auth.js";
 import { query, withTransaction } from './db.js';
 import { badRequest } from './validators.js';
 import { postToClient } from './mappers.js';
@@ -32,7 +33,7 @@ export async function editPost(userId, postId, body) {
   const current = (await query("SELECT * FROM posts WHERE id=$1 AND author_id=$2 AND status <> 'deleted'", [postId, userId])).rows[0];
   if (!current) { const error = new Error('只能编辑自己的帖子'); error.status = 404; throw error; }
   assertRevision(current, body.revision);
-  if (current.status !== 'active') throw badRequest('请通过重新投稿修改未公开的帖子');
+  if (current.status !== 'active' || current.safety_status !== 'active') throw badRequest('请通过重新投稿修改未公开的帖子');
   if (!Object.hasOwn(body, 'unsoldRoles') && !Object.hasOwn(body, 'collectionID')) throw badRequest('没有可保存的修改');
   const roles = validateRoles(body.unsoldRoles ?? current.unsold_roles);
   const collectionId = Object.hasOwn(body, 'collectionID') ? body.collectionID : current.collection_id;
@@ -46,12 +47,14 @@ export async function editPost(userId, postId, body) {
   // Numeric stock changes never make a hidden/rejected post public. Text edits are reviewed again.
   const moderation = needsReview ? await reviewSubmission({ targetType: 'post', targetId: postId, ownerId: userId, text }) : { status: 'active' };
   return withTransaction(async client => {
+    await assertUnrestrictedUser(client, userId);
     const collections = (await client.query('SELECT * FROM group_collections WHERE id=ANY($1::text[]) ORDER BY id FOR SHARE', [[...new Set([current.collection_id, collectionId].filter(Boolean))]])).rows;
     const latestCollection = collections.find(row => row.id === collectionId);
     assertRevision(latestCollection, collection.revision);
-    if (latestCollection.owner_id !== userId || latestCollection.status !== 'active') throw badRequest('合集当前不可用');
+    if (latestCollection.owner_id !== userId || latestCollection.status !== 'active' || latestCollection.safety_status !== 'active') throw badRequest('合集当前不可用');
     const latest = (await client.query('SELECT * FROM posts WHERE id=$1 FOR UPDATE', [postId])).rows[0];
     assertRevision(latest, body.revision);
+    if (latest.safety_status !== "active") throw badRequest("请通过整改流程修改受限帖子");
     const post = (await client.query(`UPDATE posts SET unsold_roles=$2::jsonb, collection_id=$3,
       deadline=$4, wechat=$5, qq=$6, group_number=$7, group_info=$8, status=$9, updated_at=now()
       WHERE id=$1 RETURNING *`, [postId, JSON.stringify(roles), collectionId, latestCollection.deadline,

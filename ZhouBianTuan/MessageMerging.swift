@@ -36,7 +36,7 @@ enum MessageMerging {
                 } else if message.imageData == nil {
                     message.imageData = messages[message.id]?.imageData
                 }
-                if message.isRevoked || message.isDeletedForMe {
+                if message.isRevoked || message.isDeletedForMe || message.isSafetyHidden {
                     message.body = ""
                     message.imageData = nil
                     message.localImageFileName = ""

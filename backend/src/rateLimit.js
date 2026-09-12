@@ -4,14 +4,14 @@ import { logger } from "./logger.js";
 
 const RATE_LIMIT_EVENT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
-export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory" }) {
+export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory", apiCode }) {
   if (store === "postgres") {
-    return createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name });
+    return createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name, apiCode });
   }
-  return createMemoryRateLimiter({ windowMs, max, message, keyGenerator });
+  return createMemoryRateLimiter({ windowMs, max, message, keyGenerator, apiCode });
 }
 
-function createMemoryRateLimiter({ windowMs, max, message, keyGenerator }) {
+function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, apiCode }) {
   const buckets = new Map();
 
   return (req, res, next) => {
@@ -20,7 +20,7 @@ function createMemoryRateLimiter({ windowMs, max, message, keyGenerator }) {
     const bucket = (buckets.get(key) || []).filter((timestamp) => now - timestamp < windowMs);
 
     if (bucket.length >= max) {
-      return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
+      return res.status(429).json({ error: message || "操作太频繁，请稍后再试", ...(apiCode ? { code: apiCode } : {}) });
     }
 
     bucket.push(now);
@@ -38,7 +38,7 @@ function createMemoryRateLimiter({ windowMs, max, message, keyGenerator }) {
   };
 }
 
-function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name }) {
+function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name, apiCode }) {
   const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
 
   return async (req, res, next) => {
@@ -66,7 +66,7 @@ function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name 
 
       if (!allowed) {
         res.setHeader("Retry-After", String(windowSeconds));
-        return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
+        return res.status(429).json({ error: message || "操作太频繁，请稍后再试", ...(apiCode ? { code: apiCode } : {}) });
       }
 
       next();

@@ -1,3 +1,4 @@
+import { safetyReportToBootstrapClient } from "./safety/reportMapper.js";
 import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
 import { collectionToClient, commentToClient, directMessageToClient, messageThreadToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
 import { query } from "./db.js";
@@ -38,7 +39,7 @@ export async function loadBootstrap(userId) {
        ORDER BY created_at ASC`,
       [userId]
     ),
-    query("SELECT * FROM reports WHERE reporter_id = $1 ORDER BY created_at DESC LIMIT 100", [userId]),
+    query("SELECT r.*, sc.status AS case_status FROM reports r LEFT JOIN safety_cases sc ON sc.id=r.case_id WHERE r.reporter_id = $1 ORDER BY r.created_at DESC LIMIT 100", [userId]),
     query(`SELECT r.post_id FROM post_likes r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
     query(`SELECT r.post_id FROM post_favorites r JOIN posts p ON p.id=r.post_id WHERE r.user_id=$1 AND ${visiblePostSQL("p", "$1", true)}`, [userId]),
     query("SELECT following_id FROM follows WHERE follower_id = $1", [userId]),
@@ -89,7 +90,7 @@ export async function loadBootstrap(userId) {
     threadsHasMore: messagePage.hasMore,
     unreadMessageCount: messagePage.unreadMessageCount,
     unreadCursor: messagePage.unreadCursor,
-    reports: reportsResult.rows.map(reportToClient),
+    reports: reportsResult.rows.map(row => safetyReportToBootstrapClient(row, userId)),
     likedPostIDs: likedResult.rows.map((row) => row.post_id),
     favoritePostIDs: favoriteResult.rows.map((row) => row.post_id),
     followedUserIDs: followedResult.rows.map((row) => row.following_id),

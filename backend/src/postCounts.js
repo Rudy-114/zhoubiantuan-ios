@@ -4,15 +4,18 @@ export async function attachPostCounts(postRows, client = { query }) {
   const ids = uniquePostIds(postRows);
   if (!ids.length) return postRows;
 
-  const [likes, favorites, comments, reports] = await Promise.all([
+  const [likes, favorites, comments, reports, collections] = await Promise.all([
     countByPost(client, "post_likes", "post_id = ANY($1::text[])", "post_id", ids),
     countByPost(client, "post_favorites", "post_id = ANY($1::text[])", "post_id", ids),
-    countByPost(client, "comments", "post_id = ANY($1::text[]) AND status = 'active'", "post_id", ids),
-    countByPost(client, "reports", "target_type = 'post' AND target_id = ANY($1::text[])", "target_id", ids)
+    countByPost(client, "comments", "post_id = ANY($1::text[]) AND status = 'active' AND safety_status = 'active'", "post_id", ids),
+    countByPost(client, "reports", "target_type = 'post' AND target_id = ANY($1::text[])", "target_id", ids),
+    client.query("SELECT p.id, c.status AS collection_status, c.safety_status AS collection_safety_status, c.contact_visibility AS collection_contact_visibility FROM posts p LEFT JOIN group_collections c ON c.id=p.collection_id WHERE p.id=ANY($1::text[])", [ids])
   ]);
 
+  const context = new Map(collections.rows.map(row => [row.id, row]));
   return postRows.map((row) => ({
     ...row,
+    ...context.get(row.id),
     liked_count: likes.get(row.id) || 0,
     favorite_count: favorites.get(row.id) || 0,
     comment_count: comments.get(row.id) || 0,

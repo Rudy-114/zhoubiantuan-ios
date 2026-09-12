@@ -1,10 +1,13 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestApp, makeUser, query, pool, withTransaction, id } from './helpers.js';
+import { randomBytes } from 'node:crypto';
+import { hashAdminToken } from '../../src/admin/sessionService.js';
 import { createSyncEvent, getCurrentSyncCursor, loadSyncPayload, pruneOldSyncEvents } from '../../src/sync.js';
 
+process.env.ADMIN_RECOVERY_PEPPER = "synthetic-deploy-test-pepper-over-32-characters";
 let api;
-before(async () => { api = await startTestApp({ objectStorage: { removeImage: async () => {} } }); });
+before(async () => { api = await startTestApp({ adminWebEnabled: true, objectStorage: { removeImage: async () => {} } }); });
 after(async () => { await api.close(); });
 async function makePost(user, status = 'active', collection = null) {
   const post = id('p');
@@ -56,21 +59,37 @@ test('a reader gets a post deletion tombstone without receiving the removed cont
   assert.ok(!payload.posts.some(item => item.id === post));
 });
 
-test('moderation approval and removal notify readers; stale reviews cannot resurrect deleted posts', async () => {
-  const author = await makeUser(), reader = await makeUser(), admin = await makeUser({ role: 'moderator' });
-  const post = await makePost(author, 'review'), review = id('mr');
-  await withTransaction(async client => {
-    await client.query('UPDATE posts SET updated_at=now() WHERE id=$1', [post]);
-    await client.query(`INSERT INTO moderation_reviews(id,target_type,target_id,owner_id) VALUES($1,'post',$2,$3)`, [review, post, author.id]);
+test('web admin moderation publishes visibility changes and refuses handled or deleted reviews', async () => {
+  const author = await makeUser(), reader = await makeUser();
+  const adminID=id('admin'), deviceID=id('device'), sessionID=id('session'), token=randomBytes(32).toString('base64url'), csrf=randomBytes(32).toString('base64url');
+  await query("INSERT INTO admin_users(id,username,username_normalized,password_hash) VALUES($1,$1,$1,'unused-test-hash')",[adminID]);
+  await query(`INSERT INTO admin_devices(id,admin_user_id,display_name,public_key_jwk,fingerprint_hash,is_root) VALUES($1,$2,'test','{"kty":"EC"}',$1,true)`,[deviceID,adminID]);
+  await query("INSERT INTO admin_sessions(id,admin_user_id,device_id,token_hash,csrf_hash,idle_expires_at,absolute_expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '30 minutes',now()+interval '8 hours')",[sessionID,adminID,deviceID,hashAdminToken(token),hashAdminToken(csrf)]);
+  const decide=(review,decision)=>fetch(api.base.replace(/\/api$/,'')+'/admin/api/moderation-reviews/'+review+'/decision',{
+    method:'POST',headers:{'content-type':'application/json',cookie:`zbt_admin_session=${token}; zbt_admin_csrf=${csrf}`,'x-csrf-token':csrf},body:JSON.stringify({decision,reason:'Verified synthetic content'})});
+  const post=await makePost(author,'review');
+  const makeReview=async()=>{const review=id('mr');await query("INSERT INTO moderation_reviews(id,target_type,target_id,owner_id) VALUES($1,'post',$2,$3)",[review,post,author.id]);return review;};
+  const review=await makeReview();let cursor=await getCurrentSyncCursor();
+  assert.equal((await decide(review,'approve')).status,200);
+  assert.ok((await loadSyncPayload(reader.id,{cursor})).posts.some(item=>item.id===post));
+  assert.equal((await decide(review,'remove')).status,409);
+  const removal=await makeReview();cursor=await getCurrentSyncCursor();
+  assert.equal((await decide(removal,'remove')).status,200);
+  assert.ok((await loadSyncPayload(reader.id,{cursor})).removedPostIDs.includes(post));
+  const stale=await makeReview();await query("UPDATE posts SET status='deleted' WHERE id=$1",[post]);
+  assert.equal((await decide(stale,'approve')).status,409);
+});
+
+test('queued sync events acquire their cursor after all business writes and roll back with them', async()=>{
+  const user=await makeUser(), entityId=id('p');let queued;
+  await withTransaction(async client=>{
+    queued=await createSyncEvent(client,event(user.id,entityId));
+    assert.equal(queued.id,undefined);
+    assert.equal((await client.query('SELECT 1 FROM sync_events WHERE entity_id=$1',[entityId])).rowCount,0);
+    await client.query("UPDATE users SET nickname='Committed with event' WHERE id=$1",[user.id]);
   });
-  let cursor = await getCurrentSyncCursor();
-  assert.equal((await api.request(`/moderation/reviews/${review}/decision`, { method: 'POST', token: admin.token, body: { decision: 'approve' } })).status, 200);
-  assert.ok((await loadSyncPayload(reader.id, { cursor })).posts.some(item => item.id === post));
-  cursor = await getCurrentSyncCursor();
-  assert.equal((await api.request(`/moderation/reviews/${review}/decision`, { method: 'POST', token: admin.token, body: { decision: 'remove' } })).status, 200);
-  assert.ok((await loadSyncPayload(reader.id, { cursor })).removedPostIDs.includes(post));
-  await query("UPDATE posts SET status='deleted' WHERE id=$1", [post]);
-  assert.equal((await api.request(`/moderation/reviews/${review}/decision`, { method: 'POST', token: admin.token, body: { decision: 'approve' } })).status, 409);
+  assert.ok(queued.id);
+  assert.equal((await query('SELECT nickname FROM users WHERE id=$1',[user.id])).rows[0].nickname,'Committed with event');
 });
 
 test('collection hiding invalidates child visibility; nonempty collection deletion is rejected', async () => {

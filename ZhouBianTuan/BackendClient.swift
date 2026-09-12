@@ -1,15 +1,13 @@
 import Foundation
 
 enum BackendDateParser {
+    static func strictDate(from value: String?) -> Date? {
+        guard let value else { return nil }
+        return fractionalFormatter.date(from: value) ?? plainFormatter.date(from: value)
+    }
+
     static func date(from value: String?) -> Date {
-        guard let value else { return Date() }
-        if let date = fractionalFormatter.date(from: value) {
-            return date
-        }
-        if let date = plainFormatter.date(from: value) {
-            return date
-        }
-        return Date()
+        strictDate(from: value) ?? Date()
     }
 
     private static let fractionalFormatter: ISO8601DateFormatter = {
@@ -197,6 +195,8 @@ struct BackendPost: Decodable {
     let pingguNote: String
     let unsoldRoles: [BackendRole]
     let revision: Int?
+    let safetyStatus: String?
+    let contactVisibility: String?
 
     func localPost() -> GroupBuyPost {
         GroupBuyPost(
@@ -222,13 +222,14 @@ struct BackendPost: Decodable {
             qq: qq,
             groupNumber: groupNumber ?? "",
             groupInfo: groupInfo,
+            contactVisibility: contactVisibility ?? "active",
             externalLink: externalLink,
             createdAt: BackendDateParser.date(from: createdAt),
             likedCount: likedCount,
             favoriteCount: favoriteCount,
             commentCount: commentCount,
             reportCount: reportCount,
-            status: ContentStatus.backendValue(status),
+            status: ["hidden", "removed", "suspended"].contains(safetyStatus ?? "active") ? .review : ContentStatus.backendValue(status),
             moderationReason: moderationReason ?? "",
             reviewID: reviewID ?? "",
             imageAspect: imageAspect,
@@ -255,6 +256,8 @@ struct BackendCollection: Decodable {
     let status: String?
     let revision: Int?
     let postCount: Int?
+    let safetyStatus: String?
+    let contactVisibility: String?
 
     func localCollection() -> GroupCollection {
         GroupCollection(
@@ -265,11 +268,12 @@ struct BackendCollection: Decodable {
             contactQQ: contactQQ,
             contactGroupNumber: contactGroupNumber ?? "",
             groupInfo: groupInfo,
+            contactVisibility: contactVisibility ?? "active",
             deadline: BackendDateParser.date(from: deadline),
             defaultNote: defaultNote,
             postIDs: postIDs,
             createdAt: BackendDateParser.date(from: createdAt),
-            status: ContentStatus.backendValue(status ?? "active"),
+            status: ["hidden", "removed", "suspended"].contains(safetyStatus ?? "active") ? .review : ContentStatus.backendValue(status ?? "active"),
             revision: revision ?? 1,
             postCount: postCount
         )
@@ -299,25 +303,58 @@ struct BackendReportTarget: Decodable {
 
 struct BackendReport: Decodable {
     let id: String
-    let target: BackendReportTarget
-    let reason: String
+    let target: BackendReportTarget?
+    let reason: String?
     let detail: String
-    let reporterID: String
+    let reporterID: String?
     let status: String
     let adminResult: String?
     let handledAt: String?
     let snapshot: ReportEvidence?
     let currentSnapshot: ReportEvidence?
+    let caseID: String?
+    let sourceType: SafetyTargetType?
+    let sourceID: String?
+    let subjectType: SafetyTargetType?
+    let subjectID: String?
+    let reasonCode: SafetyReasonCode?
+    let reportedField: SafetyReportedField?
+    let createdAt: String?
+    let updatedAt: String?
 
-    func localReport() -> Report {
-        let localTarget: ReportTarget
-        switch target.type {
-        case "comment": localTarget = .comment(target.id)
-        case "user": localTarget = .user(target.id)
-        case "message": localTarget = .message(target.id)
-        default: localTarget = .post(target.id)
-        }
-        return Report(id: id, target: localTarget, reason: reason, detail: detail, reporterID: reporterID, status: ReportStatus.backendValue(status), adminResult: adminResult, handledAt: handledAt.map(BackendDateParser.date(from:)), snapshot: snapshot, currentSnapshot: currentSnapshot)
+    func localReport() -> Report? {
+        guard let target, let reason, let reporterID else { return nil }
+        let localTarget: ReportTarget = target.type == "comment" ? .comment(target.id) : .post(target.id)
+        return Report(id: id, target: localTarget, reason: reason, detail: detail, reporterID: reporterID, status: ReportStatus.backendValue(status), adminResult: adminResult, handledAt: handledAt.map(BackendDateParser.date(from:)))
+    }
+
+    func safetyReport() -> SafetyReport? {
+        guard
+            let caseID,
+            let sourceType,
+            let sourceID,
+            let subjectType,
+            let subjectID,
+            let reasonCode,
+            let reportedField,
+            let safetyStatus = SafetyReportStatus(rawValue: status),
+            let createdAt,
+            let updatedAt
+        else { return nil }
+        return SafetyReport(
+            id: id,
+            caseID: caseID,
+            sourceType: sourceType,
+            sourceID: sourceID,
+            subjectType: subjectType,
+            subjectID: subjectID,
+            reasonCode: reasonCode,
+            reportedField: reportedField,
+            detail: detail,
+            status: safetyStatus,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
     }
 }
 
@@ -361,6 +398,7 @@ struct BackendDirectMessage: Decodable {
     let imageURL: String?
     let isRevoked: Bool?
     let isDeletedForMe: Bool?
+    let isSafetyHidden: Bool?
     let sharedPostID: String?
     let sharedProfileUserID: String?
 
@@ -373,6 +411,7 @@ struct BackendDirectMessage: Decodable {
             remoteImageURL: BackendAssetURLMapper.normalized(imageURL ?? ""),
             isRevoked: isRevoked ?? false,
             isDeletedForMe: isDeletedForMe ?? false,
+            isSafetyHidden: isSafetyHidden ?? false,
             sharedPostID: sharedPostID,
             sharedProfileUserID: sharedProfileUserID,
             revision: revision ?? 1
@@ -690,41 +729,122 @@ final class AliyunBackendClient {
         ])
     }
 
-    func moderationReviews(token: String, status: String = "review") async throws -> [ModerationReview] {
-        let payload: BackendModerationReviewsResponse = try await request("/moderation/reviews?status=\(status)", token: token)
-        return payload.reviews.map { $0.localReview() }
-    }
-
-    @discardableResult
-    func decideModerationReview(token: String, reviewID: String, decision: String, reason: String = "") async throws -> ModerationReview {
-        let payload: BackendModerationReviewResponse = try await request("/moderation/reviews/\(reviewID)/decision", method: "POST", token: token, body: [
-            "decision": decision,
-            "reason": reason
-        ])
-        return payload.review.localReview()
-    }
-
     func deleteComment(token: String, commentID: String) async throws {
         try await emptyRequest("/comments/\(commentID)", method: "DELETE", token: token)
     }
 
-    func submitReport(token: String, target: ReportTarget, reason: String, detail: String) async throws -> BackendReportResponse {
-        try await request("/reports", method: "POST", token: token, body: [
-            "targetType": target.type, "targetID": target.targetID, "reason": reason, "detail": detail
-        ])
+
+
+
+    func submitReport(token: String, draft: SafetyReportDraft) async throws -> SafetyReportResponse {
+        try await encodedRequest("/reports", method: "POST", token: token, body: draft)
     }
 
-    func reportsPage(token: String, admin: Bool, status: String = "all", cursor: String? = nil) async throws -> BackendReportsPage {
-        let path = admin ? "/moderation/reports" : "/reports"
-        var query = [URLQueryItem(name: "status", value: status), URLQueryItem(name: "limit", value: "30")]
-        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
-        var components = URLComponents(); components.queryItems = query
-        return try await request(path + "?" + (components.percentEncodedQuery ?? ""), method: "GET", token: token)
+    func appendReportEvidence(
+        token: String,
+        reportID: String,
+        clientRequestID: String,
+        objectKeys: [String],
+        detail: String
+    ) async throws -> SafetyReportResponse {
+        let reportID = try validatedReportID(reportID)
+        return try await encodedRequest(
+            "/reports/\(reportID)/evidence",
+            method: "POST",
+            token: token,
+            body: SafetyEvidenceSupplement(
+                clientRequestID: clientRequestID,
+                detail: detail,
+                objectKeys: objectKeys
+            )
+        )
     }
 
-    func decideReport(token: String, report: Report, action: String, reason: String) async throws -> BackendReportResponse {
-        try await request("/moderation/reports/\(report.id)/decision", method: "POST", token: token,
-            body: ["action": action, "reason": reason, "targetVersion": report.currentSnapshot?.version ?? ""])
+    private func validatedReportID(_ reportID: String) throws -> String {
+        let suffix = reportID.dropFirst(3)
+        let isSafeBody = !suffix.isEmpty && suffix.unicodeScalars.allSatisfy { scalar in
+            guard scalar.isASCII else { return false }
+            return CharacterSet.alphanumerics.contains(scalar) || scalar == "-"
+        }
+        guard reportID.hasPrefix("rp-"), reportID.count <= 128, isSafeBody else {
+            throw NSError(
+                domain: "AliyunBackendClient",
+                code: -1002,
+                userInfo: [NSLocalizedDescriptionKey: "举报记录 ID 无效"]
+            )
+        }
+        return reportID
+    }
+
+    func myReports(token: String) async throws -> [SafetyReport] {
+        let response: SafetyReportsResponse = try await request("/me/reports", token: token)
+        return response.reports
+    }
+
+    func contentActions(token: String) async throws -> [SafetyContentAction] {
+        var actions: [SafetyContentAction] = []
+        var cursor: String?
+        var seenCursors = Set<String>()
+
+        repeat {
+            let path: String
+            if let cursor {
+                var components = URLComponents()
+                components.path = "/me/content-actions"
+                components.queryItems = [URLQueryItem(name: "cursor", value: cursor)]
+                guard let encodedPath = components.string else {
+                    throw NSError(
+                        domain: "AliyunBackendClient",
+                        code: -1004,
+                        userInfo: [NSLocalizedDescriptionKey: "内容操作分页游标无效"]
+                    )
+                }
+                path = encodedPath
+            } else {
+                path = "/me/content-actions"
+            }
+            let response: SafetyContentActionsResponse = try await request(path, token: token)
+            actions.append(contentsOf: response.actions)
+            cursor = response.nextCursor
+            if let cursor, !seenCursors.insert(cursor).inserted {
+                throw NSError(
+                    domain: "AliyunBackendClient",
+                    code: -1003,
+                    userInfo: [NSLocalizedDescriptionKey: "内容操作分页游标重复"]
+                )
+            }
+        } while cursor != nil
+
+        return actions
+    }
+
+    func submitRevision<T: Encodable>(
+        token: String,
+        caseID: String,
+        draft: T
+    ) async throws -> SafetyContentAction {
+        let response: SafetyContentActionResponse = try await encodedRequest(
+            "/content-actions/\(caseID)/revisions",
+            method: "POST",
+            token: token,
+            body: draft
+        )
+        return response.action
+    }
+
+    func submitAppeal(
+        token: String,
+        caseID: String,
+        detail: String,
+        objectKeys: [String]
+    ) async throws -> SafetyContentAction {
+        let response: SafetyContentActionResponse = try await encodedRequest(
+            "/content-actions/\(caseID)/appeal",
+            method: "POST",
+            token: token,
+            body: SafetyAppealDraft(detail: detail, objectKeys: objectKeys)
+        )
+        return response.action
     }
 
     func deleteAccount(token: String) async throws {
@@ -763,6 +883,19 @@ final class AliyunBackendClient {
         try await uploadImages(token: token, images: [data], kind: "message", filenamePrefix: "message").first ?? ""
     }
 
+    func uploadReportImages(token: String, images: [Data]) async throws -> [String] {
+        try await uploadImages(token: token, images: images, kind: "report", filenamePrefix: "report-evidence")
+    }
+
+    func uploadReportImage(token: String, data: Data, index: Int) async throws -> String {
+        try await uploadImage(
+            token: token,
+            data: data,
+            kind: "report",
+            filename: "report-evidence-\(index).jpg"
+        )
+    }
+
     private func uploadImages(token: String, images: [Data], kind: String, filenamePrefix: String) async throws -> [String] {
         var keys: [String] = []
         for (index, data) in images.enumerated() {
@@ -791,6 +924,28 @@ final class AliyunBackendClient {
         return keys
     }
 
+    private func uploadImage(token: String, data: Data, kind: String, filename: String) async throws -> String {
+        let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
+            "kind": kind,
+            "filename": filename,
+            "contentType": "image/jpeg"
+        ])
+        guard let uploadURL = URL(string: target.uploadUrl) else {
+            throw NSError(domain: "AliyunBackendClient", code: -1000, userInfo: [NSLocalizedDescriptionKey: "上传地址无效"])
+        }
+        var request = URLRequest(url: uploadURL)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 45
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        do {
+            let (_, response) = try await session.upload(for: request, from: data)
+            try validate(response: response, data: Data())
+        } catch let error as URLError where error.code == .timedOut {
+            throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "图片上传超时，请换个网络或稍后重试"])
+        }
+        return target.objectKey
+    }
+
     func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
         try Task.checkCancellation()
         let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -805,6 +960,7 @@ final class AliyunBackendClient {
         let needsModeration = ["POST", "PATCH"].contains(method) && (trimmedPath == "me" || trimmedPath.hasPrefix("posts") || trimmedPath.hasPrefix("collections"))
         request.timeoutInterval = needsModeration ? 75 : 18
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("2", forHTTPHeaderField: "X-ZBT-Protocol")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -815,6 +971,41 @@ final class AliyunBackendClient {
         do {
             let (data, response) = try await session.data(for: request)
             try Task.checkCancellation()
+            try validate(response: response, data: data)
+            if T.self == EmptyResponse.self {
+                return EmptyResponse() as! T
+            }
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as URLError where error.code == .timedOut {
+            throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请稍后重试"])
+        }
+    }
+
+    private func encodedRequest<T: Decodable, Body: Encodable>(
+        _ path: String,
+        method: String,
+        token: String? = nil,
+        body: Body
+    ) async throws -> T {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let requestURL: URL
+        if trimmedPath.contains("?") {
+            requestURL = URL(string: "\(baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/\(trimmedPath)") ?? baseURL
+        } else {
+            requestURL = baseURL.appendingPathComponent(trimmedPath)
+        }
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = method
+        request.timeoutInterval = 18
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("2", forHTTPHeaderField: "X-ZBT-Protocol")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONEncoder().encode(body)
+        do {
+            let (data, response) = try await session.data(for: request)
             try validate(response: response, data: data)
             if T.self == EmptyResponse.self {
                 return EmptyResponse() as! T

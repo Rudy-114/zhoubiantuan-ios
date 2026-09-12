@@ -237,22 +237,21 @@ final class SessionIsolationTests: XCTestCase {
         let store = store()
         defer { store.logOut() }
         await login("A", store: store)
-        XCTAssertFalse(store.canModerate)
+        let draft = SafetyReportDraft(sourceType: .directMessage, sourceID: "dm-test", reasonCode: .harassmentOrAbuse, detail: "Please review", objectKeys: [])
         let held = RequestSlot(), started = expectation(description: "Report in flight")
         StubProtocol.handler = { request in held.set(request); started.fulfill() }
-        let submission = Task { await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review") }
+        let submission = Task { await store.submitSafetyReport(draft: draft, imageData: [], blockUserID: nil) }
         await fulfillment(of: [started], timeout: 3)
-        XCTAssertTrue(store.reports.isEmpty)
+        XCTAssertTrue(store.safetyReports.isEmpty)
         held.take().reply(["error": "Report could not be saved"], status: 503)
         let failed = await submission.value
         XCTAssertFalse(failed)
-        XCTAssertTrue(store.reports.isEmpty)
-        StubProtocol.handler = { $0.reply(["report": ["id": "rp-test", "target": ["type": "message", "id": "dm-test"],
-            "reason": "Harassment", "detail": "Please review", "reporterID": "A", "status": "pending"]]) }
-        let saved = await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review")
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        StubProtocol.handler = { $0.reply(["duplicate": false, "report": ["id": "rp-test", "caseID": "sc-test", "sourceType": "direct_message", "sourceID": "dm-test", "subjectType": "direct_message", "subjectID": "dm-test", "reasonCode": "harassment_or_abuse", "reportedField": "content", "detail": "Please review", "status": "received", "createdAt": "2026-09-12T00:00:00Z", "updatedAt": "2026-09-12T00:00:00Z"]]) }
+        let saved = await store.submitSafetyReport(draft: draft, imageData: [], blockUserID: nil)
         XCTAssertTrue(saved)
-        XCTAssertEqual(store.reports.count, 1)
-        XCTAssertEqual(store.reports.first?.target, .message("dm-test"))
+        XCTAssertEqual(store.safetyReports.count, 1)
+        XCTAssertEqual(store.safetyReports.first?.sourceID, "dm-test")
     }
 
     func testPaginationForwardsTheCursorAndMergesPagesWithoutDuplicateRows() async {

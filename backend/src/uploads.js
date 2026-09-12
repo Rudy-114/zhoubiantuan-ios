@@ -1,3 +1,5 @@
+import { registerReportUpload } from "./safety/reportUploadCleanup.js";
+import { loadRetainedSafetyObjectKeys } from "./safety/objectRetention.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import express from "express";
 import sharp from "sharp";
@@ -17,9 +19,9 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 export async function issueUploadTicket(userId, body) {
   const contentType = String(body.contentType || "").toLowerCase();
   if (!types.has(contentType)) throw badRequest("仅支持上传 JPEG / PNG / WebP 图片");
-  if (!["post", "avatar", "background", "message"].includes(body.kind)) throw badRequest("上传类型无效");
+  if (!["post", "avatar", "background", "message", "report"].includes(body.kind)) throw badRequest("上传类型无效");
   const token = randomBytes(32).toString("hex");
-  const key = `guarded/${body.kind}/${userId}/${randomUUID()}.jpg`;
+  const key = body.kind === "report" ? `report/${userId}/${new Date().toISOString().slice(0,10)}/${randomUUID()}.jpg` : `guarded/${body.kind}/${userId}/${randomUUID()}.jpg`;
   await withTransaction(async client => {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`upload:${userId}`]);
     const { rows } = await client.query(`SELECT count(*) AS count FROM upload_tickets
@@ -29,9 +31,10 @@ export async function issueUploadTicket(userId, body) {
     }
     await client.query(`INSERT INTO upload_tickets(token_hash, object_key, user_id, kind, content_type)
       VALUES($1, $2, $3, $4, $5)`, [hash(token), key, userId, body.kind, contentType]);
+    if (body.kind === "report") await registerReportUpload(client, { ownerUserID: userId, objectKey: key, runAt: new Date(Date.now() + 86400000), maxOutstanding: config.safety.reportUploadOutstandingMax, maxIssued24h: config.safety.reportUploadAccountMax24h });
   });
   return { objectKey: key, uploadUrl: `${config.publicApiBaseUrl.replace(/\/+$/, "")}/uploads/${token}`,
-    expiresIn: 900, maxBytes: MAX_UPLOAD_BYTES, readUrl: publicAssetUrl(key) };
+    expiresIn: 900, maxBytes: MAX_UPLOAD_BYTES, ...(body.kind === "report" ? {} : { readUrl: publicAssetUrl(key) }) };
 }
 
 export async function normalizeImage(data, contentType) {
@@ -93,8 +96,10 @@ export async function assertReadyUploads(userId, keys, client = { query }, { ret
 export async function cleanupUnusedUploads(storage, limit = 100) {
   const keys = await withTransaction(async client => {
     const { rows } = await client.query(`SELECT object_key FROM upload_tickets
-      WHERE referenced_at IS NULL AND created_at < clock_timestamp() - interval '7 days'
+      WHERE kind <> 'report' AND referenced_at IS NULL AND created_at < clock_timestamp() - interval '7 days'
       ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit]);
+    const retained = await loadRetainedSafetyObjectKeys(client, rows.map(row => row.object_key));
+    for (let i = rows.length - 1; i >= 0; i--) if (retained.has(rows[i].object_key)) rows.splice(i, 1);
     if (rows.length) await client.query("UPDATE upload_tickets SET status = 'cleaning' WHERE object_key = ANY($1::text[])", [rows.map(row => row.object_key)]);
     return rows.map(row => row.object_key);
   });

@@ -35,7 +35,7 @@
 **Interfaces:**
 - Produces: `processCorrectionDeadlines`, `closeLowRiskCases`, `clearExpiredEvidence`, `deidentifyExpiredAudit`, and periodic job enqueue.
 
-- [ ] **Step 1: Write failing time-controlled tests**
+- [x] **Step 1: Write failing time-controlled tests**
 
 Use injected `now` and cover:
 
@@ -50,11 +50,11 @@ two-year audit -> identifiers removed or row deleted according to event class
 repeat maintenance -> no duplicate action/event
 ```
 
-- [ ] **Step 2: Implement correction and low-risk rules**
+- [x] **Step 2: Implement correction and low-risk rules**
 
 Lock candidate cases with `FOR UPDATE SKIP LOCKED`. For overdue invalid contact, apply `suspend_collection` with idempotency key `deadline:suspend_collection:<caseId>`. For low-risk closure, require zero reports created in the last seven days beyond the original clue, no hard signal, no manual hold, and no active action.
 
-- [ ] **Step 3: Clear raw evidence safely**
+- [x] **Step 3: Clear raw evidence safely**
 
 For closed direct-message cases older than 180 days:
 
@@ -69,15 +69,15 @@ WHERE id = $1 AND redacted_at IS NULL;
 
 Collect object keys before update, commit, then best-effort delete from OSS. Clear related `safety_ai_runs.raw_response`. Keep case, event, action, category, dates, and de-identified outcome metadata.
 
-- [ ] **Step 4: De-identify two-year metadata**
+- [x] **Step 4: De-identify two-year metadata**
 
 For audit events older than two years, remove actor/session/device/IP identifiers and retain only event type, subject type, coarse month, and outcome when needed for aggregate accountability; delete low-value auth failure rows entirely. Unresolved cases and pending appeals are excluded from this cleanup.
 
-- [ ] **Step 5: Schedule maintenance through PostgreSQL jobs**
+- [x] **Step 5: Schedule maintenance through PostgreSQL jobs**
 
 At startup and every hour, enqueue unique hour-keyed jobs rather than running cleanup directly from timers. Register handlers with concurrency 1 per maintenance type so service restarts and multiple processes remain safe.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 ```bash
 npm --prefix backend run test:db
@@ -97,11 +97,11 @@ git commit -m "Add safety retention and deadline jobs"
 **Interfaces:**
 - Produces: `evaluateEnforcementGate(client)` and `assertAutomaticActionsAllowed(client)`.
 
-- [ ] **Step 1: Write every gate failure test**
+- [x] **Step 1: Write every gate failure test**
 
 Assert false for: fixture count 99, fixture schema failure, auto-hide precision 0.949, real evaluations 29, one scope error, one automated account action, model/prompt/policy version mismatch, and stale fixture version. Assert true only when all exact conditions pass.
 
-- [ ] **Step 2: Implement the gate result**
+- [x] **Step 2: Implement the gate result**
 
 ```js
 export async function evaluateEnforcementGate(client) {
@@ -121,15 +121,15 @@ export async function evaluateEnforcementGate(client) {
 
 Fixture metrics are computed at runtime from `backend/src/safety/fixtures/policyCases.js`; real evaluation metrics join only `safety_ai_runs.is_synthetic=false` and the current model, prompt, and policy versions. A version change therefore restarts the 30-case comparison window without deleting old audit history.
 
-- [ ] **Step 3: Check immediately before action application**
+- [x] **Step 3: Check immediately before action application**
 
 Even when `SAFETY_AI_MODE=enforce`, `aiService` must re-read the current case, verify run/case version, call the gate, and only then call `applySafetyAction`. A failed gate stores proposals and sets reason `enforcement_gate_closed`; it does not mark the provider run failed.
 
-- [ ] **Step 4: Expose gate checks without a bypass button**
+- [x] **Step 4: Expose gate checks without a bypass button**
 
 AI Health displays each check and evidence count. There is no web toggle that overrides failures. Mode changes remain an operator environment/restart action, and runtime gate still controls execution.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bash
 npm --prefix backend test
@@ -150,19 +150,19 @@ git commit -m "Gate automatic safety enforcement"
 **Interfaces:**
 - Produces: `markReportInvalid`, `independentReporterCount`, and admin “举报滥用” action.
 
-- [ ] **Step 1: Write failing count tests**
+- [x] **Step 1: Write failing count tests**
 
 Verify one account retry/evidence supplements count once, two valid distinct accounts count twice, closed/invalid abuse reports do not count, restricted reporters do not trigger the automatic threshold, and all clues remain visible to admin with their counting status.
 
-- [ ] **Step 2: Implement invalidation without deleting evidence**
+- [x] **Step 2: Implement invalidation without deleting evidence**
 
 Admin can mark a report `invalid` with reason `malicious`, `coordinated`, `mistaken_target`, or `other`. Append event/audit, preserve evidence under retention, recalculate case independent count, and re-evaluate only reversible automatic actions. Never punish a target based on invalidated clues.
 
-- [ ] **Step 3: Use the count in invalid-contact policy**
+- [x] **Step 3: Use the count in invalid-contact policy**
 
 Compute distinct active reporter IDs within rolling seven days where report status is pending/closed-valid and abuse flag is absent. The threshold triggers only `hide_collection_contact`; account punishment is still impossible.
 
-- [ ] **Step 4: Add compact admin controls and commit**
+- [x] **Step 4: Add compact admin controls and commit**
 
 Show whether each clue counts toward the threshold. Marking abuse requires a reason and single-item confirmation.
 
@@ -184,27 +184,27 @@ git commit -m "Harden independent report counting"
 **Interfaces:**
 - Tests real Express HTTP, PostgreSQL, jobs, mocked Aliyun/Qwen, admin signatures, and sync events.
 
-- [ ] **Step 1: Build deterministic actors**
+- [x] **Step 1: Build deterministic actors**
 
 Create owner, reporter A, reporter B, unrelated user, admin root, admin second device, collection, two child posts, comments, message thread, and seven-message context. Generate all tokens/keys in memory; never fixture real credentials.
 
-- [ ] **Step 2: Test post-only action**
+- [x] **Step 2: Test post-only action**
 
 Report a post image/content issue, run shadow analysis and human temporary hide, assert sibling post stays visible, owner sees correction, reporter sees handled, correct revision restores same ID and interactions.
 
-- [ ] **Step 3: Test collection contact cascade**
+- [x] **Step 3: Test collection contact cascade**
 
 First invalid-contact report requests correction without hide. Second independent report within seven days hides collection contact, not posts. Advance 24 hours without correction to suspend collection, assert child statuses unchanged, publish corrected collection, and assert independently clean child restores while an independently hidden child does not.
 
-- [ ] **Step 4: Test private message safety**
+- [x] **Step 4: Test private message safety**
 
 Report incoming message with block on, assert personal block and immutable seven-message evidence, apply temporary message hide distinct from revoke, close case, advance 180 days, run retention, and assert raw context cleared.
 
-- [ ] **Step 5: Test admin device and appeal boundaries**
+- [x] **Step 5: Test admin device and appeal boundaries**
 
 Prove password-only second device pending, root approval required, human restriction cannot auto-restore, one appeal accepted within seven days, second appeal rejected, AI cannot decide, and recovery revokes both old sessions.
 
-- [ ] **Step 6: Run E2E in the DB script and commit**
+- [x] **Step 6: Run E2E in the DB script and commit**
 
 Update the script to run safety/admin/e2e integration directories serially.
 
@@ -224,11 +224,11 @@ git commit -m "Test complete safety case lifecycle"
 **Interfaces:**
 - Documents exact local verification, production flags, admin recovery, migration order, rollout, rollback, and incident response without secret values.
 
-- [ ] **Step 1: Document architecture and ownership**
+- [x] **Step 1: Document architecture and ownership**
 
 List API/service modules, job types, tables, provider roles, human-only actions, data retention, and why child post state is not mutated by a collection case.
 
-- [ ] **Step 2: Document environment variable names and safe defaults**
+- [x] **Step 2: Document environment variable names and safe defaults**
 
 Include names, purpose, and safe defaults only:
 
@@ -239,20 +239,25 @@ SAFETY_AUTO_ACTIONS_ENABLED=false
 SAFETY_AI_MONTHLY_BUDGET_CNY=0
 SAFETY_QWEN_INPUT_CNY_PER_MILLION=0
 SAFETY_QWEN_OUTPUT_CNY_PER_MILLION=0
+SAFETY_REPORT_UPLOAD_OUTSTANDING_MAX=24
+SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H=60
+SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H=40
+SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H=120
+SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE=10
 ADMIN_WEB_ENABLED=false
 ```
 
 Refer operators to mode-600 environment files; never include keys, passwords, recovery codes, host IPs, or tokens.
 
-- [ ] **Step 3: Document exact rollout and rollback**
+- [x] **Step 3: Document exact rollout and rollback**
 
-Rollout order: P0, 013, core off, intake on/AI off, iOS, 014, 015, admin web/root, 016, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
+Rollout order: P0, 013, core off, intake on/AI off, iOS, 014 report-upload cleanup, 015 content remediation, 016 admin auth, admin web/root, 017 safety AI, 018 retry audit, shadow, gate, enforce. Rollback order: stop automatic actions, AI off, intake compatibility, revoke admin sessions if needed, rollback individual actions, restore Nginx backup. Database down migrations are test artifacts, not first-line production rollback.
 
-- [ ] **Step 4: Document incident procedures**
+- [x] **Step 4: Document incident procedures**
 
 Include provider outage, queue growth, budget exhaustion, false automatic hide, lost root device, suspected admin session theft, evidence access review, and WebSocket regression. Every procedure names the observable signal, immediate containment, verification, and recovery.
 
-- [ ] **Step 5: Add a release checklist and commit**
+- [x] **Step 5: Add a release checklist and commit**
 
 Checklist includes tests, Xcode, browser desktop/narrow, secret scan, staged files, migrations, backup, flags, health/privacy/feed/sync/ws, admin login/device, one disposable report, correction, audit, provider mode, and rollback command.
 
@@ -269,15 +274,15 @@ git commit -m "Document safety system operations"
 **Interfaces:**
 - REQUIRED SUB-SKILL: `superpowers:requesting-code-review`.
 
-- [ ] **Step 1: Request review against the design and plan**
+- [x] **Step 1: Request review against the design and plan**
 
 Review from the pre-feature checkpoint through current HEAD for: spec coverage, auth bypass, privacy leaks, SQL concurrency, action idempotency, scope expansion, migration safety, client retry behavior, admin accessibility, provider spend, and rollback.
 
-- [ ] **Step 2: Address every critical/high finding test-first**
+- [x] **Step 2: Address every critical/high finding test-first**
 
 Use `superpowers:receiving-code-review` for feedback. Reproduce each accepted defect with a failing test, implement the smallest fix, rerun focused/full tests, and make one focused commit per independent issue.
 
-- [ ] **Step 3: Record accepted residual risks**
+- [x] **Step 3: Record accepted residual risks**
 
 Only document risks that cannot be removed without changing the approved scope, such as real-case shadow evidence requiring elapsed production usage. Do not relabel unfinished implementation as residual risk.
 
@@ -289,7 +294,7 @@ Only document risks that cannot be removed without changing the approved scope, 
 **Interfaces:**
 - REQUIRED SUB-SKILL before claims: `superpowers:verification-before-completion`.
 
-- [ ] **Step 1: Run all automated checks from a clean process state**
+- [x] **Step 1: Run all automated checks from a clean process state**
 
 ```bash
 npm --prefix backend test
@@ -299,15 +304,15 @@ xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration D
 git diff --check
 ```
 
-- [ ] **Step 2: Run admin browser QA through Playwright CLI**
+- [x] **Step 2: Run admin browser QA through Playwright CLI**
 
 Repeat login, queue, evidence reveal, decision, correction comparison, appeal, audit, AI health, device approval/revocation, logout, desktop 1440x900, and narrow 390x844. Save screenshots only under ignored `output/playwright/`, inspect them, then close the browser and server.
 
-- [ ] **Step 3: Run two-simulator iOS QA**
+- [x] **Step 3: Run two-simulator iOS QA**
 
 Verify five report entries, collection scope confirmation, offline retry, default block, My Reports, Content Remediation, same-ID restoration, appeal, realtime update, foreground sync, and no three-second idle polling.
 
-- [ ] **Step 4: Run secret and privacy scans**
+- [x] **Step 4: Run secret and privacy scans**
 
 ```bash
 git grep -nE 'DASHSCOPE_API_KEY=.+|ALIYUN_ACCESS_KEY_SECRET=.+|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|zbt_admin_session=|WS_TEST_TOKEN=.+' -- ':!docs/superpowers/plans/**'
@@ -325,19 +330,19 @@ Expected: no secret-value matches; staged files contain only intentional source/
 **Interfaces:**
 - Uses the release checklist and established private SSH environment variables.
 
-- [ ] **Step 1: Announce and confirm mutable production steps**
+- [x] **Step 1: Announce and confirm mutable production steps**
 
 List exact migrations not yet applied, service restart count, flags, backup/snapshot state, disposable test data, and rollback commands. Paid validation remains separately confirmed from Phase 7.
 
-- [ ] **Step 2: Deploy in approved order**
+- [x] **Step 2: Deploy in approved order**
 
 Verify staged source has no secrets, sync without `.env`/tests/artifacts unless required, install locked dependencies, migrate, restart, and check service active/restart count/log errors.
 
-- [ ] **Step 3: Run public and authenticated smoke**
+- [x] **Step 3: Run public and authenticated smoke**
 
 Verify health, privacy, feed, login, bootstrap, sync, public WebSocket, admin login/root signature, one disposable report, case appearance, human no-action decision, owner/reporter status, and audit. Remove disposable rows through supported cleanup/admin paths.
 
-- [ ] **Step 4: Verify production safety mode**
+- [x] **Step 4: Verify production safety mode**
 
 Required initial state:
 
@@ -349,7 +354,7 @@ enforcement gate: closed until 30 real comparisons
 automatic account actions: 0
 ```
 
-- [ ] **Step 5: Drill reversible rollback without an incident**
+- [x] **Step 5: Drill reversible rollback without an incident**
 
 On a disposable case, apply and roll back a temporary action, verify state/events/audit. Toggle automatic actions off if not already, verify report intake continues. Do not drop tables or erase evidence.
 
@@ -369,10 +374,20 @@ When and only when all server checks pass, present metrics and proposed reversib
 **Interfaces:**
 - REQUIRED SUB-SKILL: `superpowers:finishing-a-development-branch`.
 
-- [ ] **Step 1: Confirm every implementation commit and worktree state**
+- [x] **Step 1: Confirm every implementation commit and worktree state**
 
 Review `git log --oneline`, `git status`, untracked files, staged files, and branch divergence. Preserve unrelated user modifications.
 
-- [ ] **Step 2: Present integration choices**
+Audit checkpoint: branch `codex/report-safety-system` at `6a38ea9`; `main`
+at `0e9b02c` is its merge base and ancestor; the feature branch is 88 commits
+ahead and 0 behind across 212 changed paths. There are no staged or untracked
+files. The only worktree modification is the user-owned `CODEX_HANDOFF.md`,
+which remains unstaged and must not be included in branch-finalization commits.
+
+- [x] **Step 2: Present integration choices**
 
 Use the finishing skill to offer merge, pull request, keep branch, or cleanup options based on the actual branch/worktree. Do not push or merge without Rudy's choice.
+
+Rudy chose to keep branch `codex/report-safety-system` and its worktree in
+place. No merge, push, pull request, or cleanup was performed. The user-owned
+`CODEX_HANDOFF.md` modifications in both worktrees remain untouched.

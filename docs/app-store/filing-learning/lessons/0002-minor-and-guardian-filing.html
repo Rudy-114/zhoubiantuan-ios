@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>未成年人和监护人怎样选择备案主体</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <p class="status">监护人共同确认</p>
+  <h1>未成年人和监护人怎样选择备案主体</h1>
+  <p class="lead">“监护人代办”不等于“借用家长身份证”。先确定谁是真实主办者，再让姓名、域名和核验流程保持一致。</p>
+
+  <h2>两条可能路线</h2>
+  <div class="term"><strong>家长作为主体：</strong>家长同意成为互联网信息服务主办者，以家长真实信息提交并亲自完成人脸、短信等核验；域名实名也与家长匹配。家长将承担备案维护和运营责任。</div>
+  <div class="term"><strong>未成年人作为主体、监护人代办：</strong>仅在主体所在地管局允许的年龄范围和材料条件下采用，需要监护人参与并提供监护关系证明。不能假设所有省份都允许。</div>
+
+  <h2>为什么要先查所在地规则</h2>
+  <p>备案规则按主体所在地通信管理局执行，而不是按服务器所在地决定。例如阿里云公布的上海规则写明：个人申请原则上须满 18 周岁；16 至 18 周岁确有需要时，由监护人代办并提供有效监护关系证明。其他省份可能不同。</p>
+
+  <h2>HTTPS、域名实名和 ICP 不是一回事</h2>
+  <table>
+    <thead><tr><th>事项</th><th>它证明什么</th><th>能否证明已有 ICP</th></tr></thead>
+    <tbody>
+      <tr><td>SSL/HTTPS 证书</td><td>网站连接可加密，并完成证书要求的域名控制验证</td><td>不能</td></tr>
+      <tr><td>域名实名认证</td><td>域名登记在某个人或单位名下</td><td>不能</td></tr>
+      <tr><td>ICP 备案</td><td>主管部门记录了主办者、服务、域名和接入信息</td><td>能，会有备案订单和备案号</td></tr>
+    </tbody>
+  </table>
+
+  <h2>安全的判断顺序</h2>
+  <ol>
+    <li>在“ICP备案 → 我的备案”查看是否已经存在主体和备案号。</li>
+    <li>在“域名 → 基本信息”确认域名实名持有人。</li>
+    <li>查询主体所在省份规则，并由家长确认是否愿意成为真实主体。</li>
+    <li>只在三项一致后开始 App 备案；不要复制粘贴不属于真实主办者的信息。</li>
+  </ol>
+
+  <p>首选资料：<a href="https://help.aliyun.com/zh/icp-filing/icp-filing-regulations-for-shanghai">阿里云上海备案规则</a>、<a href="https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/prepare-and-check-the-domain-name">阿里云域名核验要求</a>。</p>
+  <p><a href="0001-understand-filing-prerequisites.html">返回上一课</a>。如果所在省份或控制台页面不明确，请继续让 Codex 帮你核对。</p>
+</main>
+</body>
+</html>

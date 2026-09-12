@@ -20,6 +20,17 @@ final class MockAppStore: ObservableObject {
     @Published private var totalUnreadMessageCount: Int?
     private var unreadSnapshotCursor: Int64?
     @Published var reports: [Report]
+    @Published var safetyReports: [SafetyReport] = []
+    @Published private(set) var safetyContentActions: [SafetyContentAction] = []
+    @Published var isSubmittingSafetyReport = false
+    @Published private(set) var isLoadingMyReports = false
+    @Published private(set) var hasFinishedMyReportsLoad = false
+    @Published private(set) var myReportsErrorMessage: String?
+    @Published private(set) var isSubmittingMyReportsSupplement = false
+    @Published private(set) var myReportsSupplementErrorMessage: String?
+    @Published private(set) var isLoadingSafetyContentActions = false
+    @Published private(set) var isSubmittingSafetyContentAction = false
+    @Published private(set) var safetyContentActionErrorMessage: String?
     @Published var likedPostIDs: Set<String>
     @Published var favoritePostIDs: Set<String>
     @Published var followedUserIDs: Set<String>
@@ -28,11 +39,13 @@ final class MockAppStore: ObservableObject {
     @Published var blockedByUserIDs: Set<String> = []
     @Published var browsingHistoryIDs: [String] {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
         }
     }
     @Published var searchHistory: [String] {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(searchHistory, forKey: Self.searchHistoryDefaultsKey)
         }
     }
@@ -40,6 +53,7 @@ final class MockAppStore: ObservableObject {
     @Published var isAuthPromptPresented = false
     @Published var isLoggedIn: Bool {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(isLoggedIn, forKey: Self.loginDefaultsKey)
         }
     }
@@ -48,16 +62,19 @@ final class MockAppStore: ObservableObject {
     @Published private(set) var isLoadingInitialFeed = false
     @Published var isDarkModeEnabled: Bool {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
         }
     }
     @Published var limitsUnrepliedMessages: Bool {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(limitsUnrepliedMessages, forKey: Self.messageLimitDefaultsKey)
         }
     }
     @Published var isBackendEnabled: Bool {
         didSet {
+            guard persistsData else { return }
             UserDefaults.standard.set(isBackendEnabled, forKey: Self.backendEnabledDefaultsKey)
         }
     }
@@ -103,6 +120,21 @@ final class MockAppStore: ObservableObject {
     private var nextFallbackSyncAt = Date.distantPast
     private var fallbackAttempt = 0
     private var syncHintPending = false
+    private var safetyReportSubmissionState = SafetyReportSubmissionState()
+    private var authoritativeMyReportsEpoch = UUID()
+    private var nextAuthoritativeMyReportsGeneration = 0
+    private var committedAuthoritativeMyReportsGeneration = 0
+    private var myReportsLoadingOwner: AuthoritativeMyReportsRequest?
+    private var safetyEvidenceSupplementAttempts: [String: SafetyEvidenceSupplementAttempt] = [:]
+    private var safetyContentActionEpoch = UUID()
+    private var nextSafetyContentActionGeneration = 0
+    private var committedSafetyContentActionGeneration = 0
+    private var safetyContentActionLoadingOwner: SafetyContentActionRequest?
+    private var safetyContentActionSubmissionOwner: UUID?
+    private var authExpirySuppressedUntil = Date.distantPast
+    private var safetyReportFormSnapshot: SafetyReportFormSnapshot?
+    private var usesPersistentStorage: Bool { persistsData }
+    var hasSafetyReportFormSnapshot: Bool { safetyReportFormSnapshot != nil }
     var backendToken: String? {
         get {
             if !persistsData { return cachedBackendToken }
@@ -283,6 +315,8 @@ final class MockAppStore: ObservableObject {
     }
 
     private func invalidateSessionWork() {
+        resetSafetyReportSessionState()
+        clearSafetyReportFormSnapshot()
         totalUnreadMessageCount = nil
         unreadSnapshotCursor = nil
         messageCache.invalidate()
@@ -302,6 +336,10 @@ final class MockAppStore: ObservableObject {
         isLoadingInitialFeed = false
     }
 
+    convenience init(backendClient: AliyunBackendClient = AliyunBackendClient(), persistenceMode: PersistenceMode) {
+        self.init(backendClient: backendClient, persistsData: persistenceMode == .persistent, automaticallyRefresh: persistenceMode == .persistent)
+    }
+
     // MARK: - Initialization
 
     init(backendClient: AliyunBackendClient = AliyunBackendClient(), persistsData: Bool = true, automaticallyRefresh: Bool = true) {
@@ -318,7 +356,7 @@ final class MockAppStore: ObservableObject {
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
-        UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
+        if persistsData { UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey) }
         isBackendEnabled = true
         let blankUser = Self.blankUser
         users = [blankUser]
@@ -413,46 +451,49 @@ final class MockAppStore: ObservableObject {
         }
     }
 
-    func refreshFromBackend(silent: Bool = false) async {
+    @discardableResult
+    func refreshFromBackend(silent: Bool = false) async -> Bool {
         let session = authSessionVersion
-        guard isBackendEnabled, let backendToken else { return }
-        guard !isRefreshingFromBackend else { return }
+        guard isBackendEnabled, let backendToken, !isRefreshingFromBackend else { return false }
         let requestID = UUID()
         refreshRequestID = requestID
         defer { if refreshRequestID == requestID { refreshRequestID = nil } }
         do {
             let payload = try await backendClient.bootstrap(token: backendToken)
-            guard isCurrentSession(session) else { return }
+            guard isCurrentSession(session) else { return false }
             applyBackendPayload(payload)
             let appliedSession = authSessionVersion
+            do {
+                try await refreshSafetyContentActions(token: backendToken, sessionVersion: appliedSession)
+            } catch {
+                guard isCurrentSession(appliedSession) else { return false }
+                if isAuthExpiredError(error) { expireCloudSession(silent: silent); return false }
+                if isCancellationError(error) { return false }
+                safetyContentActionErrorMessage = error.localizedDescription
+            }
+            guard isCurrentSession(appliedSession) else { return false }
             await loadBlockedUsers()
-            guard isCurrentSession(appliedSession) else { return }
-            if !silent {
-                showToast("云端数据已同步")
-            }
+            guard isCurrentSession(appliedSession) else { return false }
+            if !silent { showToast("云端数据已同步") }
+            return true
         } catch {
-            guard isCurrentSession(session) else { return }
-            if isAuthExpiredError(error) {
-                expireCloudSession(silent: silent)
-                return
-            }
-            if !silent {
-                showToast(error.localizedDescription)
-            }
+            guard isCurrentSession(session) else { return false }
+            if isAuthExpiredError(error) { expireCloudSession(silent: silent); return false }
+            if !silent && !isCancellationError(error) { showToast(error.localizedDescription) }
+            return false
         }
     }
 
-    func syncFromBackend(reason: String = "manual") async {
+    @discardableResult
+    func syncFromBackend(reason: String = "manual") async -> Bool {
         let session = authSessionVersion
-        guard isBackendEnabled, let backendToken else { return }
+        guard isBackendEnabled, let backendToken else { return false }
         guard !isRefreshingFromBackend, !isSyncingFromBackend else {
             if reason.hasPrefix("websocket") { syncHintPending = true }
-            return
+            return false
         }
         guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
-            await refreshFromBackend(silent: true)
-            guard isCurrentSession(session) else { return }
-            return
+            return await refreshFromBackend(silent: true)
         }
         let requestID = UUID()
         syncRequestID = requestID
@@ -470,35 +511,31 @@ final class MockAppStore: ObservableObject {
         }
         do {
             let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
-            guard isCurrentSession(session) else { return }
-            if payload.resetRequired == true {
-                await refreshFromBackend(silent: true)
-                guard isCurrentSession(session) else { return }
-                return
-            }
+            guard isCurrentSession(session) else { return false }
+            if payload.resetRequired == true { return await refreshFromBackend(silent: true) }
             if isRealtimeConnected { nextFallbackSyncAt = Date().addingTimeInterval(Self.backendHealthySyncInterval) }
-            applySyncPayload(payload)
-            if payload.contentRefreshRequired == true {
-                await refreshFromBackend(silent: true)
-                guard isCurrentSession(session) else { return }
-                return
+            if payload.events.contains(where: { $0.eventType == "safety.report.updated" }) {
+                try await refreshSafetyReports(token: backendToken, sessionVersion: session)
+                guard isCurrentSession(session) else { return false }
             }
+            if reason == "foreground" || payload.events.contains(where: { $0.entityType == "safety_case" }) {
+                try await refreshSafetyContentActions(token: backendToken, sessionVersion: session)
+                guard isCurrentSession(session) else { return false }
+            }
+            applySyncPayload(payload)
+            if payload.contentRefreshRequired == true { return await refreshFromBackend(silent: true) }
             if payload.hasMore {
-                runSessionTask { [self] session in
-                    guard isCurrentSession(session) else { return }
+                runSessionTask { [self] owner in
+                    guard isCurrentSession(owner) else { return }
                     await syncFromBackend(reason: "\(reason).more")
                 }
             }
+            return true
         } catch {
-            guard isCurrentSession(session) else { return }
-            if isAuthExpiredError(error) {
-                expireCloudSession(silent: true)
-                return
-            }
-            if reason == "foreground" || reason == "manual" {
-                await refreshFromBackend(silent: true)
-                guard isCurrentSession(session) else { return }
-            }
+            guard isCurrentSession(session) else { return false }
+            if isAuthExpiredError(error) { expireCloudSession(silent: true); return false }
+            if reason == "foreground" || reason == "manual" { return await refreshFromBackend(silent: true) }
+            return false
         }
     }
 
@@ -554,10 +591,17 @@ final class MockAppStore: ObservableObject {
         return nsError.domain == "AliyunBackendClient" && nsError.code == 401
     }
 
-    private func expireCloudSession(silent: Bool = false) {
+    @discardableResult
+    private func expireCloudSession(silent: Bool = false, bypassSuppression: Bool = false, preserveSafetyReports: [SafetyReport]? = nil, toast: String? = nil) -> Bool {
+        guard bypassSuppression || Date() >= authExpirySuppressedUntil else { return false }
+        let draft = safetyReportFormSnapshot
         logOut()
+        // Keep an unsent in-memory draft for this identity; explicit logout still clears it.
+        safetyReportFormSnapshot = draft
+        if let preserveSafetyReports { safetyReports = preserveSafetyReports }
         isAuthPromptPresented = !silent
-        toastMessage = silent ? nil : "登录已失效，请重新登录"
+        toastMessage = silent ? nil : (toast ?? "登录已失效，请重新登录")
+        return true
     }
 
     private func invalidateCloudSessionForMissingToken(prompt: Bool, toast: String? = nil) {
@@ -570,8 +614,10 @@ final class MockAppStore: ObservableObject {
         invalidateContentPages()
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
+        let resumableDraft = (payload.currentUser?.id).flatMap { resumableSafetyReportFormSnapshot(for: $0) }
         if payload.token != nil || (payload.currentUser?.id != nil && payload.currentUser?.id != previousUserID) || (!previousLoggedIn && payload.currentUser != nil) {
             invalidateSessionWork()
+            safetyReportFormSnapshot = resumableDraft
         }
         if let token = payload.token {
             backendToken = token
@@ -598,7 +644,8 @@ final class MockAppStore: ObservableObject {
             }
         }
         if let reports = payload.reports {
-            self.reports = reports.map { $0.localReport() }
+            self.reports = reports.compactMap { $0.localReport() }
+            mergeSafetyReports(reports.compactMap { $0.safetyReport() })
         }
         if let likedPostIDs = payload.likedPostIDs {
             self.likedPostIDs = Set(likedPostIDs)
@@ -650,7 +697,7 @@ final class MockAppStore: ObservableObject {
 
     private func applySyncPayload(_ payload: BackendSyncPayload) {
         mergeUnreadSnapshot(payload.unreadMessageCount, cursor: payload.unreadCursor)
-        for report in payload.reports?.map({ $0.localReport() }) ?? [] {
+        for report in payload.reports?.compactMap({ $0.localReport() }) ?? [] {
             reports.removeAll { $0.id == report.id }
             reports.insert(report, at: 0)
         }
@@ -1283,40 +1330,7 @@ final class MockAppStore: ObservableObject {
 
     var canModerate: Bool { isLoggedIn && ["moderator", "admin"].contains(currentUser.moderationRole) }
 
-    func submitReport(target: ReportTarget, reason: String, detail: String) async -> Bool {
-        let session = authSessionVersion
-        guard requireLogin(prompt: "登录后才能举报") else { return false }
-        guard isBackendEnabled, let backendToken else { showToast("请连接云端后提交举报"); return false }
-        do {
-            let saved = try await backendClient.submitReport(token: backendToken, target: target, reason: reason, detail: detail).report.localReport()
-            guard isCurrentSession(session) else { return false }
-            reports.removeAll { $0.id == saved.id }
-            reports.insert(saved, at: 0)
-            showToast("举报已提交，可在设置中查看处理进度")
-            return true
-        } catch {
-            guard isCurrentSession(session) else { return false }
-            showToast(error.localizedDescription)
-            return false
-        }
-    }
 
-    func decideReport(_ report: Report, action: String, reason: String) async -> Bool {
-        let session = authSessionVersion
-        guard canModerate, let backendToken else { return false }
-        do {
-            _ = try await backendClient.decideReport(token: backendToken, report: report, action: action, reason: reason)
-            guard isCurrentSession(session) else { return false }
-            await syncFromBackend(reason: "report.decision")
-            guard isCurrentSession(session) else { return false }
-            showToast("处理结果已保存")
-            return true
-        } catch {
-            guard isCurrentSession(session) else { return false }
-            showToast(error.localizedDescription)
-            return false
-        }
-    }
 
     func copyToPasteboard(_ value: String, label: String) {
         guard requireLogin(prompt: "登录后才能复制内容") else { return }
@@ -1467,6 +1481,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func blockUser(_ userID: String) async {
+        suppressAuthExpiryDuringBlockMutation()
         let session = authSessionVersion
         guard userID != currentUserID else { return }
         guard requireLogin(prompt: "登录后才能拉黑") else { return }
@@ -2497,4 +2512,989 @@ final class MockAppStore: ObservableObject {
         let base = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
         return Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: base) ?? base
     }
+
+    enum PersistenceMode {
+        case persistent
+        case preview
+    }
+
+    enum SafetyReportMergePolicy {
+        case conservative
+        case serverAuthoritative
+    }
+
+    private struct AuthoritativeMyReportsRequest: Equatable {
+        let epoch: UUID
+        let sessionVersion: UUID
+        let generation: Int
+    }
+
+    private struct SafetyEvidenceSupplementAttempt {
+        let generation: UUID
+        let reportID: String
+        let detail: String
+        let imageData: [Data]
+        var objectKeys: [String?]
+    }
+
+    private struct SafetyContentActionRequest: Equatable {
+        let epoch: UUID
+        let sessionVersion: UUID
+        let generation: Int
+    }
+
+    static func previewStore() -> MockAppStore {
+        MockAppStore(persistenceMode: .preview)
+    }
+
+    func saveSafetyReportFormSnapshot(_ snapshot: SafetyReportFormSnapshot) {
+        safetyReportFormSnapshot = snapshot
+    }
+
+    func clearSafetyReportFormSnapshot() {
+        safetyReportFormSnapshot = nil
+    }
+
+    func resumableSafetyReportFormSnapshot(for userID: String) -> SafetyReportFormSnapshot? {
+        guard safetyReportFormSnapshot?.reporterUserID == userID else { return nil }
+        return safetyReportFormSnapshot
+    }
+
+    private func prepareForAuthenticatedIdentity(_ userID: String) {
+        guard let snapshot = safetyReportFormSnapshot else { return }
+        if userID != currentUserID || snapshot.reporterUserID != userID {
+            clearSafetyReportFormSnapshot()
+        }
+    }
+
+    private func hasBackendErrorCode(_ code: String, error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "AliyunBackendClient"
+            && nsError.userInfo[AliyunBackendClient.errorCodeUserInfoKey] as? String == code
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    private func isCurrentCloudSession(token: String, sessionVersion: UUID) -> Bool {
+        authSessionVersion == sessionVersion && backendToken == token
+    }
+
+    @discardableResult
+    private func expireCloudSessionIfCurrent(
+        token: String,
+        sessionVersion: UUID,
+        silent: Bool,
+        bypassSuppression: Bool,
+        preserveSafetyReports: [SafetyReport]? = nil,
+        toast: String? = nil
+    ) -> Bool {
+        guard isCurrentCloudSession(token: token, sessionVersion: sessionVersion) else { return false }
+        return expireCloudSession(
+            silent: silent,
+            bypassSuppression: bypassSuppression,
+            preserveSafetyReports: preserveSafetyReports,
+            toast: toast
+        )
+    }
+
+    func mergeSafetyReports(
+        _ incomingReports: [SafetyReport],
+        policy: SafetyReportMergePolicy = .conservative
+    ) {
+        guard !incomingReports.isEmpty else { return }
+        var reportsByID = Dictionary(uniqueKeysWithValues: safetyReports.map { ($0.id, $0) })
+        var stableOrder = Dictionary(uniqueKeysWithValues: safetyReports.enumerated().map { ($0.element.id, $0.offset) })
+        var nextOrder = stableOrder.count
+
+        for report in incomingReports {
+            if stableOrder[report.id] == nil {
+                stableOrder[report.id] = nextOrder
+                nextOrder += 1
+            }
+            if let existing = reportsByID[report.id] {
+                let existingUpdatedAt = BackendDateParser.strictDate(from: existing.updatedAt)
+                let incomingUpdatedAt = BackendDateParser.strictDate(from: report.updatedAt)
+                switch (existingUpdatedAt, incomingUpdatedAt) {
+                case (_, nil):
+                    continue
+                case let (.some(existingDate), .some(incomingDate))
+                    where incomingDate < existingDate
+                        || (incomingDate == existingDate && policy == .conservative):
+                    continue
+                default:
+                    break
+                }
+            }
+            reportsByID[report.id] = report
+        }
+
+        safetyReports = reportsByID.values.sorted { lhs, rhs in
+            let lhsUpdatedAt = BackendDateParser.strictDate(from: lhs.updatedAt) ?? .distantPast
+            let rhsUpdatedAt = BackendDateParser.strictDate(from: rhs.updatedAt) ?? .distantPast
+            if lhsUpdatedAt != rhsUpdatedAt { return lhsUpdatedAt > rhsUpdatedAt }
+            let lhsCreatedAt = BackendDateParser.strictDate(from: lhs.createdAt) ?? .distantPast
+            let rhsCreatedAt = BackendDateParser.strictDate(from: rhs.createdAt) ?? .distantPast
+            if lhsCreatedAt != rhsCreatedAt { return lhsCreatedAt > rhsCreatedAt }
+            return stableOrder[lhs.id, default: .max] < stableOrder[rhs.id, default: .max]
+        }
+    }
+
+    private func refreshSafetyReports(token: String, sessionVersion: UUID) async throws {
+        let request = beginAuthoritativeMyReportsRequest(sessionVersion: sessionVersion)
+        let reports = try await backendClient.myReports(token: token)
+        commitAuthoritativeMyReports(reports, request: request, token: token)
+    }
+
+    @discardableResult
+    func refreshSafetyContentActions() async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再查看内容操作"
+            return false
+        }
+        let sessionVersion = authSessionVersion
+        do {
+            try await refreshSafetyContentActions(token: backendToken, sessionVersion: sessionVersion)
+            return isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion)
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            if isCancellationError(error) { return false }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func refreshSafetyContentActions(token: String, sessionVersion: UUID) async throws {
+        nextSafetyContentActionGeneration += 1
+        let request = SafetyContentActionRequest(
+            epoch: safetyContentActionEpoch,
+            sessionVersion: sessionVersion,
+            generation: nextSafetyContentActionGeneration
+        )
+        safetyContentActionLoadingOwner = request
+        isLoadingSafetyContentActions = true
+        defer {
+            if safetyContentActionLoadingOwner == request {
+                safetyContentActionLoadingOwner = nil
+                isLoadingSafetyContentActions = false
+            }
+        }
+
+        let actions = try await backendClient.contentActions(token: token)
+        guard isCurrentCloudSession(token: token, sessionVersion: sessionVersion) else {
+            throw CancellationError()
+        }
+        guard request.epoch == safetyContentActionEpoch,
+              request.generation > committedSafetyContentActionGeneration else { return }
+        committedSafetyContentActionGeneration = request.generation
+        safetyContentActions = sortedSafetyContentActions(actions)
+        safetyContentActionErrorMessage = nil
+    }
+
+    @discardableResult
+    func submitRevision(caseID: String, draft: SafetyRevisionDraft) async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交整改"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            let action = try await backendClient.submitRevision(
+                token: backendToken,
+                caseID: caseID,
+                draft: draft
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func submitPostRevision(
+        caseID: String,
+        candidate: GroupBuyPost,
+        imageData: [Data]
+    ) async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交整改"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            async let uploadedObjectKeys = backendClient.uploadPostImages(
+                token: backendToken,
+                images: imageData
+            )
+            async let uploadedPreviewObjectKeys = backendClient.uploadPostPreviewImages(
+                token: backendToken,
+                images: imageData
+            )
+            let (objectKeys, previewObjectKeys) = try await (
+                uploadedObjectKeys,
+                uploadedPreviewObjectKeys
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            let snapshot = SafetyPostRevisionSnapshot(
+                title: candidate.title,
+                imageNames: candidate.imageNames,
+                imageObjectKeys: objectKeys,
+                previewImageObjectKeys: previewObjectKeys,
+                groupType: candidate.groupType.backendValue,
+                categoryTags: candidate.categoryTags,
+                fandomTags: candidate.fandomTags,
+                price: candidate.price,
+                deposit: candidate.deposit,
+                condition: candidate.condition,
+                isFormed: candidate.isFormed,
+                description: candidate.description,
+                externalLink: candidate.externalLink,
+                imageAspect: candidate.imageAspect,
+                pingguAveragePrice: candidate.pingguAveragePrice,
+                pingguNote: candidate.pingguNote,
+                unsoldRoles: candidate.unsoldRoles.map {
+                    SafetyRevisionRoleSnapshot(
+                        id: $0.id,
+                        name: $0.name,
+                        quantity: $0.quantity,
+                        priceAdjustment: $0.priceAdjustment
+                    )
+                }
+            )
+            let action = try await backendClient.submitRevision(
+                token: backendToken,
+                caseID: caseID,
+                draft: SafetyRevisionDraft.post(snapshot: snapshot, objectKeys: objectKeys)
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func submitAppeal(caseID: String, detail: String, objectKeys: [String]) async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交申诉"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            let action = try await backendClient.submitAppeal(
+                token: backendToken,
+                caseID: caseID,
+                detail: detail,
+                objectKeys: objectKeys
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func submitAppeal(caseID: String, detail: String, imageData: [Data]) async -> Bool {
+        let trimmedDetail = detail.trimmed
+        guard !trimmedDetail.isEmpty else {
+            safetyContentActionErrorMessage = "请填写申诉说明"
+            return false
+        }
+        guard SafetyReportFormLogic.codePointCount(in: trimmedDetail) <= 1_000 else {
+            safetyContentActionErrorMessage = "申诉说明最多填写 1000 字"
+            return false
+        }
+        guard imageData.count <= 6 else {
+            safetyContentActionErrorMessage = "申诉图片最多上传 6 张"
+            return false
+        }
+        guard isBackendEnabled, let backendToken else {
+            safetyContentActionErrorMessage = "请先登录再提交申诉"
+            return false
+        }
+        guard safetyContentActionSubmissionOwner == nil else { return false }
+        let sessionVersion = authSessionVersion
+        let submissionOwner = UUID()
+        safetyContentActionSubmissionOwner = submissionOwner
+        isSubmittingSafetyContentAction = true
+        safetyContentActionErrorMessage = nil
+        defer { releaseSafetyContentActionSubmission(owner: submissionOwner) }
+
+        do {
+            let objectKeys = try await backendClient.uploadReportImages(
+                token: backendToken,
+                images: imageData
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            let action = try await backendClient.submitAppeal(
+                token: backendToken,
+                caseID: caseID,
+                detail: trimmedDetail,
+                objectKeys: objectKeys
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            invalidateOutstandingSafetyContentActionRefreshes()
+            mergeSafetyContentAction(action)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            safetyContentActionErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func mergeSafetyContentAction(_ action: SafetyContentAction) {
+        var actions = Dictionary(uniqueKeysWithValues: safetyContentActions.map { ($0.caseID, $0) })
+        actions[action.caseID] = action
+        safetyContentActions = sortedSafetyContentActions(Array(actions.values))
+        safetyContentActionErrorMessage = nil
+    }
+
+    private func invalidateOutstandingSafetyContentActionRefreshes() {
+        committedSafetyContentActionGeneration = max(
+            committedSafetyContentActionGeneration,
+            nextSafetyContentActionGeneration
+        )
+    }
+
+    private func releaseSafetyContentActionSubmission(owner: UUID) {
+        guard safetyContentActionSubmissionOwner == owner else { return }
+        safetyContentActionSubmissionOwner = nil
+        isSubmittingSafetyContentAction = false
+    }
+
+    private func sortedSafetyContentActions(_ actions: [SafetyContentAction]) -> [SafetyContentAction] {
+        actions.sorted { lhs, rhs in
+            let lhsDate = BackendDateParser.strictDate(from: lhs.updatedAt) ?? .distantPast
+            let rhsDate = BackendDateParser.strictDate(from: rhs.updatedAt) ?? .distantPast
+            if lhsDate != rhsDate { return lhsDate > rhsDate }
+            return lhs.caseID < rhs.caseID
+        }
+    }
+
+    @discardableResult
+    func refreshMyReports() async -> Bool {
+        guard isBackendEnabled, let backendToken else {
+            myReportsErrorMessage = "请先登录再查看举报"
+            hasFinishedMyReportsLoad = true
+            return false
+        }
+        let sessionVersion = authSessionVersion
+        let request = beginAuthoritativeMyReportsRequest(sessionVersion: sessionVersion)
+        myReportsLoadingOwner = request
+        isLoadingMyReports = true
+        myReportsErrorMessage = nil
+        defer {
+            finishMyReportsLoading(ifOwnedBy: request)
+        }
+
+        do {
+            let reports = try await backendClient.myReports(token: backendToken)
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            commitAuthoritativeMyReports(reports, request: request, token: backendToken)
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            if isCancellationError(error) {
+                return false
+            }
+            guard canApplyAuthoritativeMyReportsFailure(
+                request: request,
+                token: backendToken
+            ) else {
+                return false
+            }
+            hasFinishedMyReportsLoad = true
+            myReportsErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func beginSafetyReportSubmission() -> UUID? {
+        let submissionID = safetyReportSubmissionState.begin()
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+        return submissionID
+    }
+
+    private func finishSafetyReportSubmission(_ submissionID: UUID) {
+        safetyReportSubmissionState.finish(submissionID)
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+    }
+
+    private func beginAuthoritativeMyReportsRequest(
+        sessionVersion: UUID
+    ) -> AuthoritativeMyReportsRequest {
+        nextAuthoritativeMyReportsGeneration += 1
+        return AuthoritativeMyReportsRequest(
+            epoch: authoritativeMyReportsEpoch,
+            sessionVersion: sessionVersion,
+            generation: nextAuthoritativeMyReportsGeneration
+        )
+    }
+
+    private func commitAuthoritativeMyReports(
+        _ reports: [SafetyReport],
+        request: AuthoritativeMyReportsRequest,
+        token: String
+    ) {
+        guard request.epoch == authoritativeMyReportsEpoch,
+              isCurrentCloudSession(token: token, sessionVersion: request.sessionVersion),
+              request.generation > committedAuthoritativeMyReportsGeneration else {
+            return
+        }
+        committedAuthoritativeMyReportsGeneration = request.generation
+        mergeSafetyReports(reports, policy: .serverAuthoritative)
+        hasFinishedMyReportsLoad = true
+        myReportsErrorMessage = nil
+        releaseMyReportsLoadingOwner(supersededBy: request)
+    }
+
+    private func finishMyReportsLoading(ifOwnedBy request: AuthoritativeMyReportsRequest) {
+        guard myReportsLoadingOwner == request else { return }
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+    }
+
+    private func releaseMyReportsLoadingOwner(supersededBy request: AuthoritativeMyReportsRequest) {
+        guard let owner = myReportsLoadingOwner,
+              owner.epoch == request.epoch,
+              owner.sessionVersion == request.sessionVersion,
+              owner.generation <= request.generation else {
+            return
+        }
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+    }
+
+    private func canApplyAuthoritativeMyReportsFailure(
+        request: AuthoritativeMyReportsRequest,
+        token: String
+    ) -> Bool {
+        request.epoch == authoritativeMyReportsEpoch
+            && isCurrentCloudSession(token: token, sessionVersion: request.sessionVersion)
+            && request.generation > committedAuthoritativeMyReportsGeneration
+    }
+
+    private func resetSafetyReportSessionState() {
+        safetyReports.removeAll()
+        safetyContentActions.removeAll()
+        safetyReportSubmissionState.reset()
+        isSubmittingSafetyReport = safetyReportSubmissionState.isSubmitting
+        myReportsLoadingOwner = nil
+        isLoadingMyReports = false
+        hasFinishedMyReportsLoad = false
+        myReportsErrorMessage = nil
+        authoritativeMyReportsEpoch = UUID()
+        nextAuthoritativeMyReportsGeneration = 0
+        committedAuthoritativeMyReportsGeneration = 0
+        isSubmittingMyReportsSupplement = false
+        myReportsSupplementErrorMessage = nil
+        safetyEvidenceSupplementAttempts.removeAll()
+        safetyContentActionEpoch = UUID()
+        nextSafetyContentActionGeneration = 0
+        committedSafetyContentActionGeneration = 0
+        safetyContentActionLoadingOwner = nil
+        isLoadingSafetyContentActions = false
+        safetyContentActionSubmissionOwner = nil
+        isSubmittingSafetyContentAction = false
+        safetyContentActionErrorMessage = nil
+    }
+
+    func submitSafetyReport(
+        draft: SafetyReportDraft,
+        imageData: [Data],
+        blockUserID: String?
+    ) async -> Bool {
+        guard requireLogin(prompt: "登录后才能举报") else { return false }
+        guard isBackendEnabled else {
+            showToast("当前模式不支持云端举报")
+            return false
+        }
+        guard let backendToken else {
+            invalidateCloudSessionForMissingToken(prompt: true, toast: "云端登录状态异常，请重新登录后再举报")
+            return false
+        }
+        guard let submissionID = beginSafetyReportSubmission() else { return false }
+        defer { finishSafetyReportSubmission(submissionID) }
+        let submissionSessionVersion = authSessionVersion
+
+        do {
+            let objectKeys = try await backendClient.uploadReportImages(token: backendToken, images: imageData)
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return false
+            }
+            let wireDraft = SafetyReportDraft(
+                clientRequestID: draft.clientRequestID,
+                sourceType: draft.sourceType,
+                sourceID: draft.sourceID,
+                reasonCode: draft.reasonCode,
+                reportedField: draft.reportedField,
+                detail: draft.detail,
+                objectKeys: objectKeys
+            )
+            let response = try await backendClient.submitReport(token: backendToken, draft: wireDraft)
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return true
+            }
+            mergeSafetyReports([response.report])
+            clearSafetyReportFormSnapshot()
+
+            let acceptedMessage = response.duplicate ? "该问题已在处理中" : "举报已提交"
+            showToast(acceptedMessage)
+            if let blockUserID, blockUserID != currentUserID, !isBlocked(blockUserID) {
+                do {
+                    try await blockUserAndWait(
+                        blockUserID,
+                        token: backendToken,
+                        sessionVersion: submissionSessionVersion
+                    )
+                    guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                        return true
+                    }
+                } catch {
+                    if isAuthExpiredError(error) {
+                        let expiredMessage = "\(acceptedMessage)，但登录已失效，拉黑未完成"
+                        _ = expireCloudSessionIfCurrent(
+                            token: backendToken,
+                            sessionVersion: submissionSessionVersion,
+                            silent: false,
+                            bypassSuppression: true,
+                            preserveSafetyReports: safetyReports,
+                            toast: expiredMessage
+                        )
+                        return true
+                    }
+                    guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                        return true
+                    }
+                    showToast("\(acceptedMessage)，但拉黑失败：\(error.localizedDescription)")
+                }
+            }
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: submissionSessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            guard submissionSessionVersion == authSessionVersion, self.backendToken == backendToken else {
+                return false
+            }
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    func appendSafetyReportEvidence(
+        reportID: String,
+        clientRequestID: String,
+        detail: String,
+        imageData: [Data]
+    ) async -> Bool {
+        myReportsSupplementErrorMessage = nil
+        guard requireLogin(prompt: "登录后才能补充证据") else {
+            myReportsSupplementErrorMessage = "请先登录再补充证据"
+            return false
+        }
+        let existingAttempt = safetyEvidenceSupplementAttempts[clientRequestID]
+        guard existingAttempt == nil || existingAttempt?.reportID == reportID else {
+            myReportsSupplementErrorMessage = "补证请求与举报记录不匹配"
+            return false
+        }
+        if existingAttempt == nil {
+            guard imageData.count <= SafetyReportFormLogic.maxEvidenceCount else {
+                myReportsSupplementErrorMessage = "最多上传 \(SafetyReportFormLogic.maxEvidenceCount) 张证据图片"
+                return false
+            }
+            guard SafetyReportFormLogic.codePointCount(in: detail) <= SafetyReportFormLogic.detailLimit else {
+                myReportsSupplementErrorMessage = "补充说明最多填写 \(SafetyReportFormLogic.detailLimit) 字"
+                return false
+            }
+            guard !detail.trimmed.isEmpty || !imageData.isEmpty else {
+                myReportsSupplementErrorMessage = "请填写补充说明或上传证据"
+                return false
+            }
+        }
+        guard let report = safetyReports.first(where: { $0.id == reportID }) else {
+            myReportsSupplementErrorMessage = "举报记录不存在"
+            return false
+        }
+        guard report.status == .received || report.status == .reviewing else {
+            myReportsSupplementErrorMessage = "举报已经结束，不能补充证据"
+            return false
+        }
+        guard isBackendEnabled else {
+            myReportsSupplementErrorMessage = "当前模式不支持补充证据"
+            return false
+        }
+        guard let backendToken else {
+            myReportsSupplementErrorMessage = "云端登录状态异常，请重新登录"
+            invalidateCloudSessionForMissingToken(
+                prompt: true,
+                toast: myReportsSupplementErrorMessage
+            )
+            return false
+        }
+        guard !isSubmittingMyReportsSupplement else { return false }
+
+        var attempt = existingAttempt ?? SafetyEvidenceSupplementAttempt(
+            generation: UUID(),
+            reportID: reportID,
+            detail: detail.trimmed,
+            imageData: imageData,
+            objectKeys: Array(repeating: nil, count: imageData.count)
+        )
+        safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+
+        let sessionVersion = authSessionVersion
+        isSubmittingMyReportsSupplement = true
+        defer {
+            if isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) {
+                isSubmittingMyReportsSupplement = false
+            }
+        }
+
+        do {
+            for (index, image) in attempt.imageData.enumerated()
+            where attempt.objectKeys[index] == nil {
+                let objectKey = try await backendClient.uploadReportImage(
+                    token: backendToken,
+                    data: image,
+                    index: index
+                )
+                guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                    return false
+                }
+                guard isCurrentSafetyEvidenceSupplementAttempt(
+                    attempt,
+                    clientRequestID: clientRequestID
+                ) else {
+                    return false
+                }
+                attempt.objectKeys[index] = objectKey
+                safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+            }
+            let objectKeys = attempt.objectKeys.compactMap { $0 }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            let response = try await backendClient.appendReportEvidence(
+                token: backendToken,
+                reportID: reportID,
+                clientRequestID: clientRequestID,
+                objectKeys: objectKeys,
+                detail: attempt.detail
+            )
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            guard response.report.id == reportID else {
+                myReportsSupplementErrorMessage = "举报记录返回异常"
+                return false
+            }
+            safetyEvidenceSupplementAttempts.removeValue(forKey: clientRequestID)
+            mergeSafetyReports([response.report])
+            hasFinishedMyReportsLoad = true
+            return true
+        } catch {
+            if isAuthExpiredError(error) {
+                expireCloudSessionIfCurrent(
+                    token: backendToken,
+                    sessionVersion: sessionVersion,
+                    silent: false,
+                    bypassSuppression: true
+                )
+                return false
+            }
+            if hasBackendErrorCode("report_upload_unavailable", error: error) {
+                guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                    return false
+                }
+                guard isCurrentSafetyEvidenceSupplementAttempt(
+                    attempt,
+                    clientRequestID: clientRequestID
+                ) else {
+                    return false
+                }
+                attempt.objectKeys = Array(repeating: nil, count: attempt.imageData.count)
+                safetyEvidenceSupplementAttempts[clientRequestID] = attempt
+                myReportsSupplementErrorMessage = "上传证据已失效，请重试"
+                return false
+            }
+            guard isCurrentCloudSession(token: backendToken, sessionVersion: sessionVersion) else {
+                return false
+            }
+            guard isCurrentSafetyEvidenceSupplementAttempt(
+                attempt,
+                clientRequestID: clientRequestID
+            ) else {
+                return false
+            }
+            myReportsSupplementErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func clearMyReportsSupplementError() {
+        myReportsSupplementErrorMessage = nil
+    }
+
+    func discardSafetyReportEvidenceAttempt(clientRequestID: String) {
+        safetyEvidenceSupplementAttempts.removeValue(forKey: clientRequestID)
+    }
+
+    private func isCurrentSafetyEvidenceSupplementAttempt(
+        _ attempt: SafetyEvidenceSupplementAttempt,
+        clientRequestID: String
+    ) -> Bool {
+        safetyEvidenceSupplementAttempts[clientRequestID]?.generation == attempt.generation
+    }
+
+    private func blockUserAndWait(_ userID: String, token: String, sessionVersion: UUID) async throws {
+        suppressAuthExpiryDuringBlockMutation()
+        try await backendClient.blockUser(token: token, userID: userID)
+        guard sessionVersion == authSessionVersion, backendToken == token else { return }
+        applyLocalBlock(userID)
+    }
+
+    private func suppressAuthExpiryDuringBlockMutation() {
+        authExpirySuppressedUntil = Date().addingTimeInterval(8)
+    }
+
+    func installContentRemediationPreviewFixture() {
+        isLoggedIn = true
+        isBackendEnabled = false
+        let collection = GroupCollection(
+            id: "collection-remediation-preview",
+            ownerID: currentUserID,
+            name: "冬季小卡拼团合集",
+            contactWechat: "preview-owner",
+            contactQQ: "",
+            contactGroupNumber: "",
+            groupInfo: "备注昵称后拉群",
+            deadline: Date().addingTimeInterval(172_800),
+            defaultNote: "合集内商品共享联系方式与截团时间。",
+            postIDs: ["post-remediation-preview"],
+            createdAt: Date()
+        )
+        let post = GroupBuyPost(
+            id: "post-remediation-preview",
+            title: "巡演限定小卡套组二开",
+            imageNames: ["merch_photocards"],
+            authorID: currentUserID,
+            collectionID: collection.id,
+            categoryTags: ["小卡", "预售"],
+            fandomTags: [],
+            price: "¥35-68",
+            deposit: "定金 30%",
+            deadline: collection.deadline,
+            condition: "满 60 套开团",
+            isFormed: false,
+            description: "预览用公开内容",
+            wechat: collection.contactWechat,
+            qq: "",
+            groupNumber: "",
+            groupInfo: collection.groupInfo,
+            externalLink: "",
+            createdAt: Date(),
+            likedCount: 18,
+            favoriteCount: 9,
+            commentCount: 4,
+            reportCount: 0,
+            status: .hidden,
+            imageAspect: 1.08
+        )
+        collections = [collection]
+        posts = [post]
+
+        func action(
+            id: String,
+            targetType: SafetyTargetType = .post,
+            targetID: String = "post-remediation-preview",
+            status: String,
+            revisionStatus: String? = nil,
+            canSubmitRevision: Bool = false,
+            canAppeal: Bool = false,
+            restriction: String = "帖子当前已隐藏"
+        ) -> SafetyContentAction {
+            SafetyContentAction(
+                caseID: id,
+                targetType: targetType,
+                targetID: targetID,
+                category: .other,
+                status: status,
+                affectedFields: targetType == .collection ? [.contactWechat, .collectionDefaultNote] : [.content],
+                reason: revisionStatus == "rejected"
+                    ? "上次提交仍缺少完整商品来源说明，请补充后再次提交。"
+                    : "请核实受影响字段并提交准确内容。",
+                currentRestriction: restriction,
+                correctionDueAt: status == "awaiting_correction"
+                    ? BackendDateParserString.string(from: Date().addingTimeInterval(86_400))
+                    : nil,
+                canSubmitRevision: canSubmitRevision,
+                canAppeal: canAppeal,
+                revisionStatus: revisionStatus,
+                updatedAt: BackendDateParserString.string(from: Date())
+            )
+        }
+
+        let waiting = action(id: "case-waiting", status: "awaiting_correction", canSubmitRevision: true)
+        let collectionWaiting = action(
+            id: "case-collection-waiting",
+            targetType: .collection,
+            targetID: collection.id,
+            status: "awaiting_correction",
+            canSubmitRevision: true,
+            restriction: "合集联系方式当前已隐藏"
+        )
+        let rejected = action(id: "case-rejected", status: "awaiting_correction", revisionStatus: "rejected", canSubmitRevision: true)
+        let reviewing = action(id: "case-reviewing", status: "reviewing", revisionStatus: "pending")
+        let manual = action(
+                id: "case-manual",
+                targetType: .collection,
+                targetID: collection.id,
+                status: "manual_review",
+                restriction: "合集联系方式当前已隐藏"
+            )
+        let appeal = action(id: "case-appeal", status: "resolved_actioned", canAppeal: true)
+        let restored = action(id: "case-restored", status: "resolved_restored", revisionStatus: "published", restriction: "")
+        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "resolved" {
+            safetyContentActions = [appeal, restored, manual, reviewing, waiting, collectionWaiting, rejected]
+        } else {
+            safetyContentActions = [waiting, collectionWaiting, rejected, reviewing, manual, appeal, restored]
+        }
+    }
+
 }

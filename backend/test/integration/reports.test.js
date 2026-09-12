@@ -1,110 +1,88 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startTestApp, makeUser, query, id } from './helpers.js';
+import { randomBytes } from 'node:crypto';
+import { startTestApp, makeUser, query, withTransaction, id } from './helpers.js';
 import { canReadAsset } from '../../src/assets.js';
-import { getCurrentSyncCursor } from '../../src/sync.js';
+import { getCurrentSyncCursor, loadSyncPayload } from '../../src/sync.js';
+import { applySafetyAction } from '../../src/safety/actionService.js';
+import { assetCapability, assetCapabilityReader } from '../../src/assetCapability.js';
+import { userForToken } from '../../src/auth.js';
+import { config } from '../../src/config.js';
 
 let api;
-before(async () => { api = await startTestApp(); });
+before(async () => {
+  config.safety.enabled = true;
+  config.safety.reportBurstMaxMinute = 100;
+  config.safety.reportAccountMax24h = 100;
+  config.safety.reportIpMax24h = 500;
+  api = await startTestApp();
+});
 after(async () => { await api.close(); });
 async function post(user) {
-  const postID = id('p');
-  await query("INSERT INTO posts(id,author_id,title,description,deadline) VALUES($1,$2,'Reported post','Original content',now()+interval '1 day')", [postID,user.id]);
+  const postID=id('p');
+  await query("INSERT INTO posts(id,author_id,title,description,deadline) VALUES($1,$2,'Reported post','Original content',now()+interval '1 day')",[postID,user.id]);
   return postID;
 }
-async function submit(user, type, targetID) {
-  return api.request('/reports', { method: 'POST', token: user.token, body: { targetType: type, targetID, reason: 'Potential scam', detail: 'Synthetic report for testing' } });
-}
-async function queue(admin) { return (await api.request('/moderation/reports?status=pending', { token: admin.token }).then(r => r.json())).reports; }
-async function decide(admin, report, action = 'remove') {
-  return api.request(`/moderation/reports/${report.id}/decision`, { method: 'POST', token: admin.token,
-    body: { action, reason: 'Reviewed synthetic evidence', targetVersion: report.currentSnapshot?.version } });
+async function submit(user,type,sourceID,clientRequestID=id('request')) {
+  return api.request('/reports',{method:'POST',token:user.token,body:{clientRequestID,sourceType:type,sourceID,reasonCode:'other',reportedField:'content',detail:'Synthetic report for testing'}});
 }
 
-test('report creation deduplicates retries and reporter, stranger and moderator see only their permitted data', async () => {
-  const owner = await makeUser(), reporter = await makeUser(), stranger = await makeUser(), moderator = await makeUser({role:'moderator'});
-  const postID = await post(owner);
-  const responses = await Promise.all([1,2].map(() => submit(reporter,'post',postID)));
-  assert.deepEqual(responses.map(r => r.status).sort(), [200,201]);
-  const saved = (await responses[0].json()).report;
-  assert.equal(saved.snapshot, undefined);
-  const own = await api.request('/reports', {token:reporter.token}).then(r => r.json());
-  assert.equal(own.reports.length, 1); assert.equal(own.reports[0].snapshot, undefined);
-  assert.equal((await api.request('/reports', {token:stranger.token}).then(r => r.json())).reports.length, 0);
-  assert.equal((await api.request('/moderation/reports', {token:stranger.token})).status,403);
-  assert.equal((await api.request(`/moderation/reports/${saved.id}/decision`, {method:'POST',token:stranger.token,body:{action:'remove',reason:'No rights'}})).status,403);
-  const adminReport = (await queue(moderator)).find(r => r.id===saved.id);
-  assert.match(adminReport.snapshot.text, /Original content/);
-  assert.equal(adminReport.currentSnapshot.version,'1');
-  assert.equal((await submit(stranger, 'unknown', postID)).status,400);
+test('canonical case reports deduplicate retries, preserve evidence, and expose only the reporter own public status',async()=>{
+  const owner=await makeUser(), reporter=await makeUser(), stranger=await makeUser();
+  const postID=await post(owner), requestID=id('request');
+  const results=await Promise.all([submit(reporter,'post',postID,requestID),submit(reporter,'post',postID,requestID)]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,201]);
+  const saved=(await results[0].json()).report;
+  assert.ok(saved.caseID);assert.equal(saved.status,'received');assert.equal(saved.snapshot,undefined);
+  const own=await api.request('/me/reports',{token:reporter.token}).then(r=>r.json());
+  assert.equal(own.reports.length,1);assert.equal(own.reports[0].id,saved.id);
+  assert.equal((await api.request('/me/reports',{token:stranger.token}).then(r=>r.json())).reports.length,0);
+  assert.equal((await api.request('/moderation/reports',{token:stranger.token})).status,404);
+  assert.equal((await query('SELECT count(*)::int AS n FROM safety_evidence WHERE case_id=$1',[saved.caseID])).rows[0].n,1);
 });
 
-test('moderator decisions are atomic, reject changed evidence and invalidate other readers and the reporter', async () => {
-  const owner = await makeUser(), reporter = await makeUser(), reader = await makeUser(), moderator = await makeUser({role:'moderator'});
-  const postID = await post(owner), reportID = (await submit(reporter,'post',postID).then(r => r.json())).report.id;
-  const stale = (await queue(moderator)).find(r => r.id===reportID);
-  await query("UPDATE posts SET description='Updated content',updated_at=now() WHERE id=$1",[postID]);
-  assert.equal((await decide(moderator,stale)).status,409);
-  assert.equal((await query('SELECT status FROM reports WHERE id=$1',[reportID])).rows[0].status,'pending');
-  const fresh = (await queue(moderator)).find(r=>r.id===reportID), cursor = await getCurrentSyncCursor();
-  assert.equal((await decide(moderator,fresh)).status,200);
-  assert.equal((await decide(moderator,fresh)).status,409);
+test('a case action invalidates public readers and immediately revokes image visibility',async()=>{
+  const owner=await makeUser(), reporter=await makeUser(), reader=await makeUser();
+  const postID=await post(owner),key=`post/${owner.id}/public.jpg`;
+  await query('UPDATE posts SET image_object_keys=ARRAY[$2]::text[] WHERE id=$1',[postID,key]);
+  const report=(await submit(reporter,'post',postID).then(r=>r.json())).report;
+  assert.equal(await canReadAsset(key,null),true);
+  const cursor=await getCurrentSyncCursor();
+  const result=await withTransaction(client=>applySafetyAction(client,{caseId:report.caseID,idempotencyKey:id('action'),actionType:'hide_post',targetType:'post',targetId:postID,actorType:'admin',actorId:'synthetic-admin',reason:'Verified synthetic evidence'}));
+  assert.ok(result.syncEvents.every(e=>e.id));
+  const sync=await loadSyncPayload(reader.id,{cursor});assert.equal(sync.contentRefreshRequired,true);
+  assert.equal(await canReadAsset(key,null),false);
   assert.equal((await api.request(`/posts/${postID}`,{token:reader.token})).status,404);
-  const readerSync = await api.request(`/sync?cursor=${cursor}`,{token:reader.token}).then(r=>r.json());
-  assert.ok(readerSync.removedPostIDs.includes(postID));
-  const reporterSync = await api.request(`/sync?cursor=${cursor}`,{token:reporter.token}).then(r=>r.json());
-  assert.equal(reporterSync.reports.find(r=>r.id===reportID).status,'removed');
-  assert.equal(reporterSync.reports.find(r=>r.id===reportID).snapshot,undefined);
-  assert.equal((await query('SELECT handled_by FROM reports WHERE id=$1',[reportID])).rows[0].handled_by,moderator.id);
 });
 
-test('only participants can report private messages and moderator asset access is scoped to reported evidence', async () => {
-  const sender = await makeUser(), receiver = await makeUser(), stranger = await makeUser(), moderator = await makeUser({role:'moderator'});
-  const threadID=id('mt'), messageID=id('dm'), key=`guarded/message/${sender.id}/${id()}.jpg`, otherKey=`guarded/message/${sender.id}/${id()}.jpg`;
-  await query('INSERT INTO message_threads(id,buyer_user_id,publisher_user_id) VALUES($1,$2,$3)',[threadID,sender.id,receiver.id]);
-  await query("INSERT INTO direct_messages(id,thread_id,sender_id,body,image_object_key) VALUES($1,$2,$3,'Reported private text',$4),($5,$2,$3,'Unreported private text',$6)",[messageID,threadID,sender.id,key,id('dm'),otherKey]);
-  const adminUser={id:moderator.id,email_verified:true,moderation_role:'moderator'};
-  assert.equal(await canReadAsset(key,adminUser),false);
-  assert.equal((await submit(stranger,'message',messageID)).status,404);
-  const reportID=(await submit(receiver,'message',messageID).then(r=>r.json())).report.id;
-  assert.equal(await canReadAsset(key,adminUser),true);
-  assert.equal(await canReadAsset(otherKey,adminUser),false);
-  assert.equal(await canReadAsset(key,{id:stranger.id}),false);
-  const report=(await queue(moderator)).find(r=>r.id===reportID);
-  assert.match(report.snapshot.text,/Reported private text/);
-  assert.equal((await decide(moderator,report)).status,200);
-  const message=(await query('SELECT * FROM direct_messages WHERE id=$1',[messageID])).rows[0];
-  assert.ok(message.revoked_at); assert.equal(message.body,''); assert.equal(message.image_object_key,null);
-  assert.equal(await canReadAsset(key,{id:receiver.id}),false);
-  assert.equal(await canReadAsset(key,adminUser),false);
+test('private messages require participation and legacy image capabilities remain scoped and revocable',async()=>{
+  const sender=await makeUser(),recipient=await makeUser(),stranger=await makeUser();
+  const thread=id('t'),message=id('m'),key=`message/${sender.id}/private.jpg`;
+  await query('INSERT INTO message_threads(id,buyer_user_id,publisher_user_id) VALUES($1,$2,$3)',[thread,recipient.id,sender.id]);
+  await query("INSERT INTO direct_messages(id,thread_id,sender_id,body,image_object_key) VALUES($1,$2,$3,'Private synthetic message',$4)",[message,thread,sender.id,key]);
+  assert.equal((await submit(stranger,'direct_message',message)).status,403);
+  const report=(await submit(recipient,'direct_message',message).then(r=>r.json())).report;
+  assert.ok(report.caseID);assert.equal(await canReadAsset(key,stranger),false);
+  const cap=assetCapability(key,recipient.id),viewer=await assetCapabilityReader(key,cap);
+  assert.equal(viewer.id,recipient.id);assert.equal(await canReadAsset(key,viewer),true);
+  assert.equal(await assetCapabilityReader(key+'other',cap),null);
+  await assert.rejects(userForToken(cap));
+  const cursor=await getCurrentSyncCursor();
+  await withTransaction(client=>applySafetyAction(client,{caseId:report.caseID,idempotencyKey:id('action'),actionType:'hide_message',targetType:'direct_message',targetId:message,actorType:'admin',actorId:'synthetic-admin',reason:'Private evidence checked'}));
+  assert.equal(await canReadAsset(key,viewer),false);
+  const sync=await loadSyncPayload(recipient.id,{cursor});
+  assert.equal(sync.messageThreads[0].messages[0].isSafetyHidden,true);
+  assert.equal(sync.messageThreads[0].messages[0].body,'');
 });
 
-test('comment removal and user suspension take effect on the server, and ordinary users cannot grant themselves a role', async () => {
-  const author=await makeUser(),reporter=await makeUser(),moderator=await makeUser({role:'moderator'}), postID=await post(author), commentID=id('cm');
-  await query("INSERT INTO comments(id,post_id,author_id,body) VALUES($1,$2,$3,'Reported comment')",[commentID,postID,author.id]);
-  const commentReport=(await submit(reporter,'comment',commentID).then(r=>r.json())).report;
-  assert.equal((await decide(moderator,(await queue(moderator)).find(r=>r.id===commentReport.id))).status,200);
-  assert.equal((await query('SELECT status FROM comments WHERE id=$1',[commentID])).rows[0].status,'removed');
-  const userReport=(await submit(reporter,'user',author.id).then(r=>r.json())).report;
-  assert.equal((await decide(moderator,(await queue(moderator)).find(r=>r.id===userReport.id),'suspend')).status,200);
-  assert.equal((await api.request('/bootstrap',{token:author.token})).status,401);
-  assert.equal((await api.request(`/posts/${postID}`)).status,404);
-  assert.equal((await api.request('/bootstrap',{token:reporter.token}).then(r=>r.json())).currentUser.moderationRole,'user');
-});
-
-test('report pagination is complete and handled reports allow newly edited content to be reported again', async () => {
-  const author=await makeUser(),reporter=await makeUser(),moderator=await makeUser({role:'moderator'});
-  const ids=await Promise.all([1,2,3].map(()=>post(author)));
-  for(const postID of ids) assert.equal((await submit(reporter,'post',postID)).status,201);
-  const seen=[]; let cursor;
-  do {
-    const page=await api.request('/reports?limit=1'+(cursor?'&cursor='+cursor:''),{token:reporter.token}).then(r=>r.json());
-    seen.push(...page.reports.map(r=>r.target.id)); cursor=page.nextCursor;
-  } while(cursor);
-  assert.deepEqual(new Set(seen),new Set(ids)); assert.equal(seen.length,3);
-  const report=(await queue(moderator)).find(r=>r.target.id===ids[0]);
-  assert.equal((await decide(moderator,report,'ignore')).status,200);
-  assert.equal((await submit(reporter,'post',ids[0])).status,200);
-  await query("UPDATE posts SET description='Changed after report',updated_at=now() WHERE id=$1",[ids[0]]);
-  assert.equal((await submit(reporter,'post',ids[0])).status,201);
+test('report pagination preserves all rows with identical timestamps',async()=>{
+  const owner=await makeUser(),reporter=await makeUser();
+  for(let i=0;i<6;i++)assert.equal((await submit(reporter,'post',await post(owner))).status,201);
+  await query("UPDATE reports SET created_at='2026-09-12T00:00:00Z' WHERE reporter_id=$1",[reporter.id]);
+  const ids=[],cursors=new Set();let cursor;
+  do{const page=await api.request('/me/reports?limit=2'+(cursor?'&cursor='+encodeURIComponent(cursor):''),{token:reporter.token}).then(r=>r.json());
+    ids.push(...page.reports.map(r=>r.id));cursor=page.nextCursor;
+    if(cursor){assert.equal(cursors.has(cursor),false);cursors.add(cursor);}
+  }while(cursor);
+  assert.equal(ids.length,6);assert.equal(new Set(ids).size,6);
 });

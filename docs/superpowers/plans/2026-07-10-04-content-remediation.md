@@ -26,14 +26,14 @@
 ### Task 1: Add Revision and Appeal Tables
 
 **Files:**
-- Create: `backend/sql/014_content_revisions.sql`
-- Create: `backend/sql/down/014_content_revisions.sql`
+- Create: `backend/sql/015_content_revisions.sql`
+- Create: `backend/sql/down/015_content_revisions.sql`
 - Create: `backend/test/safety/revisionMigration.integration.test.js`
 
 **Interfaces:**
 - Produces: `content_revisions` and `safety_appeals`.
 
-- [ ] **Step 1: Write the failing migration contract**
+- [x] **Step 1: Write the failing migration contract**
 
 ```js
 import test from "node:test";
@@ -49,13 +49,13 @@ test("content revision migration enforces monotonic revisions and one appeal per
 });
 ```
 
-- [ ] **Step 2: Run the database suite and verify failure**
+- [x] **Step 2: Run the database suite and verify failure**
 
 ```bash
 npm --prefix backend run test:db
 ```
 
-- [ ] **Step 3: Create the additive migration**
+- [x] **Step 3: Create the additive migration**
 
 ```sql
 CREATE TABLE content_revisions (
@@ -99,15 +99,15 @@ CREATE UNIQUE INDEX safety_appeals_one_per_decision ON safety_appeals (decision_
 CREATE INDEX safety_appeals_pending_created ON safety_appeals (status, created_at);
 ```
 
-- [ ] **Step 4: Add the down migration and test both directions**
+- [x] **Step 4: Add the down migration and test both directions**
 
 Drop appeals before revisions. The down migration removes no report/case tables. Apply up, seed one revision and appeal, assert uniqueness, then apply down on the disposable database and assert only these two tables disappear.
 
-- [ ] **Step 5: Commit the migration**
+- [x] **Step 5: Commit the migration**
 
 ```bash
 npm --prefix backend run test:db
-git add backend/sql/014_content_revisions.sql backend/sql/down/014_content_revisions.sql backend/test/safety/revisionMigration.integration.test.js
+git add backend/sql/015_content_revisions.sql backend/sql/down/015_content_revisions.sql backend/test/safety/revisionMigration.integration.test.js
 git commit -m "Add content revision and appeal schema"
 ```
 
@@ -122,7 +122,7 @@ git commit -m "Add content revision and appeal schema"
 - Produces: `submitContentRevision(client, input)`, `postRevisionSnapshot`, and `collectionRevisionSnapshot`.
 - Consumes: job queue and report object-key ownership checks.
 
-- [ ] **Step 1: Write failing ownership, state, and immutability tests**
+- [x] **Step 1: Write failing ownership, state, and immutability tests**
 
 Cover:
 
@@ -136,7 +136,7 @@ collection candidate does not modify group_collections before publish
 object keys outside report/post owner prefixes -> 400
 ```
 
-- [ ] **Step 2: Define exact normalized snapshots**
+- [x] **Step 2: Define exact normalized snapshots**
 
 Post snapshot:
 
@@ -159,7 +159,7 @@ Collection snapshot:
 
 Require collection name, a future-or-explicitly-confirmed deadline, default note, and at least one contact channel. Cap all strings to the same bounds used by current create routes.
 
-- [ ] **Step 3: Implement transaction and revision numbering**
+- [x] **Step 3: Implement transaction and revision numbering**
 
 ```js
 export async function submitContentRevision(client, { caseId, ownerId, snapshot, objectKeys = [] }) {
@@ -178,7 +178,7 @@ export async function submitContentRevision(client, { caseId, ownerId, snapshot,
 
 Use `FOR UPDATE` on the case and active revision query so concurrent submissions cannot create two pending revisions.
 
-- [ ] **Step 4: Run tests and commit submission behavior**
+- [x] **Step 4: Run tests and commit submission behavior**
 
 ```bash
 npm --prefix backend run test:db
@@ -198,7 +198,7 @@ git commit -m "Add immutable content revision intake"
 - Produces: `reviewContentRevision`, `publishApprovedRevision`, and `review_revision` worker handler.
 - Consumes: `reviewSubmission`, action rollback, and sync event creation.
 
-- [ ] **Step 1: Write failing preservation and restoration tests**
+- [x] **Step 1: Write failing preservation and restoration tests**
 
 Seed a post with one like, favorite, comment, report/case, and an applied automatic hide action. Submit a hard-safety-approved revision, publish it through an explicit human decision in this pre-Qwen phase, and assert:
 
@@ -213,7 +213,7 @@ assert.equal(revision.status, "published");
 
 Repeat with `manual_hold=true` and assert content remains restricted and case goes to `manual_review` even when the candidate passes.
 
-- [ ] **Step 2: Implement injected moderation review**
+- [x] **Step 2: Implement injected moderation review**
 
 ```js
 export async function reviewContentRevision(client, { revisionId, moderation = reviewSubmission }) {
@@ -236,11 +236,11 @@ export async function reviewContentRevision(client, { revisionId, moderation = r
 
 Provider exceptions fail into `manual_review`; they never publish or restore. Before Phase 7, a hard-safety pass still waits for a human admin to call `publishApprovedRevision`. Phase 7 may call the same function automatically only after a valid Qwen result and policy approval.
 
-- [ ] **Step 3: Publish posts without replacing IDs**
+- [x] **Step 3: Publish posts without replacing IDs**
 
 Update only editable post columns from the approved snapshot. Load the parent collection and mirror its shared fields and deadline. Leave `id`, `author_id`, `collection_id`, `created_at`, moderation history, and interaction tables unchanged. Set `updated_at=now()`.
 
-- [ ] **Step 4: Publish collections and mirror shared fields**
+- [x] **Step 4: Publish collections and mirror shared fields**
 
 Update the original collection, then:
 
@@ -257,15 +257,15 @@ WHERE collection_id = $1;
 
 Do not modify child post moderation `status` or `safety_status`.
 
-- [ ] **Step 5: Enforce automatic restoration boundaries**
+- [x] **Step 5: Enforce automatic restoration boundaries**
 
 `publishApprovedRevision(client, revisionId, approval)` accepts either `{ actorType: 'admin', actorId, reason }` or `{ actorType: 'policy', qwenResult, policyVersion }`. Policy approval is valid only after both Aliyun hard safety and schema-valid Qwen analysis pass. Auto-rollback only actions where `actor_type IN ('system','ai')`, action type is in the reversible allowlist, no manual action remains applied, `manual_hold=false`, and no open linked case blocks the target. Otherwise leave actions applied, move the case to `manual_review`, and record `revision.approved_waiting_manual_restore`.
 
-- [ ] **Step 6: Emit owner and audience sync events**
+- [x] **Step 6: Emit owner and audience sync events**
 
 In the same transaction, create owner events plus public entity events only if the object becomes effectively visible. Notify realtime only after commit.
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 ```bash
 npm --prefix backend run test:db
@@ -286,11 +286,11 @@ git commit -m "Publish approved revisions in place"
 **Interfaces:**
 - Produces: `GET /api/me/content-actions`, revision submit, and appeal submit APIs.
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 Cover owner filtering, field-level reason output, deadline, current revision status, one appeal per decision, seven-day cutoff, evidence ownership, and absence of reporter/admin/AI private fields.
 
-- [ ] **Step 2: Map only owner-visible action data**
+- [x] **Step 2: Map only owner-visible action data**
 
 ```js
 export function contentActionToClient(row) {
@@ -312,11 +312,11 @@ export function contentActionToClient(row) {
 }
 ```
 
-- [ ] **Step 3: Implement appeal transaction**
+- [x] **Step 3: Implement appeal transaction**
 
 Lock the case and latest applied human final action, verify target ownership and decision age at most seven days, insert one appeal for `decision_action_id`, set case to `appealed` and `manual_hold=true`, append evidence/event, create owner sync, and do not enqueue a decision job.
 
-- [ ] **Step 4: Mount routes and run all backend tests**
+- [x] **Step 4: Mount routes and run all backend tests**
 
 ```bash
 npm --prefix backend run test:db
@@ -324,6 +324,12 @@ npm --prefix backend test
 git add backend/src/safety/revisionRoutes.js backend/src/safety/contentActionMapper.js backend/src/safety/appealService.js backend/test/safety/revisionRoutes.integration.test.js backend/src/safety/reportRoutes.js
 git commit -m "Add owner correction and appeal APIs"
 ```
+
+Post-review API contract:
+
+- `GET /api/me/content-actions` returns at most 100 actions and an optional opaque `nextCursor`; clients must continue until `nextCursor` is absent. Pagination uses immutable case creation order so an action update between pages cannot hide a row.
+- Revision submissions have independent IP, account-daily, and account-burst limits and return `content_revision_rate_limited` when bounded.
+- An appealed case no longer accepts new report aggregation. Migration `016_appealed_case_aggregation.sql` permits a new case for the same subject/category; its down migration refuses rollback when legacy aggregation cannot represent the resulting rows safely.
 
 ### Task 5: Add iOS Content-Action Models and Client Methods
 
@@ -336,11 +342,11 @@ git commit -m "Add owner correction and appeal APIs"
 **Interfaces:**
 - Produces: `SafetyContentAction`, `SafetyRevisionDraft`, `contentActions`, `submitRevision`, and `submitAppeal`.
 
-- [ ] **Step 1: Write failing Codable tests**
+- [x] **Step 1: Write failing Codable tests**
 
 Decode an `awaiting_correction` post action with affected fields and deadline, and encode a post revision and appeal. Assert no report/admin fields appear in encoded owner payloads.
 
-- [ ] **Step 2: Implement models**
+- [x] **Step 2: Implement models**
 
 ```swift
 public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
@@ -363,7 +369,7 @@ public struct SafetyContentAction: Codable, Identifiable, Equatable, Sendable {
 
 Add typed post and collection revision payloads whose field names match Phase 4 backend snapshots.
 
-- [ ] **Step 3: Implement client methods and store state**
+- [x] **Step 3: Implement client methods and store state**
 
 ```swift
 func contentActions(token: String) async throws -> [SafetyContentAction]
@@ -373,7 +379,7 @@ func submitAppeal(token: String, caseID: String, detail: String, objectKeys: [St
 
 Add `@Published var safetyContentActions`, refresh on bootstrap/foreground/safety sync, and preserve the current public object until backend sync reports a published revision.
 
-- [ ] **Step 4: Run tests, build, and commit**
+- [x] **Step 4: Run tests, build, and commit**
 
 ```bash
 swift test --package-path .
@@ -396,23 +402,23 @@ git commit -m "Connect iOS content remediation APIs"
 **Interfaces:**
 - Produces: `Route.contentRemediation`, `ContentRemediationView`, `SafetyPostCorrectionView`, `SafetyCollectionCorrectionView`, and `SafetyAppealSheet`.
 
-- [ ] **Step 1: Add the Content Remediation settings route**
+- [x] **Step 1: Add the Content Remediation settings route**
 
 Display pending items grouped by waiting correction, rechecking, manual review, and appeal. Each row shows object title, affected fields, restriction, deadline, and one clear command. Do not nest item cards inside section cards.
 
-- [ ] **Step 2: Reuse the post editor in revision mode**
+- [x] **Step 2: Reuse the post editor in revision mode**
 
 Add `revisionCaseID` and `editingOriginalPostID` parameters. In revision mode, prefill the original post, keep collection fields read-only/inherited, upload new images, call `submitRevision`, and never call `createPost` or `deletePost`. Keep the legacy moderation republish path separate until it is migrated explicitly.
 
-- [ ] **Step 3: Reuse the collection editor in revision mode**
+- [x] **Step 3: Reuse the collection editor in revision mode**
 
 Add `revisionCaseID` to `CreateCollectionSheet`. In revision mode call the revision endpoint and leave the currently public collection untouched until server approval.
 
-- [ ] **Step 4: Add revision and appeal status states**
+- [x] **Step 4: Add revision and appeal status states**
 
 Show “复审中” after submit, a rejected revision reason with another correction command, and appeal entry only when `canAppeal`. Appeal sheet has 1000-character detail, optional six images, submit progress, and no AI decision language.
 
-- [ ] **Step 5: Build and inspect layouts**
+- [x] **Step 5: Build and inspect layouts**
 
 ```bash
 xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO build
@@ -420,7 +426,7 @@ xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration D
 
 Inspect waiting, reviewing, rejected, restored, and appeal states on iPhone 17 Pro and one narrow simulator. Verify no text overlap and that the original object remains visible in the app until the backend publishes the candidate.
 
-- [ ] **Step 6: Commit the UI**
+- [x] **Step 6: Commit the UI**
 
 ```bash
 git add ZhouBianTuan/ContentRemediationViews.swift ZhouBianTuan/SettingsViews.swift ZhouBianTuan/ZhouBianTuanApp.swift ZhouBianTuan/CreatePostViews.swift ZhouBianTuan/ProfileViews.swift ZhouBianTuan/MockAppStore.swift ZhouBianTuan.xcodeproj/project.pbxproj
@@ -435,19 +441,19 @@ git commit -m "Add owner content remediation UI"
 **Interfaces:**
 - Uses two user accounts and an injected passing moderation fixture; admin action remains a test fixture until Phase 6.
 
-- [ ] **Step 1: Verify post correction**
+- [x] **Step 1: Verify post correction**
 
 Create interactions, apply an automatic hide, submit a corrected post, run the review job, and assert the same ID, interaction counts, share route, and case history remain.
 
-- [ ] **Step 2: Verify collection correction**
+- [x] **Step 2: Verify collection correction**
 
 Apply contact hiding, submit corrected contact, publish, and assert collection contact restores and every independently active child returns without child status mutation; a separately hidden child remains hidden.
 
-- [ ] **Step 3: Verify manual boundaries and appeal**
+- [x] **Step 3: Verify manual boundaries and appeal**
 
 Apply a manual hold, submit a passing revision, assert no auto-restore, submit an appeal, and assert no worker changes the final decision.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 ```bash
 npm --prefix backend test

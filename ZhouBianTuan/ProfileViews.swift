@@ -988,6 +988,7 @@ struct CreateCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     let editingCollection: GroupCollection?
+    let revisionCaseID: String?
     var onCreated: ((String) -> Void)? = nil
     @State private var isSaving = false
     @State private var saveFailed = false
@@ -1000,10 +1001,17 @@ struct CreateCollectionSheet: View {
     @State private var groupInfo = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var note = ""
+    @State private var isSubmittingRevision = false
+    @State private var revisionErrorMessage: String?
 
-    init(editingCollection: GroupCollection? = nil, onCreated: ((String) -> Void)? = nil) {
+    init(
+        editingCollection: GroupCollection? = nil,
+        revisionCaseID: String? = nil,
+        onCreated: ((String) -> Void)? = nil
+    ) {
         self.editingCollection = editingCollection
         _revision = State(initialValue: editingCollection?.revision ?? 1)
+        self.revisionCaseID = revisionCaseID
         self.onCreated = onCreated
         _name = State(initialValue: editingCollection?.name ?? "")
         _wechat = State(initialValue: editingCollection?.contactWechat ?? "")
@@ -1018,6 +1026,10 @@ struct CreateCollectionSheet: View {
         editingCollection != nil
     }
 
+    var isRevision: Bool {
+        revisionCaseID != nil && editingCollection != nil
+    }
+
     var canCreate: Bool {
         !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty) && !note.trimmed.isEmpty
     }
@@ -1026,7 +1038,12 @@ struct CreateCollectionSheet: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HeaderTitle(title: isEditing ? "编辑拼团信息" : "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
+                    HeaderTitle(
+                        title: isRevision ? "整改拼团合集" : (isEditing ? "编辑拼团信息" : "创建拼团合集"),
+                        subtitle: isRevision
+                            ? "提交的是候选版本；审核通过前，当前合集信息保持不变"
+                            : "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明"
+                    )
                     PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
                     HStack(spacing: 10) {
                         PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
@@ -1041,6 +1058,7 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
                     Button {
+                        if isRevision { Task { await submitRevision() }; return }
                         let session = store.authSessionVersion
                         isSaving = true
                         Task { @MainActor in
@@ -1059,7 +1077,7 @@ struct CreateCollectionSheet: View {
                             if saved { dismiss() }
                         }
                     } label: {
-                        Text(isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
+                        Text(isRevision ? submitButtonTitle : isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
                             .font(.system(size: 17, weight: .bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
@@ -1067,8 +1085,11 @@ struct CreateCollectionSheet: View {
                             .foregroundStyle(canCreate ? .white : Theme.muted)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canCreate)
+                    .disabled(!canCreate || isSubmittingRevision || store.isSubmittingSafetyContentAction)
                     .padding(.top, 8)
+                    if isRevision, let revisionErrorMessage {
+                        SafetyContentActionInlineError(message: revisionErrorMessage)
+                    }
                     if saveFailed, let editingCollection {
                         Button("重新加载最新合集信息") {
                             guard let latest = store.collection(id: editingCollection.id) else { return }
@@ -1093,11 +1114,47 @@ struct CreateCollectionSheet: View {
             }
         }
     }
+
+    private var submitButtonTitle: String {
+        guard canCreate else { return "补齐必填字段" }
+        if isRevision {
+            return isSubmittingRevision || store.isSubmittingSafetyContentAction ? "正在提交整改" : "提交整改复审"
+        }
+        return isEditing ? "保存修改" : "创建合集"
+    }
+
+    @MainActor
+    private func submitRevision() async {
+        guard let revisionCaseID else { return }
+        isSubmittingRevision = true
+        revisionErrorMessage = nil
+        defer { isSubmittingRevision = false }
+        let snapshot = SafetyCollectionRevisionSnapshot(
+            name: name.trimmed,
+            contactWechat: wechat.trimmed,
+            contactQQ: qq.trimmed,
+            contactGroupNumber: groupNumber.trimmed,
+            groupInfo: groupInfo.trimmed,
+            deadline: BackendDateParserString.string(from: deadline),
+            defaultNote: note.trimmed,
+            deadlineConfirmed: true
+        )
+        let succeeded = await store.submitRevision(
+            caseID: revisionCaseID,
+            draft: .collection(snapshot: snapshot, objectKeys: [])
+        )
+        if succeeded {
+            dismiss()
+        } else {
+            revisionErrorMessage = store.safetyContentActionErrorMessage ?? "整改提交失败，请重试"
+        }
+    }
 }
 
 struct CollectionDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isEditingCollection = false
+    @State private var reportSource: SafetyReportSource?
     let collectionID: String
 
     var body: some View {
@@ -1151,15 +1208,47 @@ struct CollectionDetailView: View {
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if !canManage {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button(role: .destructive) {
+                                presentCollectionReport(collection)
+                            } label: {
+                                Label("举报", systemImage: "exclamationmark.bubble")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("更多操作")
+                    }
+                }
+            }
             .sheet(isPresented: $isEditingCollection) {
                 CreateCollectionSheet(editingCollection: collection)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
+            }
         } else {
             ContentUnavailableView("合集不存在", systemImage: "rectangle.stack.badge.minus")
                 .background(Theme.background)
         }
+    }
+
+    private func presentCollectionReport(_ collection: GroupCollection) {
+        guard SafetyReportEntryPolicy.canReportCollection(collection, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.collection(collection)
     }
 }
 
@@ -1236,15 +1325,21 @@ struct CollectionSharedInfoCard: View {
     let collection: GroupCollection
 
     var body: some View {
+        let isContactHidden = SafetyReportEntryPolicy.isContactHidden(collection: collection)
         VStack(alignment: .leading, spacing: 12) {
             Label("合集共享信息", systemImage: "link.circle.fill")
                 .font(.system(size: 17, weight: .black))
                 .foregroundStyle(Theme.text)
             InfoRow(title: "拼团名称", value: collection.name)
             InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
-            InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
-            InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
-            InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            if isContactHidden {
+                InfoRow(title: "联系方式", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+                InfoRow(title: "拉群说明", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+            } else {
+                InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
+                InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
+                InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            }
             InfoRow(title: "默认说明", value: collection.defaultNote)
         }
         .padding(14)
@@ -2124,6 +2219,7 @@ struct UserProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var selectedTab = "制品"
     @State private var pendingBlockConfirmation: BlockConfirmation?
+    @State private var reportSource: SafetyReportSource?
     let userID: String
 
     private let tabs = ["制品", "拼团合集"]
@@ -2167,7 +2263,37 @@ struct UserProfileView: View {
                                 .buttonStyle(.plain)
 
                                 Spacer()
-                                if userID != store.currentUserID { ReportButton(target: .user(userID)).tint(.white) }
+
+                                if user.id != store.currentUserID {
+                                    Menu {
+                                        Button(role: .destructive) {
+                                            presentUserReport(user)
+                                        } label: {
+                                            Label("举报用户", systemImage: "exclamationmark.bubble")
+                                        }
+
+                                        Button(role: store.isBlocked(user.id) ? nil : .destructive) {
+                                            pendingBlockConfirmation = BlockConfirmation(
+                                                userID: user.id,
+                                                nickname: user.nickname,
+                                                isUnblock: store.isBlocked(user.id)
+                                            )
+                                        } label: {
+                                            Label(
+                                                store.isBlocked(user.id) ? "解除拉黑" : "拉黑该用户",
+                                                systemImage: store.isBlocked(user.id) ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark"
+                                            )
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                            .font(.system(size: 24, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .frame(width: 48, height: 48)
+                                            .background(.black.opacity(0.22), in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("更多操作")
+                                }
                             }
 
                             Spacer(minLength: 20)
@@ -2255,24 +2381,6 @@ struct UserProfileView: View {
                                 }
                             }
 
-                            if user.id != store.currentUserID {
-                                Button {
-                                    pendingBlockConfirmation = BlockConfirmation(
-                                        userID: user.id,
-                                        nickname: user.nickname,
-                                        isUnblock: store.isBlocked(user.id)
-                                    )
-                                } label: {
-                                    Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundStyle(.white.opacity(0.9))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.top, 10)
-                            }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
@@ -2330,6 +2438,9 @@ struct UserProfileView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .sheet(item: $reportSource) { source in
+            ReportSheet(source: source) {}
+        }
         .task(id: "\(store.authSessionVersion)-\(userID)") {
             await store.loadContentPage(.init(path: "/users", parameters: ["id": userID]), reset: true)
         }
@@ -2372,6 +2483,16 @@ struct UserProfileView: View {
                     dismiss()
                 }
         )
+    }
+
+    private func presentUserReport(_ user: User) {
+        guard SafetyReportEntryPolicy.canReportUser(userID: user.id, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.user(user)
     }
 
     private func profileEmptyMessage(for user: User) -> String {

@@ -7,9 +7,23 @@ import UniformTypeIdentifiers
 
 @main
 struct ZhouBianTuanApp: App {
-    @StateObject private var store = MockAppStore()
+    @StateObject private var store: MockAppStore
 
     init() {
+        #if DEBUG
+        let appStore = AppStoreScreenshotScreen.current == nil
+            ? MockAppStore()
+            : MockAppStore.previewStore()
+        if AppStoreScreenshotScreen.current != nil {
+            appStore.installAppStoreScreenshotFixture()
+        } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+            appStore.installContentRemediationPreviewFixture()
+        }
+        #else
+        let appStore = MockAppStore()
+        #endif
+        _store = StateObject(wrappedValue: appStore)
+
         let tabAppearance = UITabBarAppearance()
         tabAppearance.configureWithOpaqueBackground()
         tabAppearance.backgroundColor = Theme.barBackgroundUIColor
@@ -31,10 +45,63 @@ struct ZhouBianTuanApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if let screenshotScreen = AppStoreScreenshotScreen.current {
+                AppStoreScreenshotRoot(screen: screenshotScreen)
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(.dark)
+            } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
+                if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "appeal",
+                   let appealAction = store.safetyContentActions.first(where: \.canAppeal) {
+                    SafetyAppealSheet(action: appealAction)
+                        .environmentObject(store)
+                        .tint(Theme.hotPink)
+                        .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "post",
+                          let postAction = store.safetyContentActions.first(where: {
+                              $0.targetType == .post && $0.canSubmitRevision
+                          }) {
+                    NavigationStack {
+                        SafetyPostCorrectionView(action: postAction)
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "collection",
+                          let collectionAction = store.safetyContentActions.first(where: {
+                              $0.targetType == .collection && $0.canSubmitRevision
+                          }) {
+                    NavigationStack {
+                        SafetyCollectionCorrectionView(action: collectionAction)
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                } else {
+                    NavigationStack {
+                        if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "resolved" {
+                            ContentRemediationView(visibleBuckets: [.manualReview, .appeal, .completed])
+                        } else {
+                            ContentRemediationView()
+                        }
+                    }
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                }
+            } else {
+                RootView()
+                    .environmentObject(store)
+                    .tint(Theme.hotPink)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+            }
+            #else
             RootView()
                 .environmentObject(store)
                 .tint(Theme.hotPink)
                 .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+            #endif
         }
     }
 }
@@ -104,9 +171,53 @@ enum Route: Hashable {
     case browsingHistory
     case settings
     case accountSecuritySettings
+    case myReports
+    case contentRemediation
     case generalSettings
     case notificationSettings
-    case admin
+}
+
+enum SafetyReportResumeDecision {
+    enum Action: Equatable {
+        case wait
+        case discard
+        case present(SafetyReportFormSnapshot)
+    }
+
+    static func shouldPresent(
+        snapshot: SafetyReportFormSnapshot,
+        isLoggedIn: Bool,
+        currentUserID: String,
+        isAuthPromptPresented: Bool,
+        isReportPresented: Bool
+    ) -> Bool {
+        isLoggedIn &&
+        snapshot.reporterUserID == currentUserID &&
+        !isAuthPromptPresented &&
+        !isReportPresented
+    }
+
+    static func action(
+        isPending: Bool,
+        snapshot: SafetyReportFormSnapshot?,
+        isLoggedIn: Bool,
+        currentUserID: String,
+        isAuthPromptPresented: Bool,
+        isReportPresented: Bool
+    ) -> Action {
+        guard isPending, isLoggedIn else { return .wait }
+        guard let snapshot, snapshot.reporterUserID == currentUserID else { return .discard }
+        guard shouldPresent(
+            snapshot: snapshot,
+            isLoggedIn: isLoggedIn,
+            currentUserID: currentUserID,
+            isAuthPromptPresented: isAuthPromptPresented,
+            isReportPresented: isReportPresented
+        ) else {
+            return .wait
+        }
+        return .present(snapshot)
+    }
 }
 
 struct RootView: View {
@@ -114,6 +225,9 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
     @State private var showsLaunchSplash = true
+    @State private var shouldResumeSafetyReport = false
+    @State private var resumedSafetyReport: SafetyReportFormSnapshot?
+    @State private var isAuthCoverPresented = false
 
     private var isAuthenticated: Bool {
         store.isLoggedIn
@@ -176,18 +290,6 @@ struct RootView: View {
             .overlay(alignment: .top) {
                 ToastHost()
             }
-            .fullScreenCover(isPresented: $store.isAuthPromptPresented) {
-                GuestAuthView(onClose: {
-                    store.isAuthPromptPresented = false
-                })
-                .environmentObject(store)
-                .preferredColorScheme(.dark)
-            }
-            .onChange(of: store.isLoggedIn) {
-                if store.isLoggedIn {
-                    store.isAuthPromptPresented = false
-                }
-            }
             .task {
                 Task { await store.loadPublicFeedIfNeeded() }
                 await store.loadBackendIfNeeded()
@@ -212,6 +314,69 @@ struct RootView: View {
                             showsLaunchSplash = false
                         }
                     }
+            }
+        }
+        .fullScreenCover(isPresented: $isAuthCoverPresented, onDismiss: {
+            presentResumableSafetyReportWhenReady()
+        }) {
+            GuestAuthView(onClose: {
+                store.isAuthPromptPresented = false
+                isAuthCoverPresented = false
+            })
+            .environmentObject(store)
+            .preferredColorScheme(.dark)
+        }
+        .sheet(item: $resumedSafetyReport) { snapshot in
+            ReportSheet(source: snapshot.source, initialSnapshot: snapshot) {}
+                .environmentObject(store)
+        }
+        .onChange(of: store.isLoggedIn) {
+            if store.isLoggedIn {
+                store.isAuthPromptPresented = false
+                presentResumableSafetyReportWhenReady()
+            } else if store.hasSafetyReportFormSnapshot {
+                shouldResumeSafetyReport = true
+                resumedSafetyReport = nil
+            }
+        }
+        .onChange(of: store.currentUserID) {
+            if store.isLoggedIn {
+                presentResumableSafetyReportWhenReady()
+            }
+        }
+        .onChange(of: store.isAuthPromptPresented) {
+            if store.isAuthPromptPresented {
+                DispatchQueue.main.async {
+                    if store.isAuthPromptPresented {
+                        isAuthCoverPresented = true
+                    }
+                }
+            } else {
+                isAuthCoverPresented = false
+            }
+        }
+    }
+
+    private func presentResumableSafetyReportWhenReady() {
+        guard shouldResumeSafetyReport else { return }
+        DispatchQueue.main.async {
+            let action = SafetyReportResumeDecision.action(
+                isPending: shouldResumeSafetyReport,
+                snapshot: store.resumableSafetyReportFormSnapshot(for: store.currentUserID),
+                isLoggedIn: store.isLoggedIn,
+                currentUserID: store.currentUserID,
+                isAuthPromptPresented: store.isAuthPromptPresented || isAuthCoverPresented,
+                isReportPresented: resumedSafetyReport != nil
+            )
+            switch action {
+            case .wait:
+                break
+            case .discard:
+                shouldResumeSafetyReport = false
+                resumedSafetyReport = nil
+            case .present(let snapshot):
+                shouldResumeSafetyReport = false
+                resumedSafetyReport = snapshot
             }
         }
     }
@@ -291,12 +456,14 @@ extension View {
                 SettingsView()
             case .accountSecuritySettings:
                 AccountSecuritySettingsView()
+            case .myReports:
+                MyReportsView()
+            case .contentRemediation:
+                ContentRemediationView()
             case .generalSettings:
                 GeneralSettingsView()
             case .notificationSettings:
                 NotificationSettingsView()
-            case .admin:
-                AdminModerationView()
             }
         }
     }
@@ -330,15 +497,6 @@ extension View {
 #Preview("我的主页") {
     NavigationStack {
         ProfileView()
-    }
-    .environmentObject(MockAppStore())
-    .tint(Theme.hotPink)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("审核后台") {
-    NavigationStack {
-        AdminModerationView()
     }
     .environmentObject(MockAppStore())
     .tint(Theme.hotPink)

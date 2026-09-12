@@ -30,6 +30,8 @@ ENV_FILE="$PWD/.env" npm start
 ```sh
 npm --prefix backend test
 TEST_DATABASE_URL=postgresql://zbt_test@127.0.0.1:5432/zbt_test_local npm --prefix backend run test:integration
+PG_BINDIR=/path/to/postgresql16/bin npm --prefix backend run test:db
+swift test
 npm --prefix backend audit --registry=https://registry.npmjs.org
 xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Debug -destination 'platform=iOS Simulator,id=你的模拟器ID' CODE_SIGNING_ALLOWED=NO test
 xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration Release -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
@@ -39,11 +41,11 @@ xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan -configuration R
 
 ## 权限与生产部署
 
-本次修复的[进度](docs/DIAGNOSTIC_FIX_PROGRESS.md)与[部署约束](docs/DIAGNOSTIC_FIX_DEPLOYMENT.md)记录迁移、客户端协议与生产验收。迁移 013–022 必须与新后端/客户端协调发布；历史代码不能与新的同步游标写入方式混用。部署前先备份并确认恢复方案。
+[部署记录](docs/operations/verification/2026-09-12-diagnostic-deployment.md)记录本次与线上案件系统的集成。全部 31 个 SQL 迁移（包括 023 兼容迁移）必须配套部署；历史服务端代码不能与新的同步游标写入方式混用。旧版 App 无协议头时保留完整聊天响应（总量上限 2000 条），新客户端发送 `X-ZBT-Protocol: 2` 使用分页。部署前先备份并确认恢复方案。
 
 图片统一通过 `/api/assets/<object-key>` 验证可见性。私信、待审核、撤回和下架图片不能通过 OSS/CDN 直链绕过该入口。`PUBLIC_ASSET_BASE_URL` 不再改变 App 返回的图片地址；禁止缓存权限网关响应。已有 CDN 缓存和公开对象 ACL 必须按部署文档收回，本地代码不会自动修改云策略。
 
-管理员必须是已验证邮箱的显式数据库角色；`ADMIN_EMAILS` 不授予权限。`node scripts/moderator.js grant USER_ID` 只用于实际授权管理员。
+管理操作统一使用独立网页后台 `/admin`，沿用管理员账号、可信设备、CSRF 和审计流程。普通 App 令牌和 `ADMIN_EMAILS` 不授予后台权限。举报使用案件系统，支持整改、申诉和证据保留；参见 [安全系统运维](docs/operations/safety-system.md)。
 
 生产必须明确 `NODE_ENV=production`、HTTPS `PUBLIC_API_BASE_URL`、`MODERATION_PROVIDER=aliyun`、有效 SMTP、强随机密钥及 `MODERATION_DAILY_CALL_LIMIT`。额度按北京时间每日供应商请求数计，包括每个文本分段和每张图；0 暂停自动审核并转人工。它不是人民币金额，需按实际套餐计费单位选择额度。相同输入当天复用结果；超时未明的调用占额度且不自动重发。人工审核队列需要实际负责人处理。
 

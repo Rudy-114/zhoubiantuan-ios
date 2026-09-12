@@ -479,6 +479,69 @@ struct PrototypeTextEditor: View {
     }
 }
 
+struct ConstrainedFormTextEditor: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    let limit: Int
+    var errorMessage: String? = nil
+    var minHeight: CGFloat = 132
+
+    private var characterCount: Int {
+        SafetyReportFormLogic.codePointCount(in: text)
+    }
+
+    private var isOverLimit: Bool {
+        characterCount > limit
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text("\(characterCount)/\(limit)")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isOverLimit ? Theme.hotPink : Theme.subtext)
+                    .accessibilityLabel("当前输入 \(characterCount) 个字，上限 \(limit) 个字")
+            }
+
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(Theme.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                }
+                TextEditor(text: $text)
+                    .font(.body)
+                    .foregroundStyle(Theme.text)
+                    .frame(minHeight: minHeight)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(errorMessage != nil || isOverLimit ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Theme.hotPink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 struct TagEditor: View {
     let tags: [String]
     @Binding var selection: Set<String>

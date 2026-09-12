@@ -23,6 +23,19 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: MyReportsNavigationEntry.route) {
+                            SettingsRow(
+                                icon: MyReportsNavigationEntry.systemImage,
+                                title: MyReportsNavigationEntry.title
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: Route.contentRemediation) {
+                            SettingsRow(icon: "checkmark.shield", title: "内容处理")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
                         NavigationLink(destination: GeneralSettingsView()) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }
@@ -33,18 +46,10 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: ReportListView(admin: false)) {
+                        NavigationLink(destination: MyReportsView()) {
                             SettingsRow(icon: "flag", title: "我的举报")
                         }
                         .buttonStyle(.plain)
-                        if store.canModerate {
-                            NavigationLink(destination: AdminReportView()) {
-                                SettingsRow(icon: "checkmark.shield", title: "举报处理")
-                            }.buttonStyle(.plain)
-                            NavigationLink(destination: AdminModerationView()) {
-                                SettingsRow(icon: "text.badge.checkmark", title: "内容审核")
-                            }.buttonStyle(.plain)
-                        }
                         NavigationLink(destination: HelpFeedbackView()) {
                             SettingsRow(icon: "questionmark.circle", title: "帮助与反馈")
                         }

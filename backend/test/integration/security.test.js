@@ -19,15 +19,15 @@ test('legacy registration is closed and cannot allocate an account', async () =>
   assert.equal((await query('SELECT id FROM users WHERE email=$1', [email])).rowCount, 0);
 });
 
-test('moderation requires an explicitly granted role and verified ownership', async () => {
+test('consumer tokens cannot access retired admin endpoints even with a moderation role', async () => {
   const unverified = await makeUser({ verified: false, role: 'moderator' });
   config.moderation.adminEmails.push(unverified.email);
-  assert.equal((await api.request('/moderation/reviews', { token: unverified.token })).status, 403);
+  assert.equal((await api.request('/moderation/reviews', { token: unverified.token })).status, 404);
   const ordinary = await makeUser();
   config.moderation.adminEmails.push(ordinary.email);
-  assert.equal((await api.request('/moderation/reviews', { token: ordinary.token })).status, 403);
+  assert.equal((await api.request('/moderation/reviews', { token: ordinary.token })).status, 404);
   const moderator = await makeUser({ role: 'moderator' });
-  assert.equal((await api.request('/moderation/reviews', { token: moderator.token })).status, 200);
+  assert.equal((await api.request('/moderation/reviews', { token: moderator.token })).status, 404);
 });
 
 test('wrong email codes commit attempts and lock out even the correct code after five failures', async () => {
