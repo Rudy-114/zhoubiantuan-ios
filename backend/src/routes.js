@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
+import { requestHash, assertPostReplay } from "./idempotency.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
@@ -507,13 +508,21 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     try {
       const title = trimmedString(req.body.title);
       if (!title) throw badRequest("请填写标题");
+      const requestedId = trimmedString(req.body.id);
+      if (requestedId && !/^p-[A-Za-z0-9_-]{1,120}$/.test(requestedId)) throw badRequest("发布编号无效");
+      const postId = requestedId || `p-${randomUUID()}`;
+      const submissionHash = requestHash(req.body);
+      const existing = (await query("SELECT * FROM posts WHERE id=$1", [postId])).rows[0];
+      if (existing) {
+        assertPostReplay(existing, req.user.id, submissionHash);
+        return res.status(200).json({ post: postToClient(existing), moderation: { status: existing.status }, replayed: true });
+      }
+      const replacingPostId = trimmedString(req.body.replacingPostID);
       const collectionId = trimmedString(req.body.collectionID);
       const collection = collectionId
         ? (await query("SELECT * FROM group_collections WHERE id = $1 AND owner_id = $2 AND status = 'active'", [collectionId, req.user.id])).rows[0]
         : null;
       const deadline = collection?.deadline || parseDate(req.body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
-      const requestedId = trimmedString(req.body.id);
-      const postId = requestedId.startsWith("p-") ? requestedId : `p-${randomUUID()}`;
       const imageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.imageObjectKeys), ["post"]);
       const previewImageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.previewImageObjectKeys), ["post"]);
       const reviewedImageKeys = [...new Set([...imageObjectKeys, ...previewImageObjectKeys])];
@@ -526,17 +535,26 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
         text: publicContentModerationText(postSnapshot),
         imageObjectKeys: reviewedImageKeys
       });
-      const { post, syncEvents } = await withTransaction(async (client) => {
+      const { post, syncEvents, replayed } = await withTransaction(async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["post-submission:" + postId]);
+        const committed = (await client.query("SELECT * FROM posts WHERE id=$1", [postId])).rows[0];
+        if (committed) return { post: assertPostReplay(committed, req.user.id, submissionHash), syncEvents: [], replayed: true };
+        let previousPost;
+        if (replacingPostId) {
+          previousPost = (await client.query("SELECT * FROM posts WHERE id=$1 AND author_id=$2 FOR UPDATE", [replacingPostId, req.user.id])).rows[0];
+          if (!previousPost || previousPost.status === "deleted") throw badRequest("上一版帖子不存在");
+          if (previousPost.status === "active") throw badRequest("已公开的帖子不能通过重新投稿替换");
+        }
         await assertReadyUploads(req.user.id, reviewedImageKeys, client, { markReferenced: true });
         const { rows } = await client.query(
           `INSERT INTO posts (
           id, author_id, collection_id, title, image_names, image_object_keys, preview_image_object_keys, group_type,
           category_tags, fandom_tags, price, deposit, deadline, condition, is_formed, description,
-          wechat, qq, group_number, group_info, external_link, status, image_aspect, pinggu_average_price, pinggu_note, unsold_roles
+          wechat, qq, group_number, group_info, external_link, status, image_aspect, pinggu_average_price, pinggu_note, unsold_roles, submission_hash
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
           $9, $10, $11, $12, $13, $14, $15, $16,
-          $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+          $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
         ) RETURNING *`,
           [
             postId,
@@ -564,7 +582,8 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
             Number(req.body.imageAspect || 1.08),
             trimmedString(req.body.pingguAveragePrice),
             trimmedString(req.body.pingguNote),
-            JSON.stringify(Array.isArray(req.body.unsoldRoles) ? req.body.unsoldRoles : [])
+            JSON.stringify(Array.isArray(req.body.unsoldRoles) ? req.body.unsoldRoles : []),
+            submissionHash
           ]
         );
         if (moderation.status !== "active") {
@@ -578,6 +597,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
             snapshot: postSnapshot
           });
         }
+        if (previousPost) await client.query("UPDATE posts SET status='deleted', updated_at=now() WHERE id=$1", [previousPost.id]);
         const audience = await syncAudienceForPublicContent(client, [req.user.id], moderation.status === "active");
         const syncEvents = await createSyncEventsForUsers(client, {
           userIds: audience,
@@ -585,13 +605,15 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
           entityType: "post",
           entityId: postId
         });
-        return { post: rows[0], syncEvents };
+        if (previousPost) syncEvents.push(...await createSyncEventsForUsers(client, { userIds: [req.user.id, ...(["hidden", "removed"].includes(previousPost.status) ? [null] : [])],
+          eventType: "post.deleted", entityType: "post", entityId: previousPost.id }));
+        return { post: rows[0], syncEvents, replayed: false };
       });
       if (syncEvents.length) {
         logger.info("post.created", { postID: postId, status: moderation.status, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
-      res.status(201).json({ post: postToClient(post), moderation });
+      res.status(replayed ? 200 : 201).json({ post: postToClient(post), moderation: replayed ? { status: post.status } : moderation, replayed });
     } catch (error) {
       next(error);
     }

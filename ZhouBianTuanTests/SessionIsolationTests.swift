@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import ZhouBianTuan
 
 final class StubProtocol: URLProtocol {
@@ -23,6 +24,13 @@ private final class RequestSlot: @unchecked Sendable {
     private var value: StubProtocol?
     func set(_ request: StubProtocol) { lock.lock(); value = request; lock.unlock() }
     func take() -> StubProtocol { lock.lock(); defer { lock.unlock() }; return value! }
+}
+
+private final class RequestBag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [StubProtocol] = []
+    func add(_ request: StubProtocol) { lock.lock(); requests.append(request); lock.unlock() }
+    func all() -> [StubProtocol] { lock.lock(); defer { lock.unlock() }; return requests }
 }
 
 @MainActor
@@ -148,5 +156,38 @@ final class SessionIsolationTests: XCTestCase {
         await fresh.value
         XCTAssertEqual(store.currentUserID, "B")
         XCTAssertEqual(SyncCursorStore.cursor(for: "B"), "21")
+    }
+
+    func testPublishingWaitsForTheServerAndReturnsFailureWithoutDiscardingThePost() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        store.collections = [GroupCollection(id: "col-test", ownerID: "A", name: "Draft", contactWechat: "test",
+            contactQQ: "", contactGroupNumber: "", groupInfo: "", deadline: Date().addingTimeInterval(86400),
+            defaultNote: "", postIDs: [], createdAt: Date())]
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }.jpegData(compressionQuality: 0.8)!
+        let requests = RequestBag(), started = expectation(description: "Original and preview upload requests")
+        started.expectedFulfillmentCount = 2
+        StubProtocol.handler = { request in requests.add(request); started.fulfill() }
+        var didReturn = false
+        let publishing = Task {
+            let result = await store.createPost(title: "Keep my draft", groupType: .followGroup, collectionID: "col-test",
+                imageNames: [], uploadedImageData: [image], tags: [], price: "10", deposit: "", deadline: Date(),
+                condition: "Test", wechat: "test", qq: "", groupInfo: "", description: "Original draft content",
+                pingguAveragePrice: "", pingguNote: "", unsoldRoles: [], submissionID: "p-retry-test")
+            didReturn = true
+            return result
+        }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertFalse(didReturn)
+        XCTAssertTrue(store.posts.isEmpty)
+        requests.all().forEach { $0.reply(["error": "Temporary failure"], status: 503) }
+        let success = await publishing.value
+        XCTAssertFalse(success)
+        XCTAssertTrue(store.posts.isEmpty)
+        XCTAssertEqual(store.toastMessage, "Temporary failure")
     }
 }

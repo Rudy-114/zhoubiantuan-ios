@@ -569,10 +569,11 @@ final class AliyunBackendClient {
     }
 
     @discardableResult
-    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String], previewImageObjectKeys: [String] = []) async throws -> BackendPostMutationResponse {
+    func createPost(token: String, post: GroupBuyPost, imageObjectKeys: [String], previewImageObjectKeys: [String] = [], replacingPostID: String? = nil) async throws -> BackendPostMutationResponse {
         let roles = post.unsoldRoles.map { ["id": $0.id, "name": $0.name, "quantity": $0.quantity, "priceAdjustment": $0.priceAdjustment] as [String: Any] }
         return try await request("/posts", method: "POST", token: token, body: [
             "id": post.id,
+            "replacingPostID": replacingPostID ?? "",
             "title": post.title,
             "imageNames": post.imageNames,
             "imageObjectKeys": imageObjectKeys,

@@ -91,6 +91,7 @@ final class MockAppStore: ObservableObject {
     private var sessionTasks: [UUID: Task<Void, Never>] = [:]
     private var authenticationAttempt = UUID()
     var moderationRequestID: UUID?
+    private var pendingPostUploads: [String: (originals: [String], previews: [String])] = [:]
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
     private var lastRealtimeActivityAt = Date.distantPast
@@ -266,6 +267,7 @@ final class MockAppStore: ObservableObject {
         authenticationAttempt = UUID()
         sessionTasks.values.forEach { $0.cancel() }
         sessionTasks.removeAll()
+        pendingPostUploads.removeAll()
         stopBackendAutoRefresh()
         refreshRequestID = nil
         syncRequestID = nil
@@ -2369,12 +2371,18 @@ final class MockAppStore: ObservableObject {
         showToast("已删除角色")
     }
 
-    func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole], replacingPostID: String? = nil) {
-        guard let inherited = collection(id: collectionID) else {
-            showToast("请先选择拼团合集")
-            return
+    func createPost(title: String, groupType: GroupBuyType, collectionID: String, imageNames: [String], uploadedImageData: [Data], tags: [String], price: String, deposit: String, deadline: Date, condition: String, wechat: String, qq: String, groupInfo: String, description: String, pingguAveragePrice: String, pingguNote: String, unsoldRoles: [UnsoldRole], replacingPostID: String? = nil, submissionID: String = "p-\(UUID().uuidString)") async -> Bool {
+        let session = authSessionVersion
+        guard requireLogin(prompt: "登录后才能发布") else { return false }
+        guard !uploadedImageData.isEmpty, uploadedImageData.count <= 16 else {
+            showToast("请选择 1 至 16 张产品图片")
+            return false
         }
-        let postID = "p-\(UUID().uuidString)"
+        guard let inherited = collection(id: collectionID), inherited.ownerID == currentUserID, inherited.status == .active else {
+            showToast("请先选择拼团合集")
+            return false
+        }
+        let postID = submissionID
         let post = GroupBuyPost(
             id: postID,
             title: title,
@@ -2408,44 +2416,44 @@ final class MockAppStore: ObservableObject {
             unsoldRoles: groupType == .splitGoods ? unsoldRoles.filter(\.isAvailable) : []
         )
         if isBackendEnabled {
-            runSessionTask { [self] session in
-                guard let backendToken else { return }
-                do {
-                    async let uploadedObjectKeys = backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
-                    async let uploadedPreviewObjectKeys = backendClient.uploadPostPreviewImages(token: backendToken, images: uploadedImageData)
-                    let (objectKeys, previewObjectKeys) = try await (uploadedObjectKeys, uploadedPreviewObjectKeys)
-                    guard isCurrentSession(session) else { return }
-                    var remotePost = post
-                    remotePost.imageObjectKeys = objectKeys
-                    remotePost.previewImageObjectKeys = previewObjectKeys
-                    let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys, previewImageObjectKeys: previewObjectKeys)
-                    guard isCurrentSession(session) else { return }
-                    let localPost = response.post.localPost()
-                    mergePosts([localPost])
-                    if let collectionID = localPost.collectionID,
-                       let index = collections.firstIndex(where: { $0.id == collectionID }),
-                       !collections[index].postIDs.contains(localPost.id) {
-                        collections[index].postIDs.insert(localPost.id, at: 0)
-                    }
-                    if let replacingPostID {
-                        markOwnPostDeleted(replacingPostID)
-                        do {
-                            try await backendClient.deletePost(token: backendToken, postID: replacingPostID)
-                            guard isCurrentSession(session) else { return }
-                        } catch {
-                            guard isCurrentSession(session) else { return }
-                            showToast("新帖已发布，旧版本删除失败，请稍后刷新")
-                        }
-                    }
-                    await syncFromBackend(reason: replacingPostID == nil ? "post.created" : "post.republished")
-                    guard isCurrentSession(session) else { return }
-                    showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
-                } catch {
-                    guard isCurrentSession(session) else { return }
-                    showToast(error.localizedDescription)
+            guard let backendToken else { return false }
+            do {
+                let objectKeys: [String]
+                let previewObjectKeys: [String]
+                if let cached = pendingPostUploads[postID] {
+                    objectKeys = cached.originals
+                    previewObjectKeys = cached.previews
+                } else {
+                    async let originals = backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
+                    async let previews = backendClient.uploadPostPreviewImages(token: backendToken, images: uploadedImageData)
+                    (objectKeys, previewObjectKeys) = try await (originals, previews)
+                    guard isCurrentSession(session) else { return false }
+                    if pendingPostUploads.count >= 8 { pendingPostUploads.removeAll() }
+                    pendingPostUploads[postID] = (objectKeys, previewObjectKeys)
                 }
+                var remotePost = post
+                remotePost.imageObjectKeys = objectKeys
+                remotePost.previewImageObjectKeys = previewObjectKeys
+                let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys, previewImageObjectKeys: previewObjectKeys, replacingPostID: replacingPostID)
+                guard isCurrentSession(session) else { return false }
+                let localPost = response.post.localPost()
+                mergePosts([localPost])
+                if let collectionID = localPost.collectionID,
+                   let index = collections.firstIndex(where: { $0.id == collectionID }),
+                   !collections[index].postIDs.contains(localPost.id) {
+                    collections[index].postIDs.insert(localPost.id, at: 0)
+                }
+                if let replacingPostID { markOwnPostDeleted(replacingPostID) }
+                pendingPostUploads[postID] = nil
+                await syncFromBackend(reason: replacingPostID == nil ? "post.created" : "post.republished")
+                guard isCurrentSession(session) else { return false }
+                showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
+                return true
+            } catch {
+                guard isCurrentSession(session) else { return false }
+                showToast(error.localizedDescription)
+                return false
             }
-            return
         }
         posts.insert(post, at: 0)
         if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
@@ -2455,6 +2463,7 @@ final class MockAppStore: ObservableObject {
             markOwnPostDeleted(replacingPostID)
         }
         showToast(replacingPostID == nil ? "发布成功，已进入\(groupType.moduleTitle)模块" : "已重新发布，旧版本已删除")
+        return true
     }
 
     // MARK: - Toasts

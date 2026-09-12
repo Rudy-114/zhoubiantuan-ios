@@ -29,3 +29,5 @@
 本地临时数据库：`/tmp/zbt-fixes-db.71rNtA/data`，只监听 `127.0.0.1:15489`，数据库 `zbt_test_fixes`、合成角色 `zbt_test`。测试命令：`TEST_DATABASE_URL=postgresql://zbt_test@127.0.0.1:15489/zbt_test_fixes npm --prefix backend run test:integration`。完成全部修复后停止临时数据库。该地址不含生产凭据。
 
 部署注意：先运行迁移 013；原 `ADMIN_EMAILS` 不再授予权限。对已验证邮箱的真实管理员账号，运维需显式执行 `node scripts/moderator.js grant USER_ID`。不得在迁移中批量信任历史邮箱或自动提升普通注册账号。
+
+第五批：R11 发帖改为等待上传与服务端审核结果，失败保留表单，提交中禁用重复点击；相同草稿重试使用相同提交 ID 和已上传图片。迁移 016 保存提交指纹，服务端按提交 ID 加事务锁，并发重试只创建一条帖子，不能覆盖原内容或其他作者的帖子；重新投稿以同一事务保存新帖和删除旧帖。累计 23 项后端数据库/HTTP 集成测试、6 项原生测试通过。原生结果 `/tmp/zbt-publishing-tests-1.xcresult`。R12 库存/团册持久化和版本冲突接着处理。

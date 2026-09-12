@@ -4,6 +4,12 @@ import Photos
 import PhotosUI
 import UniformTypeIdentifiers
 
+private struct PostSubmissionIdentity: Equatable {
+    let fields: [String]
+    let images: [Data]
+    let roles: [UnsoldRole]
+}
+
 struct CreatePostView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
@@ -32,6 +38,12 @@ struct CreatePostView: View {
     @State private var isCollectionPickerPresented = false
     @State private var isCreatingCollection = false
     @State private var isPhotoLibraryPresented = false
+    @State private var isPublishing = false
+    @State private var submissionID = "p-\(UUID().uuidString)"
+    @State private var lastSubmission: PostSubmissionIdentity?
+    @State private var publishTask: Task<Void, Never>?
+    @State private var publishRequestID = UUID()
+    @State private var draftOwnerID = ""
     let republishingPostID: String?
 
     init(republishingPostID: String? = nil) {
@@ -288,15 +300,33 @@ struct CreatePostView: View {
 
                 Button {
                     if let selectedGroupType, let selectedCollection {
-                        store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: Array(selectedTags), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID)
-                        if isRepublishing {
-                            dismiss()
-                        } else {
-                            reset()
+                        let identity = PostSubmissionIdentity(fields: [store.currentUserID, republishingPostID ?? "", title,
+                            selectedGroupType.rawValue, selectedCollection.id, priceRangeText, depositText, condition, description,
+                            isSplitGoods ? pingguAveragePrice : "", isSplitGoods ? pingguNote : "",
+                            selectedCollection.contactWechat, selectedCollection.contactQQ, selectedCollection.contactGroupNumber,
+                            selectedCollection.groupInfo, String(selectedCollection.deadline.timeIntervalSince1970)] + selectedTags.sorted(),
+                            images: uploadedImageData, roles: isSplitGoods ? roleDrafts.filter(\.isAvailable) : [])
+                        if lastSubmission != identity {
+                            submissionID = "p-\(UUID().uuidString)"
+                            lastSubmission = identity
+                        }
+                        let requestID = UUID()
+                        let session = store.authSessionVersion
+                        publishRequestID = requestID
+                        isPublishing = true
+                        publishTask = Task {
+                            guard store.isCurrentSession(session), publishRequestID == requestID else { return }
+                            let success = await store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: selectedTags.sorted(), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID, submissionID: submissionID)
+                            guard publishRequestID == requestID else { return }
+                            isPublishing = false
+                            if success {
+                                lastSubmission = nil
+                                if isRepublishing { dismiss() } else { reset() }
+                            }
                         }
                     }
                 } label: {
-                    Text(canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
+                    Text(isPublishing ? "正在上传并提交审核…" : canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
                         .font(.system(size: 17, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
@@ -304,9 +334,33 @@ struct CreatePostView: View {
                         .foregroundStyle(canPublish ? .white : Theme.muted)
                 }
                 .buttonStyle(.plain)
-                .disabled(!canPublish)
+                .disabled(!canPublish || isPublishing)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
+                }
+                .disabled(isPublishing)
+            }
+            .onChange(of: store.authSessionVersion) { _, _ in
+                publishTask?.cancel()
+                publishRequestID = UUID()
+                isPublishing = false
+                lastSubmission = nil
+                reset()
+            }
+            .onAppear {
+                if draftOwnerID != store.currentUserID {
+                    reset()
+                    lastSubmission = nil
+                    draftOwnerID = store.currentUserID
+                }
+            }
+            .onDisappear {
+                if !store.isLoggedIn || draftOwnerID != store.currentUserID {
+                    publishTask?.cancel()
+                    publishRequestID = UUID()
+                    isPublishing = false
+                    lastSubmission = nil
+                    reset()
                 }
             }
             .scrollDismissesKeyboard(.interactively)
