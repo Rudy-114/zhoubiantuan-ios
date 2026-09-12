@@ -6,10 +6,15 @@ extension MockAppStore {
             moderationReviews = []
             return
         }
-        Task {
+        let requestID = UUID()
+        moderationRequestID = requestID
+        runSessionTask { [self] session in
             do {
-                moderationReviews = try await backendClient.moderationReviews(token: backendToken, status: status.rawValue)
+                let reviews = try await backendClient.moderationReviews(token: backendToken, status: status.rawValue)
+                guard isCurrentSession(session), moderationRequestID == requestID else { return }
+                moderationReviews = reviews
             } catch {
+                guard isCurrentSession(session), moderationRequestID == requestID else { return }
                 showToast(error.localizedDescription)
             }
         }
@@ -17,13 +22,16 @@ extension MockAppStore {
 
     func handleModerationReview(_ review: ModerationReview, decision: String) {
         guard isBackendEnabled, let backendToken else { return }
-        Task {
+        runSessionTask { [self] session in
             do {
                 _ = try await backendClient.decideModerationReview(token: backendToken, reviewID: review.id, decision: decision)
+                guard isCurrentSession(session) else { return }
                 moderationReviews.removeAll { $0.id == review.id }
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
                 showToast(ModerationDecisionLabel.message(for: decision))
             } catch {
+                guard isCurrentSession(session) else { return }
                 showToast(error.localizedDescription)
             }
         }

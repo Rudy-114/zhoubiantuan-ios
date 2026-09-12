@@ -436,7 +436,7 @@ final class AliyunBackendClient {
     private static let defaultSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 18
-        configuration.timeoutIntervalForResource = 55
+        configuration.timeoutIntervalForResource = 100
         configuration.waitsForConnectivity = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
@@ -712,6 +712,7 @@ final class AliyunBackendClient {
     private func uploadImages(token: String, images: [Data], kind: String, filenamePrefix: String) async throws -> [String] {
         var keys: [String] = []
         for (index, data) in images.enumerated() {
+            try Task.checkCancellation()
             let target: UploadTarget = try await request("/uploads/presign", method: "POST", token: token, body: [
                 "kind": kind,
                 "filename": "\(filenamePrefix)-\(index).jpg",
@@ -726,6 +727,7 @@ final class AliyunBackendClient {
             request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
             do {
                 let (_, response) = try await session.upload(for: request, from: data)
+                try Task.checkCancellation()
                 try validate(response: response, data: Data())
             } catch let error as URLError where error.code == .timedOut {
                 throw NSError(domain: "AliyunBackendClient", code: error.errorCode, userInfo: [NSLocalizedDescriptionKey: "图片上传超时，请换个网络或稍后重试"])
@@ -736,6 +738,7 @@ final class AliyunBackendClient {
     }
 
     private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil, body: [String: Any]? = nil) async throws -> T {
+        try Task.checkCancellation()
         let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let requestURL: URL
         if trimmedPath.contains("?") {
@@ -745,7 +748,8 @@ final class AliyunBackendClient {
         }
         var request = URLRequest(url: requestURL)
         request.httpMethod = method
-        request.timeoutInterval = 18
+        let needsModeration = ["POST", "PATCH"].contains(method) && (trimmedPath == "me" || trimmedPath.hasPrefix("posts") || trimmedPath.hasPrefix("collections"))
+        request.timeoutInterval = needsModeration ? 75 : 18
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -756,6 +760,7 @@ final class AliyunBackendClient {
         }
         do {
             let (data, response) = try await session.data(for: request)
+            try Task.checkCancellation()
             try validate(response: response, data: data)
             if T.self == EmptyResponse.self {
                 return EmptyResponse() as! T

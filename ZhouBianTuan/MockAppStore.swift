@@ -77,18 +77,26 @@ final class MockAppStore: ObservableObject {
     private static let currentLocalDataResetVersion = 1
     private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
     private static let backendFallbackGraceInterval: TimeInterval = 3
-    let backendClient = AliyunBackendClient()
+    let backendClient: AliyunBackendClient
+    private let persistsData: Bool
+    private let automaticallyRefresh: Bool
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
     private var backendRefreshTask: Task<Void, Never>?
-    private var isRefreshingFromBackend = false
-    private var isSyncingFromBackend = false
+    private var refreshRequestID: UUID?
+    private var syncRequestID: UUID?
+    private var feedRequestID: UUID?
+    private var isRefreshingFromBackend: Bool { refreshRequestID != nil }
+    private var isSyncingFromBackend: Bool { syncRequestID != nil }
+    private var sessionTasks: [UUID: Task<Void, Never>] = [:]
+    private var authenticationAttempt = UUID()
+    var moderationRequestID: UUID?
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
     private var lastRealtimeActivityAt = Date.distantPast
-    private var authExpirySuppressedUntil = Date.distantPast
     var backendToken: String? {
         get {
+            if !persistsData { return cachedBackendToken }
             if let cachedBackendToken {
                 return cachedBackendToken
             }
@@ -102,6 +110,7 @@ final class MockAppStore: ObservableObject {
             #endif
         }
         set {
+            if !persistsData { cachedBackendToken = newValue; return }
             if let newValue, !newValue.isEmpty {
                 if KeychainStore.set(newValue, forKey: Self.backendTokenDefaultsKey) {
                     cachedBackendToken = newValue
@@ -213,7 +222,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func persistThreads() {
-        guard !isRestoringThreads,
+        guard persistsData, !isRestoringThreads,
               let data = try? JSONEncoder().encode(threads) else { return }
         guard let storageURL = Self.messageThreadsStorageURL else {
             UserDefaults.standard.set(data, forKey: Self.messageThreadsDefaultsKey)
@@ -238,14 +247,45 @@ final class MockAppStore: ObservableObject {
         ImageDataNormalizer.jpegData(from: data, maxSide: 1600, compressionQuality: 0.78)
     }
 
+    func isCurrentSession(_ session: UUID) -> Bool {
+        session == authSessionVersion && !Task.isCancelled
+    }
+
+    func runSessionTask(_ operation: @escaping (UUID) async -> Void) {
+        let session = authSessionVersion
+        let taskID = UUID()
+        sessionTasks[taskID] = Task { [weak self] in
+            guard let self, self.isCurrentSession(session) else { return }
+            defer { self.sessionTasks[taskID] = nil }
+            await operation(session)
+        }
+    }
+
+    private func invalidateSessionWork() {
+        authSessionVersion = UUID()
+        authenticationAttempt = UUID()
+        sessionTasks.values.forEach { $0.cancel() }
+        sessionTasks.removeAll()
+        stopBackendAutoRefresh()
+        refreshRequestID = nil
+        syncRequestID = nil
+        feedRequestID = nil
+        isLoadingInitialFeed = false
+    }
+
     // MARK: - Initialization
 
-    init() {
-        Self.resetLocalDataForEmptyBetaIfNeeded()
-        Self.migrateBackendTokenToKeychain()
-        Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
-        cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
-        let startsLoggedIn = UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false
+    init(backendClient: AliyunBackendClient = AliyunBackendClient(), persistsData: Bool = true, automaticallyRefresh: Bool = true) {
+        self.backendClient = backendClient
+        self.persistsData = persistsData
+        self.automaticallyRefresh = automaticallyRefresh
+        if persistsData {
+            Self.resetLocalDataForEmptyBetaIfNeeded()
+            Self.migrateBackendTokenToKeychain()
+            Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
+            cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
+        }
+        let startsLoggedIn = persistsData && (UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false)
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
         limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
@@ -268,7 +308,7 @@ final class MockAppStore: ObservableObject {
         followingIDsByUserID = [blankUser.id: []]
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
-        restorePersistedThreads()
+        if persistsData { restorePersistedThreads() }
         if isBackendEnabled, backendToken == nil {
             invalidateCloudSessionForMissingToken(prompt: false)
         }
@@ -286,19 +326,24 @@ final class MockAppStore: ObservableObject {
     }
 
     func loadPublicFeedIfNeeded() async {
+        let session = authSessionVersion
         guard isBackendEnabled, posts.isEmpty, !isLoadingInitialFeed else { return }
+        let requestID = UUID()
+        feedRequestID = requestID
         isLoadingInitialFeed = true
-        defer { isLoadingInitialFeed = false }
+        defer { if feedRequestID == requestID { feedRequestID = nil; isLoadingInitialFeed = false } }
         do {
             let payload = try await backendClient.feed(limit: 40)
+            guard isCurrentSession(session) else { return }
             applyPublicFeedPayload(payload)
         } catch {
+            guard isCurrentSession(session) else { return }
             // The full authenticated bootstrap still runs after this best-effort first-screen request.
         }
     }
 
     func startBackendAutoRefresh() {
-        guard isBackendEnabled, let backendToken else { return }
+        guard automaticallyRefresh, isBackendEnabled, let backendToken else { return }
         startRealtimeConnection(token: backendToken)
         guard backendRefreshTask == nil else { return }
         backendRefreshTask = Task { [weak self] in
@@ -314,16 +359,21 @@ final class MockAppStore: ObservableObject {
         backendRefreshTask?.cancel()
         backendRefreshTask = nil
         realtimeConnection?.disconnect()
+        realtimeConnection = nil
         isRealtimeConnected = false
     }
 
     func backendModeChanged() {
+        invalidateSessionWork()
         if isBackendEnabled {
             if backendToken == nil {
                 logOut()
                 showToast("已切换到阿里云后端，请登录测试账号")
             } else {
-                Task { await refreshFromBackend() }
+                runSessionTask { [self] session in
+                    guard isCurrentSession(session) else { return }
+                    await refreshFromBackend()
+                }
                 startBackendAutoRefresh()
             }
         } else {
@@ -334,18 +384,24 @@ final class MockAppStore: ObservableObject {
     }
 
     func refreshFromBackend(silent: Bool = false) async {
+        let session = authSessionVersion
         guard isBackendEnabled, let backendToken else { return }
         guard !isRefreshingFromBackend else { return }
-        isRefreshingFromBackend = true
-        defer { isRefreshingFromBackend = false }
+        let requestID = UUID()
+        refreshRequestID = requestID
+        defer { if refreshRequestID == requestID { refreshRequestID = nil } }
         do {
             let payload = try await backendClient.bootstrap(token: backendToken)
+            guard isCurrentSession(session) else { return }
             applyBackendPayload(payload)
+            let appliedSession = authSessionVersion
             await loadBlockedUsers()
+            guard isCurrentSession(appliedSession) else { return }
             if !silent {
                 showToast("云端数据已同步")
             }
         } catch {
+            guard isCurrentSession(session) else { return }
             if isAuthExpiredError(error) {
                 expireCloudSession(silent: silent)
                 return
@@ -357,48 +413,62 @@ final class MockAppStore: ObservableObject {
     }
 
     func syncFromBackend(reason: String = "manual") async {
+        let session = authSessionVersion
         guard isBackendEnabled, let backendToken else { return }
         guard !isRefreshingFromBackend, !isSyncingFromBackend else { return }
         guard let cursor = SyncCursorStore.cursor(for: currentUserID) else {
             await refreshFromBackend(silent: true)
+            guard isCurrentSession(session) else { return }
             return
         }
-        isSyncingFromBackend = true
-        defer { isSyncingFromBackend = false }
+        let requestID = UUID()
+        syncRequestID = requestID
+        defer { if syncRequestID == requestID { syncRequestID = nil } }
         do {
             let payload = try await backendClient.sync(token: backendToken, cursor: cursor)
+            guard isCurrentSession(session) else { return }
             if payload.resetRequired == true {
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
                 return
             }
             applySyncPayload(payload)
             if payload.contentRefreshRequired == true {
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
                 return
             }
             if payload.hasMore {
-                Task { await syncFromBackend(reason: "\(reason).more") }
+                runSessionTask { [self] session in
+                    guard isCurrentSession(session) else { return }
+                    await syncFromBackend(reason: "\(reason).more")
+                }
             }
         } catch {
+            guard isCurrentSession(session) else { return }
             if isAuthExpiredError(error) {
                 expireCloudSession(silent: true)
                 return
             }
             if reason == "foreground" || reason == "manual" {
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
 
     private func startRealtimeConnection(token: String) {
+        let session = authSessionVersion
         if realtimeConnection == nil {
             realtimeConnection = RealtimeConnection(
                 backendClient: backendClient,
                 onEvent: { [weak self] event in
-                    await self?.handleRealtimeEvent(event)
+                    guard let self, self.isCurrentSession(session) else { return }
+                    await self.handleRealtimeEvent(event)
                 },
                 onStateChange: { [weak self] connected in
-                    self?.handleRealtimeStateChange(connected)
+                    guard let self, self.isCurrentSession(session) else { return }
+                    self.handleRealtimeStateChange(connected)
                 }
             )
         }
@@ -409,9 +479,11 @@ final class MockAppStore: ObservableObject {
         isRealtimeConnected = connected
         lastRealtimeActivityAt = Date()
         if connected {
-            Task {
+            runSessionTask { [self] session in
                 try? await Task.sleep(nanoseconds: 250_000_000)
+                guard isCurrentSession(session) else { return }
                 await syncFromBackend(reason: "websocket.connected")
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -434,41 +506,23 @@ final class MockAppStore: ObservableObject {
     }
 
     private func expireCloudSession(silent: Bool = false) {
-        guard Date() >= authExpirySuppressedUntil else { return }
-        stopBackendAutoRefresh()
-        SyncCursorStore.remove(for: currentUserID)
-        backendToken = nil
-        isLoggedIn = false
+        logOut()
         isAuthPromptPresented = !silent
-        likedPostIDs.removeAll()
-        favoritePostIDs.removeAll()
-        followedUserIDs.removeAll()
-        followingIDsByUserID[currentUserID] = []
-        authSessionVersion = UUID()
-        if !silent {
-            showToast("登录已失效，请重新注册或登录")
-        }
+        toastMessage = silent ? nil : "登录已失效，请重新登录"
     }
 
     private func invalidateCloudSessionForMissingToken(prompt: Bool, toast: String? = nil) {
-        stopBackendAutoRefresh()
-        SyncCursorStore.remove(for: currentUserID)
-        backendToken = nil
-        isLoggedIn = false
+        logOut()
         isAuthPromptPresented = prompt
-        likedPostIDs.removeAll()
-        favoritePostIDs.removeAll()
-        followedUserIDs.removeAll()
-        followingIDsByUserID[currentUserID] = []
-        authSessionVersion = UUID()
-        if let toast {
-            showToast(toast)
-        }
+        toastMessage = toast
     }
 
     private func applyBackendPayload(_ payload: BackendPayload) {
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
+        if payload.token != nil || (payload.currentUser?.id != nil && payload.currentUser?.id != previousUserID) || (!previousLoggedIn && payload.currentUser != nil) {
+            invalidateSessionWork()
+        }
         if let token = payload.token {
             backendToken = token
         }
@@ -521,14 +575,13 @@ final class MockAppStore: ObservableObject {
         if let syncCursor = payload.syncCursor {
             SyncCursorStore.set(syncCursor, for: currentUserID)
         }
-        if previousUserID != currentUserID || previousLoggedIn != isLoggedIn {
-            authSessionVersion = UUID()
-        }
-        if isBackendEnabled, backendToken != nil, isLoggedIn {
+        if automaticallyRefresh, isBackendEnabled, backendToken != nil, isLoggedIn {
             startBackendAutoRefresh()
-            Task {
+            runSessionTask { [self] session in
                 try? await Task.sleep(nanoseconds: 500_000_000)
+                guard isCurrentSession(session) else { return }
                 await syncFromBackend(reason: "bootstrap.cursor")
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -715,20 +768,25 @@ final class MockAppStore: ObservableObject {
         return thread
     }
 
-    private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String) async throws -> Void) {
+    private func runBackendMutation(refreshAfterSuccess: Bool = false, syncAfterSuccess: Bool = false, refreshAfterFailure: Bool = false, _ operation: @escaping (String, UUID) async throws -> Void) {
         guard isBackendEnabled, let backendToken else { return }
-        Task {
+        runSessionTask { [self] session in
             do {
-                try await operation(backendToken)
+                try await operation(backendToken, session)
+                guard isCurrentSession(session) else { return }
                 if refreshAfterSuccess {
                     await refreshFromBackend(silent: true)
+                    guard isCurrentSession(session) else { return }
                 } else if syncAfterSuccess {
                     await syncFromBackend(reason: "mutation")
+                    guard isCurrentSession(session) else { return }
                 }
             } catch {
+                guard isCurrentSession(session) else { return }
                 showToast(error.localizedDescription)
                 if refreshAfterFailure {
                     await refreshFromBackend(silent: true)
+                    guard isCurrentSession(session) else { return }
                 }
             }
         }
@@ -1027,14 +1085,16 @@ final class MockAppStore: ObservableObject {
         if likedPostIDs.contains(postID) {
             likedPostIDs.remove(postID)
             posts[index].likedCount = max(0, posts[index].likedCount - 1)
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
+                guard isCurrentSession(session) else { return }
             }
         } else {
             likedPostIDs.insert(postID)
             posts[index].likedCount += 1
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -1047,8 +1107,9 @@ final class MockAppStore: ObservableObject {
             posts[index].favoriteCount = max(0, posts[index].favoriteCount - 1)
             reminders.removeAll { $0.postID == postID && $0.userID == currentUserID }
             showToast("已取消收藏和截团提醒")
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
+                guard isCurrentSession(session) else { return }
             }
         } else {
             favoritePostIDs.insert(postID)
@@ -1056,8 +1117,9 @@ final class MockAppStore: ObservableObject {
             let post = posts[index]
             reminders.append(Reminder(id: "re-\(postID)-\(Int(Date().timeIntervalSince1970))", userID: currentUserID, postID: postID, deadline: post.deadline, remindAt: post.deadline.addingTimeInterval(-3600 * 3), hasReminded: false))
             showToast("已收藏，截团前会提醒你")
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -1077,8 +1139,9 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
             }
             showToast("已取消关注")
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
+                guard isCurrentSession(session) else { return }
             }
         } else {
             if blockedByUserIDs.contains(userID) {
@@ -1098,11 +1161,14 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount += 1
             }
             showToast("已关注团长")
-            runBackendMutation(syncAfterSuccess: true) { token in
+            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
                 do {
                     try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
+                    guard isCurrentSession(session) else { return }
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     await MainActor.run {
+                        guard self.isCurrentSession(session) else { return }
                         if let failureMessage = self.followBlockedFailureMessage(error, userID: userID) {
                             self.revertLocalFollow(userID: userID)
                             self.showToast(failureMessage)
@@ -1149,10 +1215,11 @@ final class MockAppStore: ObservableObject {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if isBackendEnabled {
-            Task {
+            runSessionTask { [self] session in
                 guard let backendToken else { return }
                 do {
                     let response = try await backendClient.addComment(token: backendToken, postID: postID, body: trimmed, replyToID: replyToID)
+                    guard isCurrentSession(session) else { return }
                     let localComment = response.comment.localComment()
                     let alreadyHadComment = comments.contains { $0.id == localComment.id }
                     mergeComments([localComment])
@@ -1160,8 +1227,10 @@ final class MockAppStore: ObservableObject {
                         posts[index].commentCount += 1
                     }
                     await syncFromBackend(reason: "comment.created")
+                    guard isCurrentSession(session) else { return }
                     showToast(response.moderation?.userMessage ?? "评论已发布")
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     showToast(error.localizedDescription)
                 }
             }
@@ -1193,8 +1262,9 @@ final class MockAppStore: ObservableObject {
             posts[postIndex].commentCount = max(0, posts[postIndex].commentCount - 1)
         }
         showToast("评论已删除")
-        runBackendMutation(syncAfterSuccess: true) { token in
+        runBackendMutation(syncAfterSuccess: true) { [self] token, session in
             try await self.backendClient.deleteComment(token: token, commentID: commentID)
+            guard isCurrentSession(session) else { return }
         }
     }
 
@@ -1205,8 +1275,9 @@ final class MockAppStore: ObservableObject {
             posts[index].reportCount += 1
         }
         showToast("已提交举报，管理员将后审处理")
-        runBackendMutation { token in
+        runBackendMutation { [self] token, session in
             try await self.backendClient.reportPost(token: token, postID: postID, reason: reason)
+            guard isCurrentSession(session) else { return }
         }
     }
 
@@ -1261,16 +1332,19 @@ final class MockAppStore: ObservableObject {
         var updatedUser = users[index]
         updatedUser.bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
         if isBackendEnabled {
-            Task {
+            runSessionTask { [self] session in
                 guard let backendToken else { return }
                 do {
                     let response = try await backendClient.updateProfile(token: backendToken, user: updatedUser)
+                    guard isCurrentSession(session) else { return }
                     if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
                         users[userIndex] = response.user.localUser()
                     }
                     await refreshFromBackend(silent: true)
+                    guard isCurrentSession(session) else { return }
                     showToast(response.moderation?.userMessage ?? "简介已保存")
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     showToast(error.localizedDescription)
                 }
             }
@@ -1305,16 +1379,18 @@ final class MockAppStore: ObservableObject {
         let backgroundUploadData = backgroundImageData
 
         if isBackendEnabled {
-            Task {
+            runSessionTask { [self] session in
                 guard let backendToken else { return }
                 do {
                     var avatarObjectKey: String?
                     if let avatarUploadData {
                         avatarObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: avatarUploadData, kind: "avatar")
+                        guard isCurrentSession(session) else { return }
                     }
                     var backgroundObjectKey: String?
                     if let backgroundUploadData {
                         backgroundObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: backgroundUploadData, kind: "background")
+                        guard isCurrentSession(session) else { return }
                     }
                     let response = try await backendClient.updateProfile(
                         token: backendToken,
@@ -1322,12 +1398,15 @@ final class MockAppStore: ObservableObject {
                         avatarObjectKey: avatarObjectKey,
                         backgroundObjectKey: backgroundObjectKey
                     )
+                    guard isCurrentSession(session) else { return }
                     if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
                         users[userIndex] = response.user.localUser()
                     }
                     await refreshFromBackend(silent: true)
+                    guard isCurrentSession(session) else { return }
                     showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : response.moderation?.userMessage ?? "资料已保存")
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     showToast(error.localizedDescription)
                 }
             }
@@ -1361,16 +1440,18 @@ final class MockAppStore: ObservableObject {
     }
 
     func loadBlockedUsers() async {
+        let session = authSessionVersion
         guard isBackendEnabled, let token = backendToken else { return }
         guard let blocked = try? await backendClient.blockedUsers(token: token) else { return }
+        guard isCurrentSession(session) else { return }
         mergeUsers(blocked)
         blockedUserIDs = Set(blocked.map(\.id))
     }
 
     func blockUser(_ userID: String) async {
+        let session = authSessionVersion
         guard userID != currentUserID else { return }
         guard requireLogin(prompt: "登录后才能拉黑") else { return }
-        suppressAuthExpiryDuringBlockMutation()
         guard let token = cloudMutationToken(missingMessage: "云端登录状态异常，请重新登录后再拉黑") else {
             if canApplyLocalOnlyAccountMutation {
                 applyLocalBlock(userID)
@@ -1380,16 +1461,18 @@ final class MockAppStore: ObservableObject {
         }
         do {
             try await backendClient.blockUser(token: token, userID: userID)
+            guard isCurrentSession(session) else { return }
             applyLocalBlock(userID)
             showToast("已拉黑，对方将无法私信你")
         } catch {
+            guard isCurrentSession(session) else { return }
             showToast(error.localizedDescription)
         }
     }
 
     func unblockUser(_ userID: String) async {
+        let session = authSessionVersion
         guard requireLogin(prompt: "登录后才能管理拉黑") else { return }
-        suppressAuthExpiryDuringBlockMutation()
         guard let token = cloudMutationToken(missingMessage: "云端登录状态异常，请重新登录后再管理拉黑") else {
             if canApplyLocalOnlyAccountMutation {
                 blockedUserIDs.remove(userID)
@@ -1400,10 +1483,12 @@ final class MockAppStore: ObservableObject {
         }
         do {
             try await backendClient.unblockUser(token: token, userID: userID)
+            guard isCurrentSession(session) else { return }
             blockedUserIDs.remove(userID)
             showToast("已解除拉黑")
             await restoreVisibleContentAfterUnblock()
         } catch {
+            guard isCurrentSession(session) else { return }
             showToast(error.localizedDescription)
         }
     }
@@ -1419,10 +1504,6 @@ final class MockAppStore: ObservableObject {
             return nil
         }
         return token
-    }
-
-    private func suppressAuthExpiryDuringBlockMutation() {
-        authExpirySuppressedUntil = Date().addingTimeInterval(8)
     }
 
     private func applyLocalBlock(_ userID: String) {
@@ -1456,38 +1537,45 @@ final class MockAppStore: ObservableObject {
     }
 
     private func restoreVisibleContentAfterUnblock() async {
+        let session = authSessionVersion
         guard isBackendEnabled else { return }
         if backendToken != nil {
             await refreshFromBackend(silent: true)
+            guard isCurrentSession(session) else { return }
             return
         }
         do {
             let payload = try await backendClient.feed(limit: 80)
+            guard isCurrentSession(session) else { return }
             applyPublicFeedPayload(payload)
         } catch {
+            guard isCurrentSession(session) else { return }
             // Best-effort public refresh for debug/local-token-missing sessions.
         }
     }
 
     @discardableResult
     func deleteAccount() async -> Bool {
+        let session = authSessionVersion
         guard isBackendEnabled, let token = backendToken else {
             showToast("请先登录后再操作")
             return false
         }
         do {
             try await backendClient.deleteAccount(token: token)
+            guard isCurrentSession(session) else { return false }
             logOut()
             showToast("账号已删除")
             return true
         } catch {
+            guard isCurrentSession(session) else { return false }
             showToast(error.localizedDescription)
             return false
         }
     }
 
     func logOut() {
-        stopBackendAutoRefresh()
+        invalidateSessionWork()
         SyncCursorStore.remove(for: currentUserID)
         isLoggedIn = false
         isAuthPromptPresented = false
@@ -1509,7 +1597,6 @@ final class MockAppStore: ObservableObject {
         blockedByUserIDs.removeAll()
         followingIDsByUserID = [Self.demoUserID: []]
         browsingHistoryIDs.removeAll()
-        authSessionVersion = UUID()
         showToast("已退出当前账号")
     }
 
@@ -1520,6 +1607,7 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func requestEmailCode(email: String, purpose: String) async -> Bool {
+        let session = authSessionVersion
         let trimmedEmail = email.trimmed
         guard isBackendEnabled else {
             showToast("当前模式不需要邮箱验证码")
@@ -1531,9 +1619,11 @@ final class MockAppStore: ObservableObject {
         }
         do {
             try await backendClient.sendEmailCode(email: trimmedEmail, purpose: purpose)
+            guard isCurrentSession(session) else { return false }
             showToast("验证码已发送，请查看邮箱")
             return true
         } catch {
+            guard isCurrentSession(session) else { return false }
             showToast(error.localizedDescription)
             return false
         }
@@ -1541,6 +1631,9 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func registerAccount(nickname: String, email: String, password: String, code: String = "") async -> Bool {
+        let session = authSessionVersion
+        let attempt = UUID()
+        authenticationAttempt = attempt
         let trimmedNickname = nickname.trimmed
         let trimmedEmail = email.trimmed
         let trimmedPassword = password.trimmed
@@ -1565,10 +1658,12 @@ final class MockAppStore: ObservableObject {
             }
             do {
                 let payload = try await backendClient.registerWithEmailCode(email: trimmedEmail, password: trimmedPassword, nickname: trimmedNickname, code: trimmedCode)
+                guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
                 applyBackendPayload(payload)
                 showToast("注册成功，已登录云端账号")
                 return true
             } catch {
+                guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
                 showToast(error.localizedDescription)
                 return false
             }
@@ -1622,15 +1717,20 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func loginWithEmail(email: String, password: String) async -> Bool {
+        let session = authSessionVersion
+        let attempt = UUID()
+        authenticationAttempt = attempt
         let trimmedEmail = email.trimmed
         let trimmedPassword = password.trimmed
         if isBackendEnabled {
             do {
                 let payload = try await backendClient.login(email: trimmedEmail, password: trimmedPassword)
+                guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
                 applyBackendPayload(payload)
                 showToast("云端登录成功")
                 return true
             } catch {
+                guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
                 let message = error.localizedDescription == "邮箱或密码不正确" ? "密码和邮箱不匹配" : error.localizedDescription
                 showToast(message)
                 return false
@@ -1647,6 +1747,9 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func loginWithEmailCode(email: String, code: String) async -> Bool {
+        let session = authSessionVersion
+        let attempt = UUID()
+        authenticationAttempt = attempt
         let trimmedEmail = email.trimmed
         let trimmedCode = code.trimmed
         guard isBackendEnabled else {
@@ -1663,10 +1766,12 @@ final class MockAppStore: ObservableObject {
         }
         do {
             let payload = try await backendClient.loginWithEmailCode(email: trimmedEmail, code: trimmedCode)
+            guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
             applyBackendPayload(payload)
             showToast("验证码登录成功")
             return true
         } catch {
+            guard isCurrentSession(session), authenticationAttempt == attempt else { return false }
             showToast(error.localizedDescription)
             return false
         }
@@ -1674,6 +1779,7 @@ final class MockAppStore: ObservableObject {
 
     private func switchCurrentUser(to userID: String) {
         guard users.contains(where: { $0.id == userID }) else { return }
+        invalidateSessionWork()
         UserDefaults.standard.set(browsingHistoryIDs, forKey: Self.browsingHistoryDefaultsKey(for: currentUserID))
         currentUserID = userID
         browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: userID)) ?? []
@@ -1683,7 +1789,6 @@ final class MockAppStore: ObservableObject {
         favoritePostIDs = []
         isLoggedIn = true
         isAuthPromptPresented = false
-        authSessionVersion = UUID()
     }
 
     // MARK: - Messages
@@ -1950,23 +2055,27 @@ final class MockAppStore: ObservableObject {
             return
         }
         let recipientUserID = peerUserID(for: thread)
-        Task {
+        runSessionTask { [self] session in
             do {
                 var outgoingMessage = message
                 if let imageData = outgoingMessage.imageData, outgoingMessage.imageObjectKey.isEmpty {
                     let objectKey = try await backendClient.uploadMessageImage(token: backendToken, data: imageData)
+                    guard isCurrentSession(session) else { return }
                     outgoingMessage.imageObjectKey = objectKey
                     updateLocalMessage(threadID: thread.id, messageID: outgoingMessage.id) { localMessage in
                         localMessage.imageObjectKey = objectKey
                     }
                 }
                 let response = try await backendClient.sendDirectMessage(token: backendToken, thread: thread, recipientUserID: recipientUserID, message: outgoingMessage)
+                guard isCurrentSession(session) else { return }
                 mergeChangedMessageThreads(from: [response.thread.localThread()])
                 await syncFromBackend(reason: "message.sent")
+                guard isCurrentSession(session) else { return }
                 if let successToast {
                     showToast(successToast)
                 }
             } catch {
+                guard isCurrentSession(session) else { return }
                 if let failureStatus = blockedSendFailureStatus(error, recipientUserID: recipientUserID) {
                     if failureStatus == .failedBlockedByPeer {
                         blockedByUserIDs.insert(recipientUserID)
@@ -1981,6 +2090,7 @@ final class MockAppStore: ObservableObject {
                 }
                 showToast(error.localizedDescription)
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -2021,9 +2131,11 @@ final class MockAppStore: ObservableObject {
         threads[index].unreadCount = 0
         persistThreads()
         if isBackendEnabled, let backendToken {
-            Task {
+            runSessionTask { [self] session in
                 try? await backendClient.markDirectMessageThreadRead(token: backendToken, threadID: threadID)
+                guard isCurrentSession(session) else { return }
                 await syncFromBackend(reason: "message.read")
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -2041,14 +2153,18 @@ final class MockAppStore: ObservableObject {
         persistThreads()
         showToast("已从你的聊天中删除")
         guard isBackendEnabled, let backendToken else { return }
-        Task {
+        runSessionTask { [self] session in
             do {
                 let response = try await backendClient.deleteDirectMessage(token: backendToken, threadID: actualThreadID, messageID: messageID)
+                guard isCurrentSession(session) else { return }
                 mergeChangedMessageThreads(from: [response.thread.localThread()])
                 await syncFromBackend(reason: "message.deleted")
+                guard isCurrentSession(session) else { return }
             } catch {
+                guard isCurrentSession(session) else { return }
                 showToast(error.localizedDescription)
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -2066,14 +2182,18 @@ final class MockAppStore: ObservableObject {
         persistThreads()
         showToast("已撤回")
         guard isBackendEnabled, let backendToken else { return }
-        Task {
+        runSessionTask { [self] session in
             do {
                 let response = try await backendClient.revokeDirectMessage(token: backendToken, threadID: actualThreadID, messageID: messageID)
+                guard isCurrentSession(session) else { return }
                 mergeChangedMessageThreads(from: [response.thread.localThread()])
                 await syncFromBackend(reason: "message.revoked")
+                guard isCurrentSession(session) else { return }
             } catch {
+                guard isCurrentSession(session) else { return }
                 showToast(error.localizedDescription)
                 await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -2106,8 +2226,9 @@ final class MockAppStore: ObservableObject {
         )
         collections.insert(collection, at: 0)
         showToast("已创建拼团合集")
-        runBackendMutation { token in
+        runBackendMutation { [self] token, session in
             try await self.backendClient.createCollection(token: token, collection: collection)
+            guard isCurrentSession(session) else { return }
         }
         return collection.id
     }
@@ -2137,16 +2258,20 @@ final class MockAppStore: ObservableObject {
         collections[index] = updated
         showToast("合集信息已保存")
         if isBackendEnabled {
-            Task {
+            runSessionTask { [self] session in
                 guard let backendToken else { return }
                 do {
                     let response = try await backendClient.updateCollection(token: backendToken, collection: updated)
+                    guard isCurrentSession(session) else { return }
                     mergeCollections([response.collection.localCollection()])
                     await syncFromBackend(reason: "collection.updated")
+                    guard isCurrentSession(session) else { return }
                     showToast("合集信息已同步")
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     showToast(error.localizedDescription)
                     await refreshFromBackend(silent: true)
+                    guard isCurrentSession(session) else { return }
                 }
             }
         }
@@ -2165,9 +2290,10 @@ final class MockAppStore: ObservableObject {
             }
         }
         showToast("已删除 \(ownedIDs.count) 个拼团合集")
-        runBackendMutation(refreshAfterFailure: true) { token in
+        runBackendMutation(refreshAfterFailure: true) { [self] token, session in
             for collectionID in ownedIDs {
                 try await self.backendClient.deleteCollection(token: token, collectionID: collectionID)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -2201,8 +2327,9 @@ final class MockAppStore: ObservableObject {
               posts[postIndex].authorID == currentUserID else { return }
         markOwnPostDeleted(postID)
         showToast("帖子已删除")
-        runBackendMutation(syncAfterSuccess: true) { token in
+        runBackendMutation(syncAfterSuccess: true) { [self] token, session in
             try await self.backendClient.deletePost(token: token, postID: postID)
+            guard isCurrentSession(session) else { return }
         }
     }
 
@@ -2281,16 +2408,18 @@ final class MockAppStore: ObservableObject {
             unsoldRoles: groupType == .splitGoods ? unsoldRoles.filter(\.isAvailable) : []
         )
         if isBackendEnabled {
-            Task {
+            runSessionTask { [self] session in
                 guard let backendToken else { return }
                 do {
                     async let uploadedObjectKeys = backendClient.uploadPostImages(token: backendToken, images: uploadedImageData)
                     async let uploadedPreviewObjectKeys = backendClient.uploadPostPreviewImages(token: backendToken, images: uploadedImageData)
                     let (objectKeys, previewObjectKeys) = try await (uploadedObjectKeys, uploadedPreviewObjectKeys)
+                    guard isCurrentSession(session) else { return }
                     var remotePost = post
                     remotePost.imageObjectKeys = objectKeys
                     remotePost.previewImageObjectKeys = previewObjectKeys
                     let response = try await backendClient.createPost(token: backendToken, post: remotePost, imageObjectKeys: objectKeys, previewImageObjectKeys: previewObjectKeys)
+                    guard isCurrentSession(session) else { return }
                     let localPost = response.post.localPost()
                     mergePosts([localPost])
                     if let collectionID = localPost.collectionID,
@@ -2302,13 +2431,17 @@ final class MockAppStore: ObservableObject {
                         markOwnPostDeleted(replacingPostID)
                         do {
                             try await backendClient.deletePost(token: backendToken, postID: replacingPostID)
+                            guard isCurrentSession(session) else { return }
                         } catch {
+                            guard isCurrentSession(session) else { return }
                             showToast("新帖已发布，旧版本删除失败，请稍后刷新")
                         }
                     }
                     await syncFromBackend(reason: replacingPostID == nil ? "post.created" : "post.republished")
+                    guard isCurrentSession(session) else { return }
                     showToast(response.moderation?.userMessage ?? "发布成功，已同步到云端")
                 } catch {
+                    guard isCurrentSession(session) else { return }
                     showToast(error.localizedDescription)
                 }
             }
