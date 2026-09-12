@@ -565,9 +565,7 @@ final class MockAppStore: ObservableObject {
             self.blockedByUserIDs = Set(blockedByUserIDs)
         }
         if let currentUser = payload.currentUser?.localUser() {
-            if !users.contains(where: { $0.id == currentUser.id }) {
-                users.append(currentUser)
-            }
+            mergeUsers([currentUser])
             currentUserID = currentUser.id
             browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: currentUser.id)) ?? []
         }
@@ -622,6 +620,10 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applySyncPayload(_ payload: BackendSyncPayload) {
+        for report in payload.reports?.map({ $0.localReport() }) ?? [] {
+            reports.removeAll { $0.id == report.id }
+            reports.insert(report, at: 0)
+        }
         let removedUsers = Set(payload.removedUserIDs ?? [])
         let removedCollections = Set(payload.removedCollectionIDs ?? []).union(collections.filter { removedUsers.contains($0.ownerID) }.map(\.id))
         let removedPosts = Set(payload.removedPostIDs ?? []).union(posts.filter {
@@ -1272,36 +1274,41 @@ final class MockAppStore: ObservableObject {
         }
     }
 
-    func reportPost(postID: String, reason: String = "用户举报") {
-        guard requireLogin(prompt: "登录后才能举报") else { return }
-        reports.append(Report(id: "rp-\(UUID().uuidString)", target: .post(postID), reason: reason, detail: "来自详情页的原型举报。", reporterID: currentUserID, status: .pending, adminResult: nil, handledAt: nil))
-        if let index = posts.firstIndex(where: { $0.id == postID }) {
-            posts[index].reportCount += 1
-        }
-        showToast("已提交举报，管理员将后审处理")
-        runBackendMutation { [self] token, session in
-            try await self.backendClient.reportPost(token: token, postID: postID, reason: reason)
-            guard isCurrentSession(session) else { return }
+    var canModerate: Bool { isLoggedIn && ["moderator", "admin"].contains(currentUser.moderationRole) }
+
+    func submitReport(target: ReportTarget, reason: String, detail: String) async -> Bool {
+        let session = authSessionVersion
+        guard requireLogin(prompt: "登录后才能举报") else { return false }
+        guard isBackendEnabled, let backendToken else { showToast("请连接云端后提交举报"); return false }
+        do {
+            let saved = try await backendClient.submitReport(token: backendToken, target: target, reason: reason, detail: detail).report.localReport()
+            guard isCurrentSession(session) else { return false }
+            reports.removeAll { $0.id == saved.id }
+            reports.insert(saved, at: 0)
+            showToast("举报已提交，可在设置中查看处理进度")
+            return true
+        } catch {
+            guard isCurrentSession(session) else { return false }
+            showToast(error.localizedDescription)
+            return false
         }
     }
 
-    func handleReport(reportID: String, status: ReportStatus) {
-        guard let reportIndex = reports.firstIndex(where: { $0.id == reportID }) else { return }
-        reports[reportIndex].status = status
-        reports[reportIndex].adminResult = status.rawValue
-        reports[reportIndex].handledAt = Date()
-        if case .post(let postID) = reports[reportIndex].target,
-           let postIndex = posts.firstIndex(where: { $0.id == postID }) {
-            switch status {
-            case .hidden:
-                posts[postIndex].status = .hidden
-            case .removed:
-                posts[postIndex].status = .removed
-            case .warned, .ignored, .pending:
-                break
-            }
+    func decideReport(_ report: Report, action: String, reason: String) async -> Bool {
+        let session = authSessionVersion
+        guard canModerate, let backendToken else { return false }
+        do {
+            _ = try await backendClient.decideReport(token: backendToken, report: report, action: action, reason: reason)
+            guard isCurrentSession(session) else { return false }
+            await syncFromBackend(reason: "report.decision")
+            guard isCurrentSession(session) else { return false }
+            showToast("处理结果已保存")
+            return true
+        } catch {
+            guard isCurrentSession(session) else { return false }
+            showToast(error.localizedDescription)
+            return false
         }
-        showToast("处理结果：\(status.rawValue)")
     }
 
     func copyToPasteboard(_ value: String, label: String) {

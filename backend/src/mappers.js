@@ -4,6 +4,7 @@ export function userToClient(row, counts = {}, viewerUserId = "") {
   const isSelf = Boolean(viewerUserId && viewerUserId === row.id);
   return {
     id: row.id,
+    moderationRole: isSelf ? row.moderation_role || "user" : "user",
     email: isSelf ? row.email || "" : "",
     nickname: row.nickname,
     bio: row.bio || "",
@@ -133,10 +134,11 @@ export function messageThreadToClient(row, messages = []) {
   };
 }
 
-export function reportToClient(row) {
+export function reportToClient(row, admin = false) {
   return {
     id: row.id,
     target: { type: row.target_type, id: row.target_id },
+    ...(admin === true ? { snapshot: reportEvidenceToClient(row.target_snapshot), handledBy: row.handled_by || "" } : {}),
     reason: row.reason,
     detail: row.detail || "",
     reporterID: row.reporter_id,
@@ -144,6 +146,10 @@ export function reportToClient(row) {
     adminResult: row.admin_result,
     handledAt: row.handled_at ? row.handled_at.toISOString() : null
   };
+}
+
+export function reportEvidenceToClient(snapshot = {}) {
+  return { ...snapshot, imageURLs: (snapshot.imageKeys || []).map(key => publicAssetUrl(key)) };
 }
 
 export function moderationReviewToClient(row) {

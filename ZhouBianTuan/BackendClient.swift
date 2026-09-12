@@ -88,6 +88,7 @@ enum BackendAssetURLMapper {
 struct BackendUser: Decodable {
     let id: String
     let email: String?
+    let moderationRole: String?
     let nickname: String
     let bio: String
     let followingCount: Int
@@ -134,7 +135,8 @@ struct BackendUser: Decodable {
             moderationStatus: moderationStatus.map(ContentStatus.backendValue(_:)),
             moderationReason: moderationReason ?? "",
             reviewID: reviewID ?? "",
-            phoneNumber: phoneNumber ?? ""
+            phoneNumber: phoneNumber ?? "",
+            moderationRole: moderationRole ?? "user"
         )
     }
 }
@@ -298,11 +300,26 @@ struct BackendReport: Decodable {
     let status: String
     let adminResult: String?
     let handledAt: String?
+    let snapshot: ReportEvidence?
+    let currentSnapshot: ReportEvidence?
 
     func localReport() -> Report {
-        let localTarget: ReportTarget = target.type == "comment" ? .comment(target.id) : .post(target.id)
-        return Report(id: id, target: localTarget, reason: reason, detail: detail, reporterID: reporterID, status: ReportStatus.backendValue(status), adminResult: adminResult, handledAt: handledAt.map(BackendDateParser.date(from:)))
+        let localTarget: ReportTarget
+        switch target.type {
+        case "comment": localTarget = .comment(target.id)
+        case "user": localTarget = .user(target.id)
+        case "message": localTarget = .message(target.id)
+        default: localTarget = .post(target.id)
+        }
+        return Report(id: id, target: localTarget, reason: reason, detail: detail, reporterID: reporterID, status: ReportStatus.backendValue(status), adminResult: adminResult, handledAt: handledAt.map(BackendDateParser.date(from:)), snapshot: snapshot, currentSnapshot: currentSnapshot)
     }
+}
+
+struct BackendReportResponse: Decodable { let report: BackendReport }
+struct BackendReportsPage: Decodable {
+    let reports: [BackendReport]
+    let nextCursor: String?
+    let hasMore: Bool
 }
 
 struct BackendMessageThread: Decodable {
@@ -362,6 +379,7 @@ struct BackendCollectionMutationResponse: Decodable {
 }
 
 struct BackendSyncPayload: Decodable {
+    let reports: [BackendReport]?
     let nextCursor: String
     let hasMore: Bool
     let resetRequired: Bool?
@@ -679,13 +697,23 @@ final class AliyunBackendClient {
         try await emptyRequest("/comments/\(commentID)", method: "DELETE", token: token)
     }
 
-    func reportPost(token: String, postID: String, reason: String) async throws {
-        let _: EmptyResponse = try await request("/reports", method: "POST", token: token, body: [
-            "targetType": "post",
-            "targetID": postID,
-            "reason": reason,
-            "detail": "来自 iOS 用户举报"
+    func submitReport(token: String, target: ReportTarget, reason: String, detail: String) async throws -> BackendReportResponse {
+        try await request("/reports", method: "POST", token: token, body: [
+            "targetType": target.type, "targetID": target.targetID, "reason": reason, "detail": detail
         ])
+    }
+
+    func reportsPage(token: String, admin: Bool, status: String = "all", cursor: String? = nil) async throws -> BackendReportsPage {
+        let path = admin ? "/moderation/reports" : "/reports"
+        var query = [URLQueryItem(name: "status", value: status), URLQueryItem(name: "limit", value: "30")]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        var components = URLComponents(); components.queryItems = query
+        return try await request(path + "?" + (components.percentEncodedQuery ?? ""), method: "GET", token: token)
+    }
+
+    func decideReport(token: String, report: Report, action: String, reason: String) async throws -> BackendReportResponse {
+        try await request("/moderation/reports/\(report.id)/decision", method: "POST", token: token,
+            body: ["action": action, "reason": reason, "targetVersion": report.currentSnapshot?.version ?? ""])
     }
 
     func deleteAccount(token: String) async throws {

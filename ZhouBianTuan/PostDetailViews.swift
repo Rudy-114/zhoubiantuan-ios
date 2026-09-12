@@ -6,6 +6,7 @@ struct PostDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var commentDraft = ""
     @State private var replyTargetCommentID: String?
+    @State private var reportTarget: ReportTarget?
     @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
     @State private var isAuthorProfilePresented = false
@@ -72,6 +73,7 @@ struct PostDetailView: View {
                                 PingguRoleAvailabilityCard(postID: post.id)
                             }
                             ContactCard(post: post)
+                            ReportButton(target: .post(post.id))
                             CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
@@ -116,6 +118,10 @@ struct PostDetailView: View {
                                 actionCommentID = nil
                             }
                         },
+                        onReport: {
+                            reportTarget = .comment(actionComment.id)
+                            actionCommentID = nil
+                        },
                         onDelete: {
                             if replyTargetCommentID == actionComment.id {
                                 replyTargetCommentID = nil
@@ -129,6 +135,7 @@ struct PostDetailView: View {
                     .transition(.opacity)
                 }
             }
+            .sheet(item: $reportTarget) { ReportForm(target: $0) }
             .sheet(isPresented: $isShareSheetPresented) {
                 ShareSheetView(post: post)
                     .presentationDetents([.height(440), .large])
@@ -1046,6 +1053,7 @@ struct CommentActionOverlay: View {
     let onDismiss: () -> Void
     let onReply: () -> Void
     let onCopy: () -> Void
+    let onReport: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -1070,6 +1078,8 @@ struct CommentActionOverlay: View {
                     CommentActionRow(title: "回复", systemImage: "bubble.left", action: onReply)
                     CommentActionDivider()
                     CommentActionRow(title: "复制", systemImage: "doc.on.doc", action: onCopy)
+                    CommentActionDivider()
+                    CommentActionRow(title: "举报", systemImage: "flag", action: onReport)
                 }
                 .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 

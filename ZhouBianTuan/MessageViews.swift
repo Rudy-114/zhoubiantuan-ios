@@ -522,6 +522,7 @@ struct ChatAttachmentOption: View {
 
 struct ChatBubble: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var isReporting = false
     @State private var previewImage: ChatImagePreviewItem?
     @State private var isLoadingPreview = false
     let threadID: String
@@ -532,6 +533,9 @@ struct ChatBubble: View {
     var body: some View {
         content
             .contextMenu {
+                if !message.isRevoked && !message.isDeletedForMe {
+                    Button("举报私信") { isReporting = true }
+                }
                 Button("删除") {
                     store.deleteMessage(threadID: threadID, messageID: message.id)
                 }
@@ -541,6 +545,7 @@ struct ChatBubble: View {
                     }
                 }
             }
+            .sheet(isPresented: $isReporting) { ReportForm(target: .message(message.id)) }
             .fullScreenCover(item: $previewImage) { item in
                 ChatImagePreviewView(image: item.image)
                     .environmentObject(store)

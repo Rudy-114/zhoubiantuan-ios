@@ -9,6 +9,7 @@ import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
 import { requestHash, assertPostReplay } from "./idempotency.js";
 import { assertRevision, editPost, validateRoles } from "./contentEditing.js";
+import { submitReport, listReports, decideReport } from "./reports.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
@@ -1127,27 +1128,22 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.post("/reports", requireAuth, async (req, res, next) => {
-    try {
-      const targetType = req.body.targetType === "comment" ? "comment" : "post";
-      const targetId = trimmedString(req.body.targetID);
-      if (!targetId) throw badRequest("举报目标不能为空");
-      await assertReportTargetExists(targetType, targetId);
-      const { rows } = await query(
-        `INSERT INTO reports (id, target_type, target_id, reason, detail, reporter_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (reporter_id, target_type, target_id) DO NOTHING
-         RETURNING *`,
-        [`rp-${randomUUID()}`, targetType, targetId, trimmedString(req.body.reason, "用户举报"), trimmedString(req.body.detail), req.user.id]
-      );
-      if (!rows[0]) {
-        return res.status(200).json({ ok: true, message: "你已举报过该内容，我们会尽快处理" });
-      }
-      res.status(201).json({ report: rows[0] });
-    } catch (error) {
-      next(error);
-    }
-  });
+  router.post("/reports", requireAuth, contentLimiter, asyncRoute(async (req, res) => {
+    const { report, syncEvents, created } = await submitReport(req.user, req.body);
+    notifySyncEvents(syncEvents);
+    res.status(created ? 201 : 200).json({ report });
+  }));
+  router.get("/reports", requireAuth, asyncRoute(async (req, res) => {
+    res.json(await listReports(req.user, req.query));
+  }));
+  router.get("/moderation/reports", requireAuth, requireModerationAdmin, asyncRoute(async (req, res) => {
+    res.json(await listReports(req.user, req.query, true));
+  }));
+  router.post("/moderation/reports/:id/decision", requireAuth, requireModerationAdmin, asyncRoute(async (req, res) => {
+    const { report, syncEvents } = await decideReport(req.user, req.params.id, req.body);
+    notifySyncEvents(syncEvents);
+    res.json({ report });
+  }));
 
   router.get("/moderation/reviews", requireAuth, requireModerationAdmin, async (req, res, next) => {
     try {
@@ -1476,16 +1472,6 @@ function safeImageContentType(rawContentType) {
   return ALLOWED_IMAGE_CONTENT_TYPES.has(normalized) ? normalized : "application/octet-stream";
 }
 
-
-async function assertReportTargetExists(targetType, targetId) {
-  const target =
-    targetType === "comment"
-      ? await query("SELECT id FROM comments WHERE id = $1 AND status <> 'deleted'", [targetId])
-      : await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [targetId]);
-  if (!target.rows[0]) {
-    throw badRequest(targetType === "comment" ? "举报的评论不存在" : "举报的帖子不存在");
-  }
-}
 
 async function createCollection(userId, body) {
   const name = trimmedString(body.name);

@@ -2146,6 +2146,7 @@ struct UserProfileView: View {
                                 .buttonStyle(.plain)
 
                                 Spacer()
+                                if userID != store.currentUserID { ReportButton(target: .user(userID)).tint(.white) }
                             }
 
                             Spacer(minLength: 20)

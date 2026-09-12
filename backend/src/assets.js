@@ -16,6 +16,7 @@ export async function canReadAsset(key, user) {
     OR EXISTS (SELECT 1 FROM moderation_reviews mr WHERE $1 = ANY(mr.image_object_keys)
       AND ($3 OR mr.owner_id = NULLIF($2, '')) AND mr.status IN ('pending','review','rejected')
       AND (mr.target_type <> 'post' OR EXISTS (SELECT 1 FROM posts rp WHERE rp.id = mr.target_id AND rp.status <> 'deleted')))
+    OR EXISTS (SELECT 1 FROM reports r WHERE $3 AND r.status='pending' AND $1=ANY(r.image_object_keys))
     OR EXISTS (SELECT 1 FROM upload_tickets ut WHERE ut.object_key = $1 AND ut.user_id = NULLIF($2, '')
       AND ut.status = 'ready' AND ut.referenced_at IS NULL)
   ) AS allowed`, [key, viewer, isModerationAdmin(user)]);

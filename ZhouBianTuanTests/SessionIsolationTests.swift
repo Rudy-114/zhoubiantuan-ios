@@ -232,4 +232,26 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertEqual(store.posts.first?.unsoldRoles.first?.quantity, 4)
         XCTAssertEqual(store.toastMessage, "Version conflict")
     }
+
+    func testReportSubmissionWaitsForConfirmationAndNeverAddsAFailedReport() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        XCTAssertFalse(store.canModerate)
+        let held = RequestSlot(), started = expectation(description: "Report in flight")
+        StubProtocol.handler = { request in held.set(request); started.fulfill() }
+        let submission = Task { await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review") }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(store.reports.isEmpty)
+        held.take().reply(["error": "Report could not be saved"], status: 503)
+        let failed = await submission.value
+        XCTAssertFalse(failed)
+        XCTAssertTrue(store.reports.isEmpty)
+        StubProtocol.handler = { $0.reply(["report": ["id": "rp-test", "target": ["type": "message", "id": "dm-test"],
+            "reason": "Harassment", "detail": "Please review", "reporterID": "A", "status": "pending"]]) }
+        let saved = await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review")
+        XCTAssertTrue(saved)
+        XCTAssertEqual(store.reports.count, 1)
+        XCTAssertEqual(store.reports.first?.target, .message("dm-test"))
+    }
 }

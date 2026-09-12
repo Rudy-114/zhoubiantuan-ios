@@ -28,6 +28,7 @@ struct User: Identifiable, Hashable {
     var reviewID: String = ""
     var phoneNumber: String = ""
     var password: String = ""
+    var moderationRole: String = "user"
 }
 
 struct GroupBuyPost: Identifiable, Hashable {
@@ -301,6 +302,8 @@ struct Report: Identifiable, Hashable {
     var status: ReportStatus
     var adminResult: String?
     var handledAt: Date?
+    var snapshot: ReportEvidence? = nil
+    var currentSnapshot: ReportEvidence? = nil
 }
 
 struct Reminder: Identifiable, Hashable {
@@ -312,9 +315,29 @@ struct Reminder: Identifiable, Hashable {
     var hasReminded: Bool
 }
 
-enum ReportTarget: Hashable {
+struct ReportEvidence: Decodable, Hashable {
+    var text: String?
+    var version: String?
+    var status: String?
+    var imageURLs: [String]?
+}
+
+enum ReportTarget: Hashable, Identifiable {
     case post(String)
     case comment(String)
+    case user(String)
+    case message(String)
+
+    var type: String {
+        switch self { case .post: "post"; case .comment: "comment"; case .user: "user"; case .message: "message" }
+    }
+    var targetID: String {
+        switch self { case .post(let id), .comment(let id), .user(let id), .message(let id): id }
+    }
+    var id: String { type + ":" + targetID }
+    var label: String {
+        switch self { case .post: "帖子"; case .comment: "评论"; case .user: "用户"; case .message: "私信" }
+    }
 }
 
 enum ContentStatus: String, Hashable {
@@ -351,6 +374,7 @@ enum ReportStatus: String, Hashable {
     case hidden = "已隐藏"
     case removed = "已下架"
     case warned = "已警告"
+    case suspended = "账号已停用"
 }
 
 enum ColorToken: String, Hashable {
@@ -408,6 +432,8 @@ extension ReportStatus {
             return .hidden
         case "removed", "已下架":
             return .removed
+        case "suspended", "账号已停用":
+            return .suspended
         case "warned", "已警告":
             return .warned
         default:

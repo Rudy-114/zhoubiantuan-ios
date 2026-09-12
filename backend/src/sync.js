@@ -1,6 +1,6 @@
 import { query, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
-import { collectionToClient, commentToClient, postToClient, userToClient } from "./mappers.js";
+import { collectionToClient, commentToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
 import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
@@ -88,12 +88,15 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
     ...collections.map((collection) => collection.ownerID)
   ]);
   const users = await loadUsersForSync(userId, userIds);
+  const reportIds = unique(rows.filter(row => row.entity_type === "report").map(row => row.entity_id));
+  const reports = reportIds.length ? (await query("SELECT * FROM reports WHERE id=ANY($1::text[]) AND reporter_id=$2", [reportIds, userId])).rows.map(row => reportToClient(row)) : [];
 
   return {
     nextCursor,
     hasMore,
     events,
     users,
+    reports,
     removedUserIDs: initialUserIds.filter(id => !users.some(user => user.id === id)),
     posts,
     removedPostIDs: postIds.filter(id => !posts.some(post => post.id === id)),
