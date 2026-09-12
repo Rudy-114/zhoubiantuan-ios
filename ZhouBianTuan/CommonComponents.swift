@@ -281,7 +281,7 @@ struct SelectChip: View {
                 .foregroundStyle(isSelected ? .white : Theme.subtext)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
-                .background(isSelected ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                .background(isSelected ? Theme.accentFill : Theme.panelRaised, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -362,7 +362,7 @@ struct ContactButton: View {
                 .foregroundStyle(isEnabled ? .white : Theme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(isEnabled ? Theme.accentFill : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -404,7 +404,7 @@ struct RequiredLabel: View {
                 .foregroundStyle(Theme.text)
             Text("*")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
         }
     }
 }
@@ -424,7 +424,7 @@ struct PrototypeTextField: View {
                 if required {
                     Text("*")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                 }
             }
             TextField(placeholder, text: $text)
@@ -433,7 +433,7 @@ struct PrototypeTextField: View {
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
+                        .stroke(required && text.trimmed.isEmpty ? Theme.accent.opacity(0.45) : Theme.hairline, lineWidth: 1)
                 }
         }
     }
@@ -454,7 +454,7 @@ struct PrototypeTextEditor: View {
                 if required {
                     Text("*")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                 }
             }
             ZStack(alignment: .topLeading) {
@@ -473,7 +473,7 @@ struct PrototypeTextEditor: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
+                    .stroke(required && text.trimmed.isEmpty ? Theme.accent.opacity(0.45) : Theme.hairline, lineWidth: 1)
             }
         }
     }
@@ -506,7 +506,7 @@ struct ConstrainedFormTextEditor: View {
                 Text("\(characterCount)/\(limit)")
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(isOverLimit ? Theme.hotPink : Theme.subtext)
+                    .foregroundStyle(isOverLimit ? Theme.danger : Theme.subtext)
                     .accessibilityLabel("当前输入 \(characterCount) 个字，上限 \(limit) 个字")
             }
 
@@ -529,13 +529,13 @@ struct ConstrainedFormTextEditor: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(errorMessage != nil || isOverLimit ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+                    .stroke(errorMessage != nil || isOverLimit ? Theme.danger.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -577,7 +577,7 @@ struct TagEditor: View {
                             .foregroundStyle(selection.contains(tag) ? .white : Theme.subtext)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 8)
-                            .background(selection.contains(tag) ? Theme.hotPink : Theme.panel, in: Capsule())
+                            .background(selection.contains(tag) ? Theme.accentFill : Theme.panel, in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -598,7 +598,7 @@ struct TagEditor: View {
                         .font(.system(size: 18, weight: .black))
                         .foregroundStyle(normalizedCustomTag.isEmpty ? Theme.muted : .white)
                         .frame(width: 44, height: 44)
-                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.accentFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(normalizedCustomTag.isEmpty)
@@ -633,9 +633,9 @@ struct ReminderMiniCard: View {
         HStack(spacing: 12) {
             Image(systemName: reminder.isUpcoming ? "bell.badge.fill" : "bell.fill")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .frame(width: 44, height: 44)
-                .background(Theme.hotPink.opacity(0.14), in: Circle())
+                .background(Theme.accent.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(reminder.isUpcoming ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
                     .font(.system(size: 15, weight: .bold))
@@ -672,7 +672,7 @@ struct ReminderLargeCard: View {
                     .foregroundStyle(Theme.subtext)
                 Text(reminder.isUpcoming ? "即将截团" : "请留意截团时间")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.hotPink)
+                    .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.accent)
             }
             Spacer()
         }
@@ -715,9 +715,9 @@ struct ProfileRowContent: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .frame(width: 42, height: 42)
-                .background(Theme.hotPink.opacity(0.13), in: Circle())
+                .background(Theme.accent.opacity(0.13), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 16, weight: .bold))
@@ -782,7 +782,7 @@ struct AdminActionButton: View {
                 .foregroundStyle(title == "下架" ? .white : Theme.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
-                .background(title == "下架" ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                .background(title == "下架" ? Theme.danger : Theme.panelRaised, in: Capsule())
         }
         .buttonStyle(.plain)
     }

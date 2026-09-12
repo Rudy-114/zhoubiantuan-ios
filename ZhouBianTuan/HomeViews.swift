@@ -95,7 +95,7 @@ struct HomeHeader: View {
                                     .font(.system(size: 22, weight: feed == item ? .bold : .semibold))
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
                                 Capsule()
-                                    .fill(feed == item ? Theme.hotPink : Color.clear)
+                                    .fill(feed == item ? Theme.accent : Color.clear)
                                     .frame(width: 40, height: 4)
                             }
                         }
@@ -335,10 +335,10 @@ struct PostCard: View {
                             ForEach(livePost.categoryTags.prefix(2), id: \.self) { tag in
                                 Text(tag)
                                     .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(Theme.softPink)
+                                    .foregroundStyle(Theme.accentSoft)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 4)
-                                    .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                                    .background(Theme.accent.opacity(0.13), in: Capsule())
                             }
                         }
                     }
@@ -375,7 +375,7 @@ struct PostCardTypeBadge: View {
             .lineLimit(1)
             .minimumScaleFactor(0.82)
             .frame(width: 64, height: 28)
-            .background(post.groupType.accent.opacity(0.94), in: Capsule())
+            .background(post.groupType == .followGroup ? Theme.accentFill : post.groupType.accent.opacity(0.94), in: Capsule())
     }
 }
 
@@ -421,7 +421,7 @@ struct PostLikeCountButton: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .foregroundStyle(isLiked ? Theme.hotPink : Theme.subtext)
+            .foregroundStyle(isLiked ? Theme.accent : Theme.subtext)
             .frame(minWidth: 68, minHeight: 32, alignment: .trailing)
             .contentShape(Rectangle())
         }

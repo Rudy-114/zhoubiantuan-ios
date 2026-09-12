@@ -219,9 +219,9 @@ struct PostDetailView: View {
             VStack(spacing: 18) {
                 Image(systemName: "eye.slash.fill")
                     .font(.system(size: 58, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 86, height: 86)
-                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+                    .background(Theme.accent.opacity(0.12), in: Circle())
 
                 Text("帖子不可见")
                     .font(.system(size: 25, weight: .black))
@@ -348,11 +348,11 @@ struct DetailTopBar: View {
             } label: {
                 Text(store.followedUserIDs.contains(author.id) ? "已关注" : "关注")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(store.followedUserIDs.contains(author.id) ? Theme.subtext : Theme.hotPink)
+                    .foregroundStyle(store.followedUserIDs.contains(author.id) ? Theme.subtext : Theme.accent)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 10)
                     .overlay {
-                        Capsule().stroke(store.followedUserIDs.contains(author.id) ? Theme.hairline : Theme.hotPink, lineWidth: 1)
+                        Capsule().stroke(store.followedUserIDs.contains(author.id) ? Theme.hairline : Theme.accent, lineWidth: 1)
                     }
             }
             .buttonStyle(.plain)
@@ -458,7 +458,7 @@ struct ShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
-                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
+                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.accent) {
                         isRecipientPickerPresented = true
                     }
                 }
@@ -703,7 +703,7 @@ struct ProfileShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
-                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
+                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.accent) {
                         isRecipientPickerPresented = true
                     }
                 }
@@ -917,7 +917,7 @@ struct EditableRoleRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 TextField("角色名", text: $role.name)
-                Button("删除", systemImage: "trash", action: onDelete).labelStyle(.iconOnly).tint(Theme.hotPink)
+                Button("删除", systemImage: "trash", action: onDelete).labelStyle(.iconOnly).tint(Theme.danger)
             }
             HStack {
                 Text("余量")
@@ -953,7 +953,7 @@ struct ContactCard: View {
                 Spacer()
                 Text(collection == nil ? "外部交易" : "合集共享")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
             }
             Text("站内仅展示信息和咨询入口，不承接支付、订单、退款、物流或售后。正式交易请在微信、QQ、群聊等外部平台完成。")
                 .font(.system(size: 13))
@@ -1191,7 +1191,7 @@ struct CommentActionRow: View {
                     .font(.system(size: 24, weight: .semibold))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(isDestructive ? Theme.hotPink : Color.white.opacity(0.9))
+            .foregroundStyle(isDestructive ? Theme.danger : Color.white.opacity(0.9))
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 72)
             .padding(.horizontal, 18)
@@ -1241,7 +1241,7 @@ struct DetailActionBar: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrowshape.turn.up.left.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                     Text("回复 \(replyAuthor.nickname)")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.text)
@@ -1297,12 +1297,12 @@ struct DetailActionBar: View {
                     .buttonStyle(.plain)
                 }
 
-                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
+                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.accent : Theme.text) {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
                         store.toggleLike(postID: post.id)
                     }
                 }
-                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
+                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.accent : Theme.text) {
                     store.toggleFavorite(postID: post.id)
                 }
                 ActionIconButton(icon: "bubble.left", title: commentTitle, tint: Theme.text) {

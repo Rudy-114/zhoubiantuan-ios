@@ -110,7 +110,7 @@ enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
 
     var accent: Color {
         switch self {
-        case .followGroup: Theme.hotPink
+        case .followGroup: Theme.accent
         case .splitGoods: Color(red: 0.25, green: 0.78, blue: 0.72)
         }
     }
@@ -416,7 +416,7 @@ enum ColorToken: String, Hashable {
     var gradient: LinearGradient {
         switch self {
         case .rose:
-            LinearGradient(colors: [Theme.hotPink, Color(red: 0.42, green: 0.08, blue: 0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [Color(red: 1, green: 0.12, blue: 0.27), Color(red: 0.42, green: 0.08, blue: 0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .violet:
             LinearGradient(colors: [Color(red: 0.58, green: 0.36, blue: 1), Color(red: 0.16, green: 0.11, blue: 0.32)], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .amber:

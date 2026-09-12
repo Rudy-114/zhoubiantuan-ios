@@ -38,8 +38,18 @@ enum Theme {
         dark: UIColor.white.withAlphaComponent(0.92),
         light: UIColor.black.withAlphaComponent(0.78)
     ))
-    static let hotPink = Color(red: 1, green: 0.12, blue: 0.27)
-    static let softPink = Color(red: 1, green: 0.42, blue: 0.58)
+    // AccentColor also supplies UIKit controls and the app-wide SwiftUI tint.
+    static let accentUIColor = UIColor(named: "AccentColor")
+        ?? UIColor(red: 194 / 255, green: 77 / 255, blue: 0, alpha: 1)
+    static let accent = Color(accentUIColor)
+    // Keep solid controls dark enough for their white labels in either appearance.
+    static let accentFill = Color(red: 194 / 255, green: 77 / 255, blue: 0)
+    static let accentSoft = Color(adaptiveUIColor(
+        dark: UIColor(red: 1, green: 180 / 255, blue: 114 / 255, alpha: 1),
+        light: UIColor(red: 173 / 255, green: 68 / 255, blue: 0, alpha: 1)
+    ))
+    static let accentHighlight = Color(red: 1, green: 211 / 255, blue: 163 / 255)
+    static let danger = Color.red
 
     static let barBackgroundUIColor = adaptiveUIColor(
         dark: UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1),

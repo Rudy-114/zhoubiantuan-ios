@@ -167,7 +167,7 @@ struct ProfileView: View {
                                             }
                                             .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                             Capsule()
-                                                .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                                .fill(selectedTab == tab ? Theme.accent : Color.clear)
                                                 .frame(width: 48, height: 4)
                                         }
                                         .frame(maxWidth: .infinity)
@@ -265,7 +265,7 @@ struct ProfileBioEditorView: View {
                     dismiss()
                 }
                 .font(.system(size: 20, weight: canSave ? .bold : .medium))
-                .foregroundStyle(canSave ? Theme.hotPink : Color(red: 0.45, green: 0.08, blue: 0.13))
+                .foregroundStyle(canSave ? Theme.accent : Theme.muted)
                 .frame(width: 86, height: 48, alignment: .trailing)
                 .animation(.easeInOut(duration: 0.16), value: canSave)
             }
@@ -280,7 +280,7 @@ struct ProfileBioEditorView: View {
                 TextEditor(text: $bio)
                     .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(Theme.text)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 14)
                     .padding(.top, 10)
@@ -428,7 +428,7 @@ struct UserRelationRow: View {
                             .lineLimit(1)
                         Text("ID：\(store.registrationID(for: user.id))")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Theme.hotPink.opacity(0.88))
+                            .foregroundStyle(Theme.accent.opacity(0.88))
                         Text(user.bio)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Theme.subtext)
@@ -449,7 +449,7 @@ struct UserRelationRow: View {
                         .foregroundStyle(store.followedUserIDs.contains(user.id) ? Theme.subtext : .white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -534,7 +534,7 @@ struct ProfileNotesPanel: View {
                         } label: {
                             Text(isManaging ? "完成" : "管理")
                                 .font(.system(size: 14, weight: .black))
-                                .foregroundStyle(isManaging ? Theme.text : Theme.hotPink)
+                                .foregroundStyle(isManaging ? Theme.text : Theme.accent)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .background(Theme.panelRaised, in: Capsule())
@@ -569,10 +569,10 @@ struct ProfileNotesPanel: View {
                             Spacer()
                             Text("\(attentionPosts.count)")
                                 .font(.system(size: 13, weight: .black))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                                .background(Theme.accent.opacity(0.13), in: Capsule())
                         }
                         ForEach(attentionPosts) { post in
                             ProfileAttentionPostRow(post: post)
@@ -620,10 +620,10 @@ struct ProfileAttentionPostRow: View {
                         .lineLimit(2)
                     Text(post.status.rawValue)
                         .font(.system(size: 12, weight: .black))
-                        .foregroundStyle(post.status.canRepublish ? Theme.hotPink : Theme.muted)
+                        .foregroundStyle(post.status.canRepublish ? Theme.accent : Theme.muted)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((post.status.canRepublish ? Theme.hotPink.opacity(0.13) : Theme.panelRaised), in: Capsule())
+                        .background((post.status.canRepublish ? Theme.accent.opacity(0.13) : Theme.panelRaised), in: Capsule())
                 }
 
                 Spacer()
@@ -637,7 +637,7 @@ struct ProfileAttentionPostRow: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Theme.hotPink, in: Capsule())
+                            .background(Theme.accentFill, in: Capsule())
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -654,9 +654,9 @@ struct ProfileAttentionPostRow: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .frame(width: 44, height: 40)
-                        .background(Theme.hotPink.opacity(0.12), in: Capsule())
+                        .background(Theme.accent.opacity(0.12), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -701,9 +701,9 @@ struct ProfilePostManageRow: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 42, height: 42)
-                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+                    .background(Theme.accent.opacity(0.12), in: Circle())
             }
             .buttonStyle(.plain)
         }
@@ -821,7 +821,7 @@ struct ProfileCollectionsPanel: View {
                                     .foregroundStyle(isManaging ? .white : Theme.text)
                                     .padding(.horizontal, 13)
                                     .frame(height: 36)
-                                    .background(isManaging ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                                    .background(isManaging ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -834,7 +834,7 @@ struct ProfileCollectionsPanel: View {
                                     .font(.system(size: 18, weight: .black))
                                     .foregroundStyle(.white)
                                     .frame(width: 38, height: 38)
-                                    .background(Theme.hotPink, in: Circle())
+                                    .background(Theme.accentFill, in: Circle())
                             }
                             .buttonStyle(.plain)
                         }
@@ -890,7 +890,7 @@ struct ProfileCollectionsPanel: View {
                         .foregroundStyle(selectedCollectionIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(selectedCollectionIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(selectedCollectionIDs.isEmpty ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -950,10 +950,10 @@ struct CollectionCard: View {
                     Spacer()
                     Text(isEnded ? "已结团" : "\(visibleCount)帖")
                         .font(.system(size: 12, weight: .black))
-                        .foregroundStyle(isEnded ? Theme.muted : Theme.hotPink)
+                        .foregroundStyle(isEnded ? Theme.muted : Theme.accent)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((isEnded ? Theme.panelRaised : Theme.hotPink.opacity(0.13)), in: Capsule())
+                        .background((isEnded ? Theme.panelRaised : Theme.accent.opacity(0.13)), in: Capsule())
                 }
                 Text(collection.defaultNote)
                     .font(.system(size: 13, weight: .semibold))
@@ -977,7 +977,7 @@ struct CollectionCard: View {
             if isManaging {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.muted)
                     .padding(12)
             }
         }
@@ -1081,7 +1081,7 @@ struct CreateCollectionSheet: View {
                             .font(.system(size: 17, weight: .bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
-                            .background(canCreate ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                            .background(canCreate ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                             .foregroundStyle(canCreate ? .white : Theme.muted)
                     }
                     .buttonStyle(.plain)
@@ -1173,7 +1173,7 @@ struct CollectionDetailView: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Theme.hotPink, in: Capsule())
+                                .background(Theme.accentFill, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 16)
@@ -1306,7 +1306,7 @@ struct CollectionPostManager: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Theme.hotPink, in: Capsule())
+                                .background(Theme.accentFill, in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -1409,7 +1409,7 @@ struct BrowsingHistoryView: View {
                         .font(.system(size: 22, weight: .black))
                         .foregroundStyle(Theme.text)
                     Capsule()
-                        .fill(Theme.hotPink)
+                        .fill(Theme.accent)
                         .frame(width: 48, height: 4)
                 }
                 Spacer()
@@ -1451,7 +1451,7 @@ struct BrowsingHistoryView: View {
                         .foregroundStyle(selectedIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(selectedIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(selectedIDs.isEmpty ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -1551,7 +1551,7 @@ struct HistoryCard: View {
                 if isManaging {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 25, weight: .bold))
-                        .foregroundStyle(isSelected ? Theme.hotPink : .white)
+                        .foregroundStyle(isSelected ? Theme.accent : .white)
                         .shadow(radius: 4)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(8)
@@ -1680,7 +1680,7 @@ struct DrawerRowContent: View {
                     .font(.system(size: 13, weight: .black))
                     .foregroundStyle(.white)
                     .frame(width: 28, height: 28)
-                    .background(Theme.hotPink, in: Circle())
+                    .background(Theme.accentFill, in: Circle())
             }
         }
         .padding(.horizontal, 14)
@@ -1865,7 +1865,7 @@ struct EditProfileView: View {
                                 HStack {
                                     Text("恢复默认背景图")
                                         .font(.system(size: 16, weight: .bold))
-                                        .foregroundStyle(Theme.hotPink)
+                                        .foregroundStyle(Theme.accent)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 146)
@@ -1899,7 +1899,7 @@ struct EditProfileView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(Theme.hotPink, in: Capsule())
+                            .background(Theme.accentFill, in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 16)
@@ -2023,7 +2023,7 @@ struct ProfileEditField: View {
             TextField(placeholder, text: $text)
                 .font(.system(size: 21, weight: .semibold))
                 .foregroundStyle(text.isEmpty ? Color.black.opacity(0.32) : Color.black.opacity(0.82))
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
                 .disabled(!isEditable)
                 .opacity(isEditable ? 1 : 0.52)
             Image(systemName: "chevron.right")
@@ -2189,7 +2189,7 @@ struct TagContentView: View {
                                         .font(.system(size: 22, weight: sort == item ? .black : .semibold))
                                         .foregroundStyle(sort == item ? Theme.text : Theme.subtext)
                                     Capsule()
-                                        .fill(sort == item ? Theme.hotPink : Color.clear)
+                                        .fill(sort == item ? Theme.accent : Color.clear)
                                         .frame(width: 42, height: 4)
                                 }
                             }
@@ -2401,7 +2401,7 @@ struct UserProfileView: View {
                                             .font(.system(size: 22, weight: selectedTab == tab ? .black : .bold))
                                             .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                         Capsule()
-                                            .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                            .fill(selectedTab == tab ? Theme.accent : Color.clear)
                                             .frame(width: 48, height: 4)
                                     }
                                     .frame(maxWidth: .infinity)

@@ -752,7 +752,7 @@ struct ReportSheet: View {
                 }
             }
         }
-        .tint(Theme.hotPink)
+        .tint(Theme.accent)
         .interactiveDismissDisabled(isInteractionLocked)
         .confirmationDialog(
             "按合集信息问题处理并检查相关帖子？",
@@ -954,7 +954,7 @@ struct ReportSheet: View {
                     HStack(spacing: 12) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                             .frame(width: 28, height: 28)
                         Text(evidenceBuffer.items.isEmpty ? "添加图片证据" : "继续添加图片")
                             .font(.body)
@@ -1022,7 +1022,7 @@ struct ReportSheet: View {
                 if evidenceBuffer.isLoading {
                     HStack(spacing: 10) {
                         ProgressView()
-                            .tint(Theme.hotPink)
+                            .tint(Theme.accent)
                         Text("正在处理图片")
                             .font(.caption)
                             .foregroundStyle(Theme.subtext)
@@ -1032,12 +1032,12 @@ struct ReportSheet: View {
                 if let evidenceStatusMessage = evidenceBuffer.statusMessage {
                     Text(evidenceStatusMessage)
                         .font(.caption)
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if hasAttemptedSubmit, let evidenceMessage = validation.evidenceMessage {
                     Text(evidenceMessage)
                         .font(.caption)
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1059,7 +1059,7 @@ struct ReportSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .tint(Theme.hotPink)
+            .tint(Theme.accent)
             .padding(14)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -1120,7 +1120,7 @@ struct ReportSheet: View {
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 52)
                 .padding(.vertical, 14)
-                .background(isSubmitDisabled ? Theme.hotPink.opacity(0.55) : Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(isSubmitDisabled ? Theme.accentFill.opacity(0.55) : Theme.accentFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(isSubmitDisabled)
@@ -1355,13 +1355,13 @@ private struct ReportMenuRow: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(errorMessage != nil ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+                    .stroke(errorMessage != nil ? Theme.danger.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
 
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1395,13 +1395,13 @@ private struct ReportStaticRow: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(message != nil ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+                    .stroke(message != nil ? Theme.danger.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
 
             if let message {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1470,7 +1470,7 @@ private struct ReportPreviewScene: View {
     var body: some View {
         ReportSheet(source: source) {}
             .environmentObject(MockAppStore.previewStore())
-            .tint(Theme.hotPink)
+            .tint(Theme.accent)
     }
 }
 

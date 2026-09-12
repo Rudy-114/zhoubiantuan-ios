@@ -187,7 +187,7 @@ private struct MyReportRow: View {
         Label(MyReportsPresentation.supplementActionText, systemImage: "plus.circle")
             .font(.subheadline)
             .fontWeight(.semibold)
-            .foregroundStyle(Theme.hotPink)
+            .foregroundStyle(Theme.accent)
     }
 }
 
@@ -245,7 +245,7 @@ private struct MyReportSupplementSheet: View {
                         Text(errorMessage)
                             .font(.footnote)
                             .fontWeight(.medium)
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -277,7 +277,7 @@ private struct MyReportSupplementSheet: View {
                 }
             }
         }
-        .tint(Theme.hotPink)
+        .tint(Theme.accent)
         .interactiveDismissDisabled(isSubmitting)
         .onAppear {
             store.clearMyReportsSupplementError()
@@ -375,7 +375,7 @@ private struct MyReportSupplementSheet: View {
                 HStack(spacing: 12) {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .frame(width: 28, height: 28)
                     Text(evidenceBuffer.items.isEmpty ? "添加图片证据" : "继续添加图片")
                         .font(.body)
@@ -416,7 +416,7 @@ private struct MyReportSupplementSheet: View {
             if evidenceBuffer.isLoading {
                 HStack(spacing: 10) {
                     ProgressView()
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                     Text("正在处理图片")
                         .font(.caption)
                         .foregroundStyle(Theme.subtext)
@@ -426,7 +426,7 @@ private struct MyReportSupplementSheet: View {
             if let statusMessage = evidenceBuffer.statusMessage {
                 Text(statusMessage)
                     .font(.caption)
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -486,7 +486,7 @@ private struct MyReportSupplementSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 52)
             .background(
-                isSubmitDisabled ? Theme.hotPink.opacity(0.55) : Theme.hotPink,
+                isSubmitDisabled ? Theme.accentFill.opacity(0.55) : Theme.accentFill,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
         }
@@ -580,7 +580,7 @@ private struct MyReportsLoadingRow: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
             Text("正在加载举报记录")
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -659,7 +659,7 @@ private struct MyReportsErrorRow: View {
             Label("重试", systemImage: "arrow.clockwise")
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .buttonStyle(.plain)

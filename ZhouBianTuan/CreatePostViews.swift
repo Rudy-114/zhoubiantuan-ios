@@ -138,7 +138,7 @@ struct CreatePostView: View {
                         Button { dismiss() } label: {
                             Label("返回内容处理", systemImage: "chevron.left")
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 16)
@@ -202,7 +202,7 @@ struct CreatePostView: View {
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 11)
-                                    .background(Theme.hotPink, in: Capsule())
+                                    .background(Theme.accentFill, in: Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -212,9 +212,9 @@ struct CreatePostView: View {
                         HStack(spacing: 12) {
                             Image(systemName: "lock.fill")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                                 .frame(width: 38, height: 38)
-                                .background(Theme.hotPink.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                                .background(Theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(selectedCollection.name)
                                     .font(.system(size: 16, weight: .bold))
@@ -258,7 +258,7 @@ struct CreatePostView: View {
                     if isLoadingRepublishImages {
                         Label("正在载入旧帖图片", systemImage: "arrow.down.circle")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -411,7 +411,7 @@ struct CreatePostView: View {
                         .font(.system(size: 17, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
-                        .background(canPublish ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                        .background(canPublish ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                         .foregroundStyle(canPublish ? .white : Theme.muted)
                 }
                 .buttonStyle(.plain)
@@ -658,12 +658,12 @@ struct UploadedImageTile: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((isCover ? Theme.hotPink : Color.black.opacity(0.58)), in: Capsule())
+                        .background((isCover ? Theme.accentFill : Color.black.opacity(0.58)), in: Capsule())
                         .padding(8)
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(isCover ? Theme.hotPink : Theme.hairline, lineWidth: isCover ? 2 : 1)
+                        .stroke(isCover ? Theme.accent : Theme.hairline, lineWidth: isCover ? 2 : 1)
                 }
 
             Button {
@@ -789,7 +789,7 @@ struct PhotoLibraryImportView: View {
             if isLoadingAssets && assets.isEmpty {
                 VStack(spacing: 14) {
                     ProgressView()
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                     Text("正在读取相册")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Theme.muted)
@@ -875,13 +875,13 @@ struct PhotoLibraryImportView: View {
                     }
                     .foregroundStyle(.white)
                     .frame(width: 170, height: 62)
-                    .background(Theme.hotPink, in: Capsule())
+                    .background(Theme.accentFill, in: Capsule())
                     .overlay(alignment: .topLeading) {
                         Text("\(selectedIDs.count)")
                             .font(.system(size: 17, weight: .black))
                             .foregroundStyle(.white)
                             .frame(width: 38, height: 38)
-                            .background(Theme.hotPink, in: Circle())
+                            .background(Theme.accentFill, in: Circle())
                             .overlay {
                                 Circle().stroke(.white, lineWidth: 3)
                             }
@@ -896,7 +896,7 @@ struct PhotoLibraryImportView: View {
             if let importErrorMessage {
                 Text(importErrorMessage)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.danger)
                     .padding(.horizontal, 26)
             }
         }
@@ -913,7 +913,7 @@ struct PhotoLibraryImportView: View {
         VStack(spacing: 16) {
             Image(systemName: "photo.badge.plus")
                 .font(.system(size: 46, weight: .semibold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
             Text(title)
                 .font(.system(size: 24, weight: .black))
                 .foregroundStyle(Theme.text)
@@ -929,7 +929,7 @@ struct PhotoLibraryImportView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 26)
             .padding(.vertical, 13)
-            .background(Theme.hotPink, in: Capsule())
+            .background(Theme.accentFill, in: Capsule())
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1147,7 +1147,7 @@ struct PhotoLibraryGridCell: View {
                 .font(.system(size: 15, weight: .black))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
-                .background(Theme.hotPink, in: Circle())
+                .background(Theme.accentFill, in: Circle())
                 .overlay {
                     Circle().stroke(.white, lineWidth: 2.5)
                 }
@@ -1172,7 +1172,7 @@ struct PhotoLibraryThumbnailImage: View {
                 .fill(Theme.panelRaised)
                 .overlay {
                     ProgressView()
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                 }
         }
     }
@@ -1185,11 +1185,11 @@ struct CollectionPickerSummary: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(collection == nil ? Theme.panelRaised : Theme.hotPink.opacity(0.18))
+                    .fill(collection == nil ? Theme.panelRaised : Theme.accent.opacity(0.18))
                     .frame(width: 46, height: 46)
                 Image(systemName: "rectangle.stack.fill")
                     .font(.system(size: 20, weight: .black))
-                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.hotPink)
+                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.accent)
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -1207,13 +1207,13 @@ struct CollectionPickerSummary: View {
 
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 16, weight: .black))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
         }
         .padding(14)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(collection == nil ? Theme.hairline : Theme.hotPink.opacity(0.48), lineWidth: 1)
+                .stroke(collection == nil ? Theme.hairline : Theme.accent.opacity(0.48), lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
@@ -1277,7 +1277,7 @@ struct CollectionPickerSheet: View {
                                 .font(.system(size: 22, weight: .black))
                                 .foregroundStyle(.white)
                                 .frame(width: 56, height: 56)
-                                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("新建拼团合集")
@@ -1293,13 +1293,13 @@ struct CollectionPickerSheet: View {
 
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 16, weight: .black))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                         }
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Theme.hotPink.opacity(0.42), lineWidth: 1)
+                                .stroke(Theme.accent.opacity(0.42), lineWidth: 1)
                         }
                     }
                     .buttonStyle(.plain)
@@ -1333,9 +1333,9 @@ struct CollectionPickerOption: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .black))
-                    .foregroundStyle(isSelected ? .white : Theme.hotPink)
+                    .foregroundStyle(isSelected ? .white : Theme.accent)
                     .frame(width: 42, height: 42)
-                    .background(isSelected ? Theme.hotPink : Theme.hotPink.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(isSelected ? Theme.accentFill : Theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
@@ -1352,13 +1352,13 @@ struct CollectionPickerOption: View {
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22, weight: .black))
-                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.muted)
             }
             .padding(14)
             .background(isSelected ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isSelected ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+                    .stroke(isSelected ? Theme.accent.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)

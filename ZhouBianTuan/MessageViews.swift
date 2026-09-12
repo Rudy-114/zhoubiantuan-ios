@@ -112,7 +112,7 @@ struct ThreadRow: View {
                     .lineLimit(1)
                 Text(post?.title ?? "好友私聊")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.softPink)
+                    .foregroundStyle(Theme.accentSoft)
                     .lineLimit(1)
                 Text(lastVisibleMessage.map(previewText) ?? "互相关注，开始聊天")
                     .font(.system(size: 14))
@@ -127,7 +127,7 @@ struct ThreadRow: View {
                     .monospacedDigit()
                     .padding(.horizontal, 8)
                     .frame(minWidth: 24, minHeight: 24)
-                    .background(Theme.hotPink, in: Capsule())
+                    .background(Theme.accentFill, in: Capsule())
             }
         }
         .padding(14)
@@ -267,7 +267,7 @@ struct ChatView: View {
                         } label: {
                             Image(systemName: draft.trimmed.isEmpty ? "plus.circle" : "paperplane.fill")
                                 .font(.system(size: 31, weight: .medium))
-                                .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.hotPink)
+                                .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.accent)
                                 .frame(width: 42, height: 42)
                         }
                         .buttonStyle(.plain)
@@ -435,7 +435,7 @@ struct EmojiMessageTextField: UIViewRepresentable {
         textField.borderStyle = .none
         textField.backgroundColor = .clear
         textField.textColor = Theme.primaryTextUIColor
-        textField.tintColor = UIColor(red: 1, green: 0.12, blue: 0.27, alpha: 1)
+        textField.tintColor = Theme.accentUIColor
         textField.font = UIFont.systemFont(ofSize: 19, weight: .semibold)
         textField.returnKeyType = .send
         textField.attributedPlaceholder = NSAttributedString(
@@ -694,7 +694,7 @@ struct ChatBubble: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 15)
                         .padding(.vertical, 11)
-                        .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .background(isMine ? Theme.accentFill : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 )
                 if isMine {
                     avatar(for: store.currentUser, size: 34)
@@ -711,7 +711,7 @@ struct ChatBubble: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 15)
             .padding(.vertical, 11)
-            .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(isMine ? Theme.accentFill : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var failureReasonText: String? {
@@ -1059,11 +1059,11 @@ struct SharedProfileMessageCard: View {
 
                 Text("去看看")
                     .font(.system(size: 17, weight: .black))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .padding(.horizontal, 26)
                     .padding(.vertical, 9)
                     .overlay {
-                        Capsule().stroke(Theme.hotPink, lineWidth: 1)
+                        Capsule().stroke(Theme.accent, lineWidth: 1)
                     }
                     .padding(.top, 4)
             }

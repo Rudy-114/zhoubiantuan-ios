@@ -266,7 +266,7 @@ struct SettingsToggleRow: View {
             Spacer(minLength: 12)
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
         }
         .padding(.horizontal, 16)
         .frame(minHeight: subtitle == nil ? 72 : 96)
@@ -450,10 +450,10 @@ struct BlockedUsersView: View {
                             } label: {
                                 Text("解除")
                                     .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(Theme.hotPink)
+                                    .foregroundStyle(Theme.accent)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 7)
-                                    .overlay { Capsule().stroke(Theme.hotPink, lineWidth: 1) }
+                                    .overlay { Capsule().stroke(Theme.accent, lineWidth: 1) }
                             }
                             .buttonStyle(.plain)
                         }
@@ -508,7 +508,7 @@ struct AccountDeletionView: View {
                 bullet("释放你的注册邮箱，之后可重新注册")
                 Text("此操作不可恢复，请谨慎操作。")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

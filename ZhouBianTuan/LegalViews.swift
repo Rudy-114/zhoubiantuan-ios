@@ -20,10 +20,10 @@ struct LegalDocumentView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("服务说明")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Theme.hotPink.opacity(0.12), in: Capsule())
+                    .background(Theme.accent.opacity(0.12), in: Capsule())
 
                 Text("本页面向你说明周边团的服务规则和个人信息处理方式。完整条款以《用户服务协议》《隐私政策》及 App Store 中展示的隐私说明为准。")
                     .font(.system(size: 15, weight: .semibold))
@@ -54,7 +54,7 @@ struct LegalDocumentView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("完成") { dismiss() }
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
             }
         }
     }
@@ -64,7 +64,7 @@ struct LegalAgreementRow: View {
     @Binding var isAccepted: Bool
     let documents: [LegalDocument]
     var textColor: Color
-    var linkColor: Color = Theme.hotPink
+    var linkColor: Color = Theme.accent
     var fontSize: CGFloat = 14
     var iconSize: CGFloat = 18
 
@@ -77,7 +77,7 @@ struct LegalAgreementRow: View {
             } label: {
                 Image(systemName: isAccepted ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(isAccepted ? Theme.hotPink : Color.white.opacity(0.36))
+                    .foregroundStyle(isAccepted ? Theme.accent : Color.white.opacity(0.36))
                     .padding(.top, 1)
             }
             .buttonStyle(.plain)

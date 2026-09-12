@@ -321,7 +321,7 @@ struct HighlightedSuggestionText: View {
         let trimmed = query.trimmed
         if !trimmed.isEmpty,
            let range = value.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) {
-            value[range].foregroundColor = Theme.hotPink
+            value[range].foregroundColor = Theme.accent
         }
         return value
     }
@@ -554,7 +554,7 @@ struct SearchResultsContent: View {
                                 ZStack {
                                     if selectedTab == tab {
                                         Capsule()
-                                            .fill(Theme.hotPink)
+                                            .fill(Theme.accent)
                                             .matchedGeometryEffect(id: "search-tab-indicator", in: tabIndicator)
                                             .frame(width: 52, height: 4)
                                     } else {
@@ -709,7 +709,7 @@ struct SearchLeaderRow: View {
             } label: {
                 Text(followTitle)
                     .font(.system(size: 16, weight: .black))
-                    .foregroundStyle(isFollowing ? Theme.text : Theme.hotPink)
+                    .foregroundStyle(isFollowing ? Theme.text : Theme.accent)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .frame(minWidth: 78)
@@ -717,7 +717,7 @@ struct SearchLeaderRow: View {
                     .padding(.vertical, 9)
                     .overlay {
                         Capsule()
-                            .stroke(isFollowing ? Theme.hairline : Theme.hotPink, lineWidth: 1.5)
+                            .stroke(isFollowing ? Theme.hairline : Theme.accent, lineWidth: 1.5)
                     }
             }
             .buttonStyle(.plain)

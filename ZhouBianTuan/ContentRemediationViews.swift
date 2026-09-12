@@ -118,7 +118,7 @@ struct ContentRemediationView: View {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     if store.isLoadingSafetyContentActions && store.safetyContentActions.isEmpty {
                         ProgressView("正在读取内容状态")
-                            .tint(Theme.hotPink)
+                            .tint(Theme.accent)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 64)
                     } else if store.safetyContentActions.isEmpty {
@@ -143,7 +143,7 @@ struct ContentRemediationView: View {
                                 Task { await store.refreshSafetyContentActions() }
                             }
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                         }
                         .padding(.horizontal, 16)
                     }
@@ -173,7 +173,7 @@ struct ContentRemediationView: View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.shield")
                 .font(.system(size: 34, weight: .medium))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
             Text("暂无待处理内容")
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Theme.text)
@@ -257,7 +257,7 @@ private struct ContentRemediationRow: View {
                 Spacer(minLength: 8)
                 Text(ContentRemediationPresentation.statusTitle(for: action))
                     .font(.system(size: 12, weight: .black))
-                    .foregroundStyle(action.canSubmitRevision || action.canAppeal ? Theme.hotPink : Theme.subtext)
+                    .foregroundStyle(action.canSubmitRevision || action.canAppeal ? Theme.accent : Theme.subtext)
             }
 
             Label(action.affectedFields.map(\.displayName).joined(separator: "、"), systemImage: "slider.horizontal.3")
@@ -273,7 +273,7 @@ private struct ContentRemediationRow: View {
             if let dueAt = BackendDateParser.strictDate(from: action.correctionDueAt) {
                 Label("请在 \(dueAt.fullDisplay) 前提交", systemImage: "clock")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
             }
 
             if action.revisionStatus == "rejected" {
@@ -321,7 +321,7 @@ private struct ContentRemediationRow: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Theme.hotPink, in: Capsule())
+        .background(Theme.accentFill, in: Capsule())
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
@@ -440,7 +440,7 @@ struct SafetyAppealSheet: View {
                         .font(.system(size: 16, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(canSubmit ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                        .background(canSubmit ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                         .foregroundStyle(canSubmit ? .white : Theme.muted)
                     }
                     .buttonStyle(.plain)

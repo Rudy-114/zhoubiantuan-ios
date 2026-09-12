@@ -29,7 +29,7 @@ struct ZhouBianTuanApp: App {
         tabAppearance.backgroundColor = Theme.barBackgroundUIColor
         tabAppearance.stackedLayoutAppearance.normal.iconColor = UIColor.secondaryLabel
         tabAppearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.secondaryLabel]
-        tabAppearance.stackedLayoutAppearance.selected.iconColor = UIColor(red: 1, green: 0.12, blue: 0.27, alpha: 1)
+        tabAppearance.stackedLayoutAppearance.selected.iconColor = Theme.accentUIColor
         tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: Theme.primaryTextUIColor]
         UITabBar.appearance().standardAppearance = tabAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabAppearance
@@ -49,14 +49,14 @@ struct ZhouBianTuanApp: App {
             if let screenshotScreen = AppStoreScreenshotScreen.current {
                 AppStoreScreenshotRoot(screen: screenshotScreen)
                     .environmentObject(store)
-                    .tint(Theme.hotPink)
-                    .preferredColorScheme(.dark)
+                    .tint(Theme.accent)
+                    .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
             } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_FIXTURE"] == "1" {
                 if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "appeal",
                    let appealAction = store.safetyContentActions.first(where: \.canAppeal) {
                     SafetyAppealSheet(action: appealAction)
                         .environmentObject(store)
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                         .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
                 } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "post",
                           let postAction = store.safetyContentActions.first(where: {
@@ -66,7 +66,7 @@ struct ZhouBianTuanApp: App {
                         SafetyPostCorrectionView(action: postAction)
                     }
                     .environmentObject(store)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
                 } else if ProcessInfo.processInfo.environment["ZBT_CONTENT_REMEDIATION_SCREEN"] == "collection",
                           let collectionAction = store.safetyContentActions.first(where: {
@@ -76,7 +76,7 @@ struct ZhouBianTuanApp: App {
                         SafetyCollectionCorrectionView(action: collectionAction)
                     }
                     .environmentObject(store)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
                 } else {
                     NavigationStack {
@@ -87,19 +87,19 @@ struct ZhouBianTuanApp: App {
                         }
                     }
                     .environmentObject(store)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
                 }
             } else {
                 RootView()
                     .environmentObject(store)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
             }
             #else
             RootView()
                 .environmentObject(store)
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
                 .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
             #endif
         }
@@ -286,7 +286,7 @@ struct RootView: View {
                 .tag(AppTab.profile)
             }
             .id("\(store.authSessionVersion)-\(isAuthenticated)")
-            .tint(Theme.hotPink)
+            .tint(Theme.accent)
             .overlay(alignment: .top) {
                 ToastHost()
             }
@@ -393,7 +393,7 @@ struct LaunchSplashView: View {
 
             Text("周边团")
                 .font(.system(size: 48, weight: .black, design: .rounded))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .scaleEffect(isPresented ? 1 : 0.92)
                 .opacity(isPresented ? 1 : 0.2)
         }
@@ -472,7 +472,7 @@ extension View {
 #Preview("完整 App") {
     RootView()
         .environmentObject(MockAppStore())
-        .tint(Theme.hotPink)
+        .tint(Theme.accent)
         .preferredColorScheme(.dark)
 }
 
@@ -481,7 +481,7 @@ extension View {
         PostDetailView(postID: "p-card")
     }
     .environmentObject(MockAppStore())
-    .tint(Theme.hotPink)
+    .tint(Theme.accent)
     .preferredColorScheme(.dark)
 }
 
@@ -490,7 +490,7 @@ extension View {
         CreatePostView()
     }
     .environmentObject(MockAppStore())
-    .tint(Theme.hotPink)
+    .tint(Theme.accent)
     .preferredColorScheme(.dark)
 }
 
@@ -499,6 +499,6 @@ extension View {
         ProfileView()
     }
     .environmentObject(MockAppStore())
-    .tint(Theme.hotPink)
+    .tint(Theme.accent)
     .preferredColorScheme(.dark)
 }

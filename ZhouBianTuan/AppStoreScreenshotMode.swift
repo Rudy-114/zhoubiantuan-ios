@@ -277,7 +277,7 @@ extension MockAppStore {
 
         isBackendEnabled = false
         isLoggedIn = true
-        isDarkModeEnabled = true
+        isDarkModeEnabled = ProcessInfo.processInfo.environment["ZBT_SCREENSHOT_APPEARANCE"] != "light"
         currentUserID = currentUser.id
         users = [currentUser, creator, studio]
         self.posts = posts
@@ -397,7 +397,7 @@ private struct AppStoreScreenshotTabShell: View {
             .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
             .tag(AppTab.profile)
         }
-        .tint(Theme.hotPink)
+        .tint(Theme.accent)
     }
 }
 #endif
