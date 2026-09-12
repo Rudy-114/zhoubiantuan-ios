@@ -1,0 +1,90 @@
+{
+  "date": "2026-09-12",
+  "branch": "codex/diagnostic-fixes-20260912",
+  "baseCommit": "0e9b02c",
+  "scope": "R01–R20 local diagnostic fixes",
+  "verifiedCodeCommit": "19ca934",
+  "productionBusinessDeployed": false,
+  "productionDatabaseMigrated": false,
+  "runtime": {
+    "node": "24.21.0",
+    "postgres": "16",
+    "xcode": "26.3",
+    "simulator": "iOS 18.5 / iPhone 16 Pro"
+  },
+  "verification": {
+    "backendUnit": {
+      "passed": 21,
+      "failed": 0,
+      "log": "/tmp/zbt-final-unit-3.log"
+    },
+    "backendIntegration": {
+      "passed": 40,
+      "failed": 0,
+      "log": "/tmp/zbt-final-integration-4.log",
+      "isolatedDatabase": "zbt_test_final_clean"
+    },
+    "migrations": {
+      "appliedFromEmpty": 22,
+      "last": "022_moderation_budget.sql",
+      "log": "/tmp/zbt-clean-integration-1.log"
+    },
+    "cleanInstall": {
+      "passed": true,
+      "directory": "/tmp/zbt-final-clean-install",
+      "log": "/tmp/zbt-clean-install-2.log"
+    },
+    "dependencyAudit": {
+      "registry": "https://registry.npmjs.org",
+      "vulnerabilities": 0
+    },
+    "iosTests": {
+      "passed": 15,
+      "failed": 0,
+      "resultBundle": "/tmp/zbt-final-native-2.xcresult"
+    },
+    "releaseSimulatorBuild": {
+      "passed": true,
+      "log": "/tmp/zbt-final-release-2.log"
+    },
+    "serverLifecycle": {
+      "health": 200,
+      "sigtermExitCode": 0
+    },
+    "workflow": {
+      "yamlParsed": true,
+      "remoteRun": false
+    },
+    "visualChecks": [
+      {
+        "file": "home-badges.png",
+        "checks": [
+          "Bundled images render",
+          "Ended status and type do not overlap"
+        ],
+        "data": "Synthetic local API fixture"
+      },
+      {
+        "file": "feed-retry.png",
+        "checks": [
+          "503 error visible",
+          "Retry button visible"
+        ],
+        "data": "Synthetic local HTTP 503 response"
+      }
+    ]
+  },
+  "limitations": [
+    "No production business deployment or migrations",
+    "CDN/OSS permission revocation requires coordinated rollout",
+    "No real billable moderation or SMTP delivery",
+    "No load testing, Instruments or physical-device distribution check",
+    "No system push notifications; UI labels in-app date display accurately"
+  ],
+  "cleanup": {
+    "temporaryDatabaseStopped": true,
+    "fixtureServersStopped": true,
+    "taskSimulatorDeleted": true,
+    "userSimulatorPreserved": true
+  }
+}

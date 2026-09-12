@@ -12,7 +12,7 @@
 
 实现依据：[阿里云审核智能体响应格式](https://help.aliyun.com/zh/document_detail/3013147.html)、[阿里云文本服务输入限制](https://help.aliyun.com/en/document_detail/2671445.html)、[sharp 安装条件](https://sharp.pixelplumbing.com/install/)、[sharp 图像处理安全参数](https://sharp.pixelplumbing.com/security/)。
 
-本地检查证据：后端 19 项单测、13 项数据库/HTTP 集成测试通过；图片请求改动后的 iOS Release 模拟器构建通过。后续批次会继续更新最终完整验证结果。
+最终本地检查证据：21 项后端单测、40 项数据库/HTTP 集成测试、15 项原生测试通过；全部 22 个迁移从空库成功应用，独立目录干净安装与 Release 模拟器构建通过。机器可读结果和界面截图见 `fix-verification/results.json`。
 
 8. 发帖：迁移 016 新增请求指纹。新客户端等待服务端确认后才清空草稿，网络重试复用提交编号；重新投稿由服务器原子替换旧帖。必须与本轮客户端一起发布，历史旧帖不会自动补造提交指纹。
 
