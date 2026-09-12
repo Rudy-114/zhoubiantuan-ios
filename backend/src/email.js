@@ -15,6 +15,9 @@ function getTransporter() {
       host: smtp.host,
       port: smtp.port,
       secure: smtp.secure,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
       auth: {
         user: smtp.user,
         pass: smtp.pass
@@ -25,6 +28,7 @@ function getTransporter() {
 }
 
 export async function sendEmailCode({ email, code, purpose }) {
+  if (config.nodeEnv === "test") throw new Error("Real email delivery is disabled during tests");
   const title = purpose === "login" ? "登录验证码" : "注册验证码";
   const subject = `周边团${title}`;
   const text = [

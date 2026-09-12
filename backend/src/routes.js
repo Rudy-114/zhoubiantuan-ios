@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
+import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadForUser } from "./messages.js";
 import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, reviewSubmission } from "./moderation/index.js";
@@ -51,10 +52,10 @@ export function createRouter() {
     keyGenerator: (req) => req.ip
   });
 
-  router.get("/health", async (_req, res) => {
+  router.get("/health", asyncRoute(async (_req, res) => {
     await query("SELECT 1");
     res.json({ ok: true });
-  });
+  }));
 
   router.get("/assets/*", assetLimiter, async (req, res, next) => {
     try {
@@ -116,11 +117,13 @@ export function createRouter() {
       const user = await withTransaction(async (client) => {
         const existing = await client.query("SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active'", [email]);
         if (existing.rows[0]) throw badRequest("本邮箱已经注册过");
-        await consumeEmailCode(client, { email, purpose: "register", code });
+        const codeError = await consumeEmailCode(client, { email, purpose: "register", code });
+        if (codeError) return { codeError };
         const user = await createEmailUser(client, { email, passwordHash, nickname: publicRegistrationNickname(nickname, nicknameModeration), emailVerified: true });
         await createRegistrationNicknameReview(client, user, nickname, nicknameModeration);
         return user;
       });
+      if (user.codeError) throw user.codeError;
       res.status(201).json(await authPayload(user));
     } catch (error) {
       next(error);
@@ -137,9 +140,12 @@ export function createRouter() {
         const user = await withTransaction(async (client) => {
           const { rows } = await client.query("SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active'", [email]);
           if (!rows[0]) throw unauthorized("邮箱或验证码不正确");
-          await consumeEmailCode(client, { email, purpose: "login", code: assertEmailCode(code) });
-          return rows[0];
+          const codeError = await consumeEmailCode(client, { email, purpose: "login", code: assertEmailCode(code) });
+          if (codeError) return { codeError };
+          await client.query("UPDATE auth_identities SET email_verified = true, updated_at = now() WHERE user_id = $1 AND provider = 'email' AND email = $2", [rows[0].id, email]);
+          return { ...rows[0], email_verified: true };
         });
+        if (user.codeError) throw user.codeError;
         return res.json(await authPayload(user));
       }
 
@@ -150,27 +156,8 @@ export function createRouter() {
     }
   });
 
-  router.post("/auth/register", authLimiter, async (req, res, next) => {
-    try {
-      const email = assertEmail(req.body.email);
-      const password = assertPassword(req.body.password);
-      const nickname = trimmedString(req.body.nickname);
-      if (!nickname) throw badRequest("请填写昵称");
-      const nicknameModeration = await reviewRegistrationText(nickname);
-      if (nicknameModeration.status === "rejected") throw badRequest(nicknameModeration.reason);
-
-      const passwordHash = await hashPassword(password);
-      const user = await withTransaction(async (client) => {
-        const existing = await client.query("SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active'", [email]);
-        if (existing.rows[0]) throw badRequest("本邮箱已经注册过");
-        const user = await createEmailUser(client, { email, passwordHash, nickname: publicRegistrationNickname(nickname, nicknameModeration), emailVerified: false });
-        await createRegistrationNicknameReview(client, user, nickname, nicknameModeration);
-        return user;
-      });
-      res.status(201).json(await authPayload(user));
-    } catch (error) {
-      next(error);
-    }
+  router.post("/auth/register", (_req, res) => {
+    res.status(410).json({ error: "请使用邮箱验证码注册", code: "email_verification_required" });
   });
 
   router.post("/auth/login", authLimiter, async (req, res, next) => {
@@ -184,10 +171,10 @@ export function createRouter() {
     }
   });
 
-  router.get("/bootstrap", requireAuth, async (req, res) => {
+  router.get("/bootstrap", requireAuth, asyncRoute(async (req, res) => {
     const syncCursor = await getCurrentSyncCursor();
     res.json({ currentUser: userToClient(req.user, {}, req.user.id), syncCursor, ...(await loadBootstrap(req.user.id)) });
-  });
+  }));
 
   router.get("/sync", requireAuth, async (req, res, next) => {
     try {
@@ -1162,7 +1149,9 @@ export function createRouter() {
 }
 
 async function findActiveUserByEmail(email) {
-  const { rows } = await query("SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active'", [email]);
+  const { rows } = await query(`SELECT u.*, EXISTS (SELECT 1 FROM auth_identities i
+    WHERE i.user_id = u.id AND i.provider = 'email' AND i.email = u.email AND i.email_verified
+  ) AS email_verified FROM users u WHERE u.email = $1 AND u.deleted_at IS NULL AND u.status = 'active'`, [email]);
   return rows[0] || null;
 }
 
@@ -1203,28 +1192,24 @@ async function createEmailUser(client, { email, passwordHash, nickname, emailVer
 }
 
 async function issueEmailCode({ email, purpose }) {
-  const recent = await query(
-    `SELECT id
-     FROM email_verification_codes
-     WHERE email = $1
-       AND purpose = $2
-       AND consumed_at IS NULL
-       AND created_at > now() - ($3::text)::interval
-     LIMIT 1`,
-    [email, purpose, `${config.email.codeResendSeconds} seconds`]
-  );
-  if (recent.rows[0]) {
-    throw badRequest("验证码发送太频繁，请稍后再试");
-  }
-
   const id = `evc-${randomUUID()}`;
   const code = String(randomInt(0, 1000000)).padStart(6, "0");
   const codeHash = hashEmailCode({ email, purpose, code });
-  await query(
-    `INSERT INTO email_verification_codes (id, email, purpose, code_hash, expires_at)
-     VALUES ($1, $2, $3, $4, now() + ($5::text)::interval)`,
-    [id, email, purpose, codeHash, `${config.email.codeTtlMinutes} minutes`]
-  );
+  await withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`email-code:${email}:${purpose}`]);
+    const recent = await client.query(
+      `SELECT id FROM email_verification_codes WHERE email = $1 AND purpose = $2
+       AND created_at > clock_timestamp() - ($3::int * interval '1 second') LIMIT 1`,
+      [email, purpose, config.email.codeResendSeconds]
+    );
+    if (recent.rows.length) throw badRequest("验证码发送太频繁，请稍后再试");
+    await client.query("UPDATE email_verification_codes SET consumed_at = now() WHERE email = $1 AND purpose = $2 AND consumed_at IS NULL", [email, purpose]);
+    await client.query(
+      `INSERT INTO email_verification_codes (id, email, purpose, code_hash, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, clock_timestamp(), clock_timestamp() + ($5::int * interval '1 minute'))`,
+      [id, email, purpose, codeHash, config.email.codeTtlMinutes]
+    );
+  });
 
   try {
     await sendEmailCode({ email, purpose, code });
@@ -1240,24 +1225,22 @@ async function consumeEmailCode(client, { email, purpose, code }) {
      FROM email_verification_codes
      WHERE email = $1
        AND purpose = $2
-       AND consumed_at IS NULL
-       AND expires_at > now()
      ORDER BY created_at DESC
      LIMIT 1
      FOR UPDATE`,
     [email, purpose]
   );
   const record = rows[0];
-  if (!record) {
-    throw badRequest("验证码无效或已过期");
+  if (!record || record.consumed_at || new Date(record.expires_at) <= new Date()) {
+    return badRequest("验证码无效或已过期");
   }
   if (record.attempts >= 5) {
-    throw badRequest("验证码错误次数过多，请重新获取");
+    return badRequest("验证码错误次数过多，请重新获取");
   }
   const expectedHash = hashEmailCode({ email, purpose, code });
   if (record.code_hash !== expectedHash) {
     await client.query("UPDATE email_verification_codes SET attempts = attempts + 1 WHERE id = $1", [record.id]);
-    throw badRequest("验证码无效或已过期");
+    return badRequest("验证码无效或已过期");
   }
   await client.query("UPDATE email_verification_codes SET consumed_at = now() WHERE id = $1", [record.id]);
 }

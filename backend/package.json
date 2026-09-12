@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
-    "test": "node --test"
+    "test": "node --import ./test/setup.js --test test/*.test.js",
+    "test:integration": "node --import ./test/setup.js --test test/integration/*.test.js"
   },
   "dependencies": {
     "@alicloud/pop-core": "^1.8.0",

@@ -4,10 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultEnvPath = path.resolve(__dirname, "../../.project-secrets/backend.env");
-const nodeEnv = process.env.NODE_ENV || "development";
-
 dotenv.config({ path: process.env.ENV_FILE || defaultEnvPath });
-dotenv.config();
+if (process.env.NODE_ENV !== "test") dotenv.config();
+const nodeEnv = process.env.NODE_ENV || "development";
 
 function required(name) {
   const value = process.env[name];
@@ -35,6 +34,7 @@ function requiredSecret(name) {
     throw new Error(`Environment variable ${name} uses a known insecure default; set a strong random value (e.g. \`openssl rand -base64 48\`)`);
   }
   if (value.length < 32) {
+    if (nodeEnv === "production") throw new Error(`${name} must contain at least 32 characters in production`);
     console.warn(`[config] ${name} is shorter than 32 characters; use a longer random secret in production`);
   }
   return value;
@@ -42,11 +42,13 @@ function requiredSecret(name) {
 
 function enumValue(name, fallback, allowedValues) {
   const value = process.env[name] || fallback;
-  return allowedValues.includes(value) ? value : fallback;
+  if (!allowedValues.includes(value)) throw new Error(`Invalid ${name}`);
+  return value;
 }
 
 export const config = {
   nodeEnv,
+  trustProxy: process.env.TRUST_PROXY || false,
   port: Number(process.env.PORT || 8080),
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL || `http://localhost:${process.env.PORT || 8080}/api`,
   publicAssetBaseUrl: process.env.PUBLIC_ASSET_BASE_URL || process.env.CDN_ASSET_BASE_URL || "",
@@ -54,6 +56,10 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "30d",
   databaseUrl: process.env.DATABASE_URL,
   db: {
+    max: Number(process.env.DB_POOL_MAX || 10),
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 5000),
+    query_timeout: Number(process.env.DB_QUERY_TIMEOUT_MS || 10000),
+    statement_timeout: Number(process.env.DB_STATEMENT_TIMEOUT_MS || 10000),
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT || 5432),
     database: process.env.DB_NAME,
@@ -69,7 +75,7 @@ export const config = {
     accessKeySecret: required("ALIYUN_ACCESS_KEY_SECRET")
   },
   moderation: {
-    provider: process.env.MODERATION_PROVIDER || (process.env.NODE_ENV === "production" ? "aliyun" : "mock"),
+    provider: enumValue("MODERATION_PROVIDER", nodeEnv === "production" ? "aliyun" : "mock", ["aliyun", "mock"]),
     failMode: enumValue("MODERATION_FAIL_MODE", "review", ["review", "block"]),
     endpoint: process.env.ALIYUN_MODERATION_ENDPOINT || "https://green-cip.cn-shanghai.aliyuncs.com",
     textAgentAppId: process.env.ALIYUN_TEXT_AGENT_APP_ID || "",
@@ -95,3 +101,7 @@ export const config = {
     }
   }
 };
+
+if (nodeEnv === "production" && config.moderation.provider !== "aliyun") {
+  throw new Error("Production cannot start with mock content moderation");
+}

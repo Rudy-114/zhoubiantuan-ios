@@ -20,7 +20,10 @@ export function signToken(user) {
 export async function userForToken(token) {
   if (!token) return null;
   const payload = jwt.verify(token, config.jwtSecret);
-  const { rows } = await query("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [payload.sub]);
+  const { rows } = await query(`SELECT u.*, EXISTS (
+    SELECT 1 FROM auth_identities i WHERE i.user_id = u.id AND i.provider = 'email'
+      AND i.email = u.email AND i.email_verified
+  ) AS email_verified FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL AND u.status = 'active'`, [payload.sub]);
   return rows[0] || null;
 }
 
@@ -37,7 +40,10 @@ export async function requireAuth(req, res, next) {
     }
     req.user = user;
     next();
-  } catch {
-    return res.status(401).json({ error: "登录已失效" });
+  } catch (error) {
+    if (["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(error.name)) {
+      return res.status(401).json({ error: "登录已失效" });
+    }
+    next(error);
   }
 }

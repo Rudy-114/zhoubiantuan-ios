@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { query } from "./db.js";
+import { query, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
 
-const RATE_LIMIT_EVENT_RETENTION_SECONDS = 60 * 60;
 const RATE_LIMIT_EVENT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory" }) {
@@ -41,32 +40,32 @@ function createMemoryRateLimiter({ windowMs, max, message, keyGenerator }) {
 
 function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name }) {
   const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
-  let nextCleanupAt = 0;
 
   return async (req, res, next) => {
     const rawKey = keyGenerator ? keyGenerator(req) : req.ip;
     const keyHash = createHash("sha256").update(String(rawKey || "")).digest("hex");
 
     try {
-      const { rows } = await query(
-        `WITH inserted AS (
-           INSERT INTO rate_limit_events (scope, key_hash, created_at)
-           VALUES ($1, $2, now())
-           RETURNING 1
-         )
-         SELECT count(*)::int AS count
-         FROM rate_limit_events
-         WHERE scope = $1
-           AND key_hash = $2
-           AND created_at >= now() - ($3::text)::interval`,
-        [name, keyHash, `${windowSeconds} seconds`]
-      );
-
-      scheduleRateLimitCleanup(windowSeconds, nextCleanupAt, (timestamp) => {
-        nextCleanupAt = timestamp;
+      const allowed = await withTransaction(async (client) => {
+        // Serialize each bucket across processes. Separate statements see the
+        // preceding transaction's commit after the advisory lock is acquired.
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`rate:${name}:${keyHash}`]);
+        const { rows } = await client.query(
+          `SELECT count(*)::int AS count FROM rate_limit_events
+           WHERE scope = $1 AND key_hash = $2 AND expires_at > clock_timestamp()`,
+          [name, keyHash]
+        );
+        if (rows[0].count >= max) return false;
+        await client.query(
+          `INSERT INTO rate_limit_events (scope, key_hash, created_at, expires_at)
+           VALUES ($1, $2, clock_timestamp(), clock_timestamp() + ($3::int * interval '1 second'))`,
+          [name, keyHash, windowSeconds]
+        );
+        return true;
       });
 
-      if (Number(rows[0]?.count || 0) > max) {
+      if (!allowed) {
+        res.setHeader("Retry-After", String(windowSeconds));
         return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
       }
 
@@ -77,18 +76,8 @@ function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name 
   };
 }
 
-function scheduleRateLimitCleanup(windowSeconds, nextCleanupAt, setNextCleanupAt) {
-  const now = Date.now();
-  if (now < nextCleanupAt) return;
-  setNextCleanupAt(now + 60 * 1000);
-  pruneOldRateLimitEvents(windowSeconds * 2).catch((error) => {
-    logger.error("rate_limit.cleanup_failed", { error });
-  });
-}
-
-export async function pruneOldRateLimitEvents(retentionSeconds = RATE_LIMIT_EVENT_RETENTION_SECONDS) {
-  const seconds = Math.max(60, Number(retentionSeconds) || RATE_LIMIT_EVENT_RETENTION_SECONDS);
-  const { rowCount } = await query("DELETE FROM rate_limit_events WHERE created_at < now() - ($1::text)::interval", [`${seconds} seconds`]);
+export async function pruneOldRateLimitEvents() {
+  const { rowCount } = await query("DELETE FROM rate_limit_events WHERE expires_at <= clock_timestamp()");
   return rowCount;
 }
 

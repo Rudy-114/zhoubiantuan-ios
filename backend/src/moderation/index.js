@@ -78,7 +78,7 @@ export function assertOwnedObjectKeys(userId, objectKeys, allowedKinds) {
 }
 
 export function isModerationAdmin(user) {
-  return Boolean(user?.email && config.moderation.adminEmails.includes(String(user.email).toLowerCase()));
+  return Boolean(user?.email_verified && ["moderator", "admin"].includes(user?.moderation_role));
 }
 
 async function safeReview(callback, source) {

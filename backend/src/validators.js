@@ -4,7 +4,7 @@ export function normalizeEmail(email) {
 
 export function assertEmail(email) {
   const normalized = normalizeEmail(email);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw badRequest("请填写有效邮箱");
   }
   return normalized;
@@ -15,6 +15,7 @@ export function assertPassword(password) {
   if (value.length < 8) {
     throw badRequest("密码至少 8 位");
   }
+  if (Buffer.byteLength(value, "utf8") > 72) throw badRequest("密码不能超过 72 字节");
   return value;
 }
 
