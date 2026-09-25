@@ -580,7 +580,7 @@ struct CreatePostView: View {
     func loadImageData(from urlStrings: [String]) async -> [Data] {
         var loaded: [Data] = []
         for urlString in urlStrings.prefix(16) {
-            guard let data = try? await RemoteAssetRequest.data(urlString: urlString, token: store.backendToken),
+            guard let data = try? await RemoteAssetRequest.data(urlString: urlString, token: store.backendToken, cacheScope: store.authSessionVersion.uuidString),
                   UIImage(data: data) != nil else { continue }
             loaded.append(data)
         }

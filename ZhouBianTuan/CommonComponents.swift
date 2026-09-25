@@ -3,6 +3,74 @@ import SwiftUI
 import UIKit
 
 // Authenticated assets bypass persistent caches so revocation and account changes take effect.
+// A bounded, session-scoped memory cache keeps navigation responsive without persisting
+// private images on disk or allowing one account to see another account's cached data.
+actor RemoteAssetCache {
+    static let shared = RemoteAssetCache()
+
+    private struct Entry {
+        let data: Data
+        let access: UInt64
+    }
+
+    private let maxEntries = 80
+    private let maxBytes = 30 * 1024 * 1024
+    private var entries: [String: Entry] = [:]
+    private var inFlight: [String: Task<Data, Error>] = [:]
+    private var accessCounter: UInt64 = 0
+    private var totalBytes = 0
+    private var generation: UInt64 = 0
+
+    func cachedData(for key: String) -> Data? {
+        guard let entry = entries[key] else { return nil }
+        accessCounter &+= 1
+        entries[key] = Entry(data: entry.data, access: accessCounter)
+        return entry.data
+    }
+
+    func data(for key: String, load: @escaping @Sendable () async throws -> Data) async throws -> Data {
+        if let cached = cachedData(for: key) { return cached }
+        if let pending = inFlight[key] { return try await pending.value }
+
+        let requestGeneration = generation
+        let pending = Task<Data, Error> { try await load() }
+        inFlight[key] = pending
+        do {
+            let data = try await pending.value
+            if generation == requestGeneration {
+                insert(data, for: key)
+                inFlight[key] = nil
+            }
+            return data
+        } catch {
+            if generation == requestGeneration { inFlight[key] = nil }
+            throw error
+        }
+    }
+
+    func removeAll() {
+        generation &+= 1
+        inFlight.values.forEach { $0.cancel() }
+        inFlight.removeAll()
+        entries.removeAll()
+        totalBytes = 0
+    }
+
+    private func insert(_ data: Data, for key: String) {
+        guard !data.isEmpty, data.count <= maxBytes else { return }
+        if let old = entries.removeValue(forKey: key) { totalBytes -= old.data.count }
+        accessCounter &+= 1
+        entries[key] = Entry(data: data, access: accessCounter)
+        totalBytes += data.count
+
+        while entries.count > maxEntries || totalBytes > maxBytes {
+            guard let leastRecentlyUsed = entries.min(by: { $0.value.access < $1.value.access })?.key,
+                  let removed = entries.removeValue(forKey: leastRecentlyUsed) else { break }
+            totalBytes -= removed.data.count
+        }
+    }
+}
+
 enum RemoteAssetRequest {
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -18,14 +86,36 @@ enum RemoteAssetRequest {
         }
     }()
 
-    static func data(urlString: String, token: String?) async throws -> Data {
+    static func cachedData(urlString: String, cacheScope: String) async -> Data? {
+        guard let url = try? normalizedURL(urlString) else { return nil }
+        return await RemoteAssetCache.shared.cachedData(for: cacheKey(url: url, scope: cacheScope))
+    }
+
+    static func data(urlString: String, token: String?, cacheScope: String) async throws -> Data {
         _ = removeLegacyCache
+        let url = try normalizedURL(urlString)
+        let key = cacheKey(url: url, scope: cacheScope)
+        return try await RemoteAssetCache.shared.data(for: key) {
+            try await fetch(url: url, token: token)
+        }
+    }
+
+    private static func normalizedURL(_ urlString: String) throws -> URL {
         guard var url = URL(string: urlString),
               let api = URL(string: AliyunBackendClient.currentBaseURLString) else { throw URLError(.badURL) }
         // Cached records from older app versions must also use the visibility gateway.
         if url.host == "img.zhoubiantuanmail.top" {
             url = api.appendingPathComponent("assets").appendingPathComponent(url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
         }
+        return url
+    }
+
+    private static func cacheKey(url: URL, scope: String) -> String {
+        "\(scope)|\(url.absoluteString)"
+    }
+
+    private static func fetch(url: URL, token: String?) async throws -> Data {
+        guard let api = URL(string: AliyunBackendClient.currentBaseURLString) else { throw URLError(.badURL) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
         if url.scheme == api.scheme && url.host == api.host && url.port == api.port &&
             url.path.hasPrefix(api.path + "/assets/") && token != nil {
@@ -52,18 +142,25 @@ final class RemoteImageLoader: ObservableObject {
     @Published private(set) var state: State = .idle
     private var generation = UUID()
 
-    func load(urlString: String, token: String?) async {
+    func load(urlString: String, token: String?, cacheScope: String) async {
         let requestGeneration = UUID()
         generation = requestGeneration
-        state = .loading
+        let previousImage: UIImage? = if case .loaded(let image) = state { image } else { nil }
         do {
-            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token)
+            if let cached = await RemoteAssetRequest.cachedData(urlString: urlString, cacheScope: cacheScope) {
+                guard !Task.isCancelled, generation == requestGeneration else { return }
+                guard let image = UIImage(data: cached) else { state = .failed; return }
+                state = .loaded(image)
+                return
+            }
+            if previousImage == nil { state = .loading }
+            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token, cacheScope: cacheScope)
             guard !Task.isCancelled, generation == requestGeneration else { return }
             guard let image = UIImage(data: data) else { state = .failed; return }
             state = .loaded(image)
         } catch {
             guard !Task.isCancelled, generation == requestGeneration else { return }
-            state = .failed
+            if let previousImage { state = .loaded(previousImage) } else { state = .failed }
         }
     }
 }
@@ -128,7 +225,7 @@ struct RemoteImageView: View {
             }
         }
         .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken)
+            await loader.load(urlString: urlString, token: store.backendToken, cacheScope: store.authSessionVersion.uuidString)
         }
     }
 
@@ -169,7 +266,7 @@ struct RemoteImagePreview: View {
             }
         }
         .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken)
+            await loader.load(urlString: urlString, token: store.backendToken, cacheScope: store.authSessionVersion.uuidString)
         }
     }
 

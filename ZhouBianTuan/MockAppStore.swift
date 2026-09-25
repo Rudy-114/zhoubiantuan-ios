@@ -17,6 +17,7 @@ final class MockAppStore: ObservableObject {
     @Published var contentPageEpoch = UUID()
     @Published var postDetailErrors: [String: String] = [:]
     @Published var postDetailRequests: [String: UUID] = [:]
+    var postDetailLastLoadedAt: [String: Date] = [:]
     @Published private var totalUnreadMessageCount: Int?
     private var unreadSnapshotCursor: Int64?
     @Published var reports: [Report]
@@ -329,6 +330,7 @@ final class MockAppStore: ObservableObject {
         pendingPostUploads.removeAll()
         invalidateContentPages()
         postDetailErrors.removeAll()
+        Task { await RemoteAssetCache.shared.removeAll() }
         stopBackendAutoRefresh()
         refreshRequestID = nil
         syncRequestID = nil
@@ -611,7 +613,6 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applyBackendPayload(_ payload: BackendPayload) {
-        invalidateContentPages()
         let previousUserID = currentUserID
         let previousLoggedIn = isLoggedIn
         let resumableDraft = (payload.currentUser?.id).flatMap { resumableSafetyReportFormSnapshot(for: $0) }
@@ -707,6 +708,9 @@ final class MockAppStore: ObservableObject {
             removedUsers.contains($0.authorID) || ($0.collectionID.map { removedCollections.contains($0) } ?? false)
         }.map(\.id))
         let removedComments = Set(payload.removedCommentIDs ?? [])
+        if !removedUsers.isEmpty || !removedCollections.isEmpty || !removedPosts.isEmpty || !removedComments.isEmpty {
+            Task { await RemoteAssetCache.shared.removeAll() }
+        }
         users.removeAll { removedUsers.contains($0.id) }
         collections.removeAll { removedCollections.contains($0.id) }
         posts.removeAll { removedPosts.contains($0.id) }
@@ -1540,6 +1544,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applyLocalBlock(_ userID: String) {
+        Task { await RemoteAssetCache.shared.removeAll() }
         let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
         let targetIndex = users.firstIndex(where: { $0.id == userID })
         let removedCurrentFollow = followedUserIDs.remove(userID) != nil

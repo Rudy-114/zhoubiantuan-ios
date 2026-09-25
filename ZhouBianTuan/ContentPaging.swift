@@ -83,6 +83,7 @@ extension MockAppStore {
     func invalidateContentPages() {
         contentPages.removeAll()
         postDetailRequests.removeAll()
+        postDetailLastLoadedAt.removeAll()
         contentPageEpoch = UUID()
     }
 
@@ -129,8 +130,14 @@ extension MockAppStore {
         mergeComments(page.comments?.map { $0.localComment() } ?? [])
     }
 
-    func loadPostDetail(_ id: String) async {
+    func loadPostDetail(_ id: String, forceRefresh: Bool = false) async {
         guard isBackendEnabled, postDetailRequests[id] == nil else { return }
+        if !forceRefresh,
+           posts.contains(where: { $0.id == id }),
+           let lastLoadedAt = postDetailLastLoadedAt[id],
+           Date().timeIntervalSince(lastLoadedAt) < 45 {
+            return
+        }
         let session = authSessionVersion, requestID = UUID()
         postDetailRequests[id] = requestID
         defer { if postDetailRequests[id] == requestID { postDetailRequests[id] = nil } }
@@ -145,11 +152,13 @@ extension MockAppStore {
             state.isLoaded = true
             contentPages[ContentQuery.comments(id).key] = state
             postDetailErrors[id] = nil
+            postDetailLastLoadedAt[id] = Date()
         } catch {
             guard isCurrentSession(session), postDetailRequests[id] == requestID else { return }
             postDetailErrors[id] = error.localizedDescription
             if (error as NSError).domain == "AliyunBackendClient", (error as NSError).code == 404 {
                 posts.removeAll { $0.id == id }
+                postDetailLastLoadedAt[id] = nil
             }
         }
     }
