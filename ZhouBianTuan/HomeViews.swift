@@ -35,7 +35,7 @@ struct HomeView: View {
                 ContentPageFooter(query: pageQuery)
                 }
             }
-            .refreshable { await store.loadContentPage(pageQuery, reset: true) }
+            .refreshable { await store.refreshHomeFeed(pageQuery) }
             .id(feed)
             .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
             .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)

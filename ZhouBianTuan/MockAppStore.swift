@@ -393,8 +393,23 @@ final class MockAppStore: ObservableObject {
     }
 
     func loadPublicFeedIfNeeded() async {
+        await loadPublicFeed(force: false)
+    }
+
+    func refreshHomeFeed(_ query: ContentQuery) async {
+        guard isBackendEnabled else { return }
+        // Guests do not have the authenticated bootstrap, so refresh the public
+        // snapshot first. The paged request then replaces the visible home feed
+        // for the selected tab and keeps pagination metadata in sync.
+        if backendToken == nil {
+            await loadPublicFeed(force: true)
+        }
+        await loadContentPage(query, reset: true)
+    }
+
+    private func loadPublicFeed(force: Bool) async {
         let session = authSessionVersion
-        guard isBackendEnabled, posts.isEmpty, !isLoadingInitialFeed else { return }
+        guard isBackendEnabled, (force || posts.isEmpty), !isLoadingInitialFeed else { return }
         let requestID = UUID()
         feedRequestID = requestID
         isLoadingInitialFeed = true
