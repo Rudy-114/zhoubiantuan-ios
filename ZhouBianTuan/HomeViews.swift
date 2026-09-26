@@ -7,13 +7,18 @@ struct HomeView: View {
     var pageQuery: ContentQuery { .init(parameters: ["groupType": feed == .splitGoods ? "splitGoods" : "followGroup"]) }
 
     var posts: [GroupBuyPost] {
-        if store.isBackendEnabled { return store.pagePosts(pageQuery) }
-        return switch feed {
-        case .followGroup:
-            store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .followGroup })
-        case .splitGoods:
-            store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .splitGoods })
+        let candidates: [GroupBuyPost]
+        if store.isBackendEnabled {
+            candidates = store.pagePosts(pageQuery)
+        } else {
+            switch feed {
+            case .followGroup:
+                candidates = store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .followGroup })
+            case .splitGoods:
+                candidates = store.sortedFeedPosts(store.activePosts.filter { $0.groupType == .splitGoods })
+            }
         }
+        return store.recommendedFeedPosts(candidates, for: pageQuery)
     }
 
     var body: some View {
@@ -32,7 +37,7 @@ struct HomeView: View {
                         .padding(.top, 12)
                         .padding(.bottom, 28)
                 }
-                ContentPageFooter(query: pageQuery)
+                ContentPageFooter(query: pageQuery, automaticallyLoad: true)
                 }
             }
             .refreshable { await store.refreshHomeFeed(pageQuery) }
@@ -58,8 +63,10 @@ struct HomeView: View {
     }
 
     private func handleFeedSwipe(_ value: DragGesture.Value) {
-        guard abs(value.translation.width) > 88,
-              abs(value.translation.height) < 70 else { return }
+        let horizontalDistance = abs(value.translation.width)
+        let verticalDistance = abs(value.translation.height)
+        guard horizontalDistance > 76,
+              horizontalDistance > verticalDistance * 1.35 else { return }
         if value.translation.width < 0 {
             selectFeed(.splitGoods)
         } else {
@@ -78,6 +85,7 @@ enum HomeFeed: String, CaseIterable, Identifiable {
 struct HomeHeader: View {
     @Binding var feed: HomeFeed
     let onSelect: (HomeFeed) -> Void
+    @Namespace private var indicator
 
     var body: some View {
         VStack(spacing: 12) {
@@ -94,9 +102,15 @@ struct HomeHeader: View {
                                 Text(item.rawValue)
                                     .font(.system(size: 22, weight: feed == item ? .bold : .semibold))
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
-                                Capsule()
-                                    .fill(feed == item ? Theme.accent : Color.clear)
-                                    .frame(width: 40, height: 4)
+                                if feed == item {
+                                    Capsule()
+                                        .fill(Theme.accent)
+                                        .frame(width: 40, height: 4)
+                                        .matchedGeometryEffect(id: "home-feed-indicator", in: indicator)
+                                } else {
+                                    Color.clear
+                                        .frame(width: 40, height: 4)
+                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -351,7 +365,7 @@ struct PostCard: View {
                 }
                 .frame(width: cardWidth)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(FeedCardButtonStyle())
             .saturation(isEnded ? 0 : 1)
             .opacity(isEnded ? 0.58 : 1)
 
@@ -362,6 +376,20 @@ struct PostCard: View {
             }
         }
         .frame(width: cardWidth)
+        .scrollTransition(.animated(.easeOut(duration: 0.18))) { content, phase in
+            content
+                .opacity(phase.isIdentity ? 1 : 0.9)
+                .scaleEffect(phase.isIdentity ? 1 : 0.985)
+        }
+    }
+}
+
+private struct FeedCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.975 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(AppMotion.quick, value: configuration.isPressed)
     }
 }
 

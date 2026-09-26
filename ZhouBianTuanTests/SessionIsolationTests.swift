@@ -56,12 +56,76 @@ final class SessionIsolationTests: XCTestCase {
         return MockAppStore(backendClient: client, persistsData: false, automaticallyRefresh: false)
     }
 
+    private func feedPost(id: String, authorID: String, createdAt: Date, title: String, tags: [String] = [], deadline: Date? = nil) -> GroupBuyPost {
+        GroupBuyPost(
+            id: id,
+            title: title,
+            imageNames: [],
+            authorID: authorID,
+            categoryTags: tags,
+            fandomTags: [],
+            price: "99",
+            deposit: "",
+            deadline: deadline ?? createdAt.addingTimeInterval(86_400),
+            condition: "全新",
+            isFormed: false,
+            description: title,
+            wechat: "",
+            qq: "",
+            groupNumber: "",
+            groupInfo: "",
+            externalLink: "",
+            createdAt: createdAt,
+            likedCount: 0,
+            favoriteCount: 0,
+            commentCount: 0,
+            reportCount: 0,
+            status: .active,
+            imageAspect: 1
+        )
+    }
+
     private func login(_ id: String, store: MockAppStore) async {
         let body = payload(id)
         StubProtocol.handler = { $0.reply(body) }
         let success = await store.loginWithEmail(email: "\(id)@example.test", password: "test-password")
         XCTAssertTrue(success)
         XCTAssertEqual(store.currentUserID, id)
+    }
+
+    func testRecommendedFeedUsesFreshnessAndFollowSignalsWithoutReshuffling() {
+        let store = store()
+        let now = Date()
+        let followed = feedPost(id: "followed", authorID: "followed-user", createdAt: now, title: "我关注的动漫团", tags: ["动漫"])
+        let stale = feedPost(
+            id: "stale",
+            authorID: "other-user",
+            createdAt: now.addingTimeInterval(-10 * 86_400),
+            title: "很久以前的团",
+            deadline: now.addingTimeInterval(86_400)
+        )
+        store.followedUserIDs = ["followed-user"]
+
+        let first = store.recommendedFeedPosts([stale, followed]).map(\.id)
+        let second = store.recommendedFeedPosts([stale, followed]).map(\.id)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.first, "followed")
+    }
+
+    func testHomeRecommendationDoesNotMoveCardsAfterReadingAPost() {
+        let store = store()
+        let now = Date()
+        let candidates = (0..<4).map { index in
+            feedPost(id: "post-\(index)", authorID: "author-\(index)", createdAt: now, title: "帖子 \(index)")
+        }
+        store.posts = candidates
+        let before = store.recommendedFeedPosts(candidates).map(\.id)
+
+        store.recordBrowse(postID: before[0])
+
+        XCTAssertEqual(store.recommendedFeedPosts(candidates).map(\.id), before,
+                       "Reading a post must not rearrange the feed beneath the navigation stack")
     }
 
     func testOldBootstrapCannotReplaceNewAccountOrItsCursor() async {

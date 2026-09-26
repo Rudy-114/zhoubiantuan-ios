@@ -15,6 +15,9 @@ final class MockAppStore: ObservableObject {
     @Published var moderationReviews: [ModerationReview]
     @Published var contentPages: [String: ContentPageState] = [:]
     @Published var contentPageEpoch = UUID()
+    // Keep the visible order until a successful refresh; reactions and detail loads
+    // may update cards without moving them under the user's scroll position.
+    var homeFeedOrders: [String: [String]] = [:]
     @Published var postDetailErrors: [String: String] = [:]
     @Published var postDetailRequests: [String: UUID] = [:]
     var postDetailLastLoadedAt: [String: Date] = [:]
@@ -397,7 +400,11 @@ final class MockAppStore: ObservableObject {
     }
 
     func refreshHomeFeed(_ query: ContentQuery) async {
-        guard isBackendEnabled else { return }
+        guard isBackendEnabled else {
+            homeFeedOrders[query.key] = nil
+            objectWillChange.send()
+            return
+        }
         // Guests do not have the authenticated bootstrap, so refresh the public
         // snapshot first. The paged request then replaces the visible home feed
         // for the selected tab and keeps pagination metadata in sync.
@@ -1041,6 +1048,88 @@ final class MockAppStore: ObservableObject {
             }
             return lhs.createdAt > rhs.createdAt
         }
+    }
+
+    /// Freeze each loaded batch until refresh and append subsequent batches. Always
+    /// resolve against current candidates so moderation and blocks take effect immediately.
+    func recommendedFeedPosts(_ candidates: [GroupBuyPost], for query: ContentQuery = .init()) -> [GroupBuyPost] {
+        let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var order = (homeFeedOrders[query.key] ?? []).filter { byID[$0] != nil }
+        var known = Set(order)
+        let additions = candidates.filter { known.insert($0.id).inserted }
+        order += rankHomeFeedCandidates(additions).map(\.id)
+        homeFeedOrders[query.key] = order
+        return order.compactMap { byID[$0] }
+    }
+
+    private func rankHomeFeedCandidates(_ candidates: [GroupBuyPost]) -> [GroupBuyPost] {
+        guard candidates.count > 1 else { return candidates }
+        let now = Date()
+        let viewedIDs = Set(browsingHistoryIDs)
+        let interestPosts = posts.filter { post in
+            (likedPostIDs.contains(post.id) || favoritePostIDs.contains(post.id) || viewedIDs.contains(post.id)) &&
+            post.status == .active &&
+            canShowContent(from: post.authorID)
+        }
+        let interestTags = Set(interestPosts.flatMap { $0.categoryTags + $0.fandomTags + $0.unsoldRoles.map(\.name) }.map { $0.lowercased() })
+        let recentSearches = searchHistory.prefix(6).map { $0.trimmed.lowercased() }.filter { !$0.isEmpty }
+        let dayKey = Int(Calendar.current.startOfDay(for: now).timeIntervalSince1970)
+
+        let ranked = candidates.enumerated().map { index, post in
+            var score = 0.0
+            let ageHours = max(0, now.timeIntervalSince(post.createdAt) / 3600)
+            let freshness = max(0, 1 - min(ageHours, 168) / 168)
+            score += freshness * 2.2
+            score += min(1.35, log1p(
+                Double(max(0, post.likedCount)) * 0.8 +
+                Double(max(0, post.favoriteCount)) * 1.2 +
+                Double(max(0, post.commentCount)) * 1.6
+            ) / 4.5)
+            if followedUserIDs.contains(post.authorID) { score += 1.45 }
+            if likedPostIDs.contains(post.id) || favoritePostIDs.contains(post.id) { score += 0.3 }
+            if viewedIDs.contains(post.id) { score -= 0.32 }
+            if post.groupType == .splitGoods, post.unsoldRoles.contains(where: \.isAvailable) { score += 0.28 }
+
+            let postTags = Set((post.categoryTags + post.fandomTags + post.unsoldRoles.map(\.name)).map { $0.lowercased() })
+            score += min(1.2, Double(postTags.intersection(interestTags).count) * 0.38)
+            if recentSearches.contains(where: { post.searchableText.localizedCaseInsensitiveContains($0) }) {
+                score += 0.42
+            }
+
+            let positionWeight = Double(candidates.count - index) / Double(candidates.count) * 0.06
+            score += positionWeight
+            score += recommendationJitter(for: "\(dayKey)|\(post.id)")
+            return (post: post, score: score, index: index, ended: post.deadline <= now)
+        }
+
+        var pending = ranked.sorted {
+            if $0.ended != $1.ended { return !$0.ended }
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.index < $1.index
+        }
+        var result: [GroupBuyPost] = []
+        result.reserveCapacity(pending.count)
+        while !pending.isEmpty {
+            var selectedIndex = 0
+            if let lastAuthor = result.last?.authorID,
+               pending[0].post.authorID == lastAuthor,
+               let alternateIndex = pending.prefix(3).firstIndex(where: {
+                   $0.post.authorID != lastAuthor && $0.ended == pending[0].ended
+               }) {
+                selectedIndex = alternateIndex
+            }
+            result.append(pending.remove(at: selectedIndex).post)
+        }
+        return result
+    }
+
+    private func recommendationJitter(for value: String) -> Double {
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return (Double(hash % 1000) / 1000 - 0.5) * 0.08
     }
 
     func splitGoodsPosts(matchingRole keyword: String) -> [GroupBuyPost] {

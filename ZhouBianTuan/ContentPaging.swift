@@ -81,6 +81,7 @@ extension MockAppStore {
         pageState(query).ids.compactMap { id in users.first { $0.id == id && canShowContent(from: id) } }
     }
     func invalidateContentPages() {
+        homeFeedOrders.removeAll()
         contentPages.removeAll()
         postDetailRequests.removeAll()
         postDetailLastLoadedAt.removeAll()
@@ -101,6 +102,7 @@ extension MockAppStore {
         do {
             let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken)
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
+            if reset { homeFeedOrders[query.key] = nil }
             mergeContentPage(page)
             let ids: [String]
             if query.isThreadPage { ids = page.messageThreads?.map(\.id) ?? [] }
@@ -168,6 +170,7 @@ struct ContentPageFooter: View {
     @EnvironmentObject private var store: MockAppStore
     let query: ContentQuery
     var loadMore: (() async -> Void)? = nil
+    var automaticallyLoad = false
 
     var body: some View {
         let state = store.pageState(query)
@@ -188,6 +191,10 @@ struct ContentPageFooter: View {
         .frame(maxWidth: .infinity)
         .task(id: "\(store.authSessionVersion)-\(store.contentPageEpoch)-\(query.key)") {
             if !store.pageState(query).isLoaded { await store.loadContentPage(query) }
+        }
+        .onAppear {
+            guard automaticallyLoad, store.isBackendEnabled else { return }
+            Task { await load() }
         }
     }
 
