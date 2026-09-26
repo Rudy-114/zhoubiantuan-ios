@@ -284,6 +284,7 @@ async function runCollectionLifecycle(baseUrl, admin) {
         contactGroupNumber: "",
         groupInfo: "Corrected group information",
         deadline: "2026-09-16T08:00:00.000Z",
+        deadlineConfirmed: true,
         defaultNote: "Verified corrected contact"
       }
     }
