@@ -1,12 +1,42 @@
 import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject private var store: MockAppStore
     @State private var feed: HomeFeed = .followGroup
 
-    var pageQuery: ContentQuery { .init(parameters: ["groupType": feed == .splitGoods ? "splitGoods" : "followGroup"]) }
+    var body: some View {
+        VStack(spacing: 0) {
+            HomeHeader(feed: $feed, onSelect: selectFeed)
+            TabView(selection: $feed) {
+                ForEach(HomeFeed.allCases) { item in
+                    HomeFeedPage(feed: item)
+                        .tag(item)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(true)
+    }
 
-    var posts: [GroupBuyPost] {
+    private func selectFeed(_ nextFeed: HomeFeed) {
+        guard feed != nextFeed else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            feed = nextFeed
+        }
+    }
+}
+
+private struct HomeFeedPage: View {
+    @EnvironmentObject private var store: MockAppStore
+    let feed: HomeFeed
+
+    private var pageQuery: ContentQuery {
+        .init(parameters: ["groupType": feed == .splitGoods ? "splitGoods" : "followGroup"])
+    }
+
+    private var posts: [GroupBuyPost] {
         let candidates: [GroupBuyPost]
         if store.isBackendEnabled {
             candidates = store.pagePosts(pageQuery)
@@ -22,10 +52,8 @@ struct HomeView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HomeHeader(feed: $feed, onSelect: selectFeed)
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
                 if posts.isEmpty && store.isLoadingInitialFeed {
                     HomeFeedSkeletonGrid()
                         .padding(.horizontal, 12)
@@ -38,44 +66,13 @@ struct HomeView: View {
                         .padding(.bottom, 28)
                 }
                 ContentPageFooter(query: pageQuery, automaticallyLoad: true)
-                }
             }
-            .refreshable { await store.refreshHomeFeed(pageQuery) }
-            .id(feed)
-            .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
-            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
         }
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 28)
-                .onEnded(handleFeedSwipe)
-        )
-        .background(Theme.background.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarHidden(true)
-    }
-
-    private func selectFeed(_ nextFeed: HomeFeed) {
-        guard feed != nextFeed else { return }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-            feed = nextFeed
-        }
-    }
-
-    private func handleFeedSwipe(_ value: DragGesture.Value) {
-        let horizontalDistance = abs(value.translation.width)
-        let verticalDistance = abs(value.translation.height)
-        guard horizontalDistance > 76,
-              horizontalDistance > verticalDistance * 1.35 else { return }
-        if value.translation.width < 0 {
-            selectFeed(.splitGoods)
-        } else {
-            selectFeed(.followGroup)
-        }
+        .refreshable { await store.refreshHomeFeed(pageQuery) }
     }
 }
 
-enum HomeFeed: String, CaseIterable, Identifiable {
+enum HomeFeed: String, CaseIterable, Identifiable, Hashable {
     case followGroup = "跟团"
     case splitGoods = "拼谷"
 
