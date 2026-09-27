@@ -52,7 +52,7 @@ private struct HomeFeedPage: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
+        PullToRefreshScrollView {
             VStack(spacing: 0) {
                 if posts.isEmpty && store.isLoadingInitialFeed {
                     HomeFeedSkeletonGrid()
@@ -67,8 +67,9 @@ private struct HomeFeedPage: View {
                 }
                 ContentPageFooter(query: pageQuery, automaticallyLoad: true)
             }
+        } action: {
+            await store.refreshHomeFeed(pageQuery)
         }
-        .refreshable { await store.refreshHomeFeed(pageQuery) }
     }
 }
 

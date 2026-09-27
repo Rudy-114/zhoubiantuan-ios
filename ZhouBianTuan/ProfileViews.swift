@@ -401,14 +401,7 @@ struct UserRelationListView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 86,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
+        .interactiveBackSwipe(onBack: { dismiss() })
     }
 }
 
@@ -1161,7 +1154,7 @@ struct CollectionDetailView: View {
         if let collection = store.collection(id: collectionID) {
             let posts = store.posts(in: collection.id)
             let canManage = collection.ownerID == store.currentUserID
-            ScrollView(showsIndicators: false) {
+            PullToRefreshScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     HeaderTitle(title: collection.name, subtitle: "合集共享信息会自动继承到新发布帖子")
                     if canManage {
@@ -1203,8 +1196,9 @@ struct CollectionDetailView: View {
                 }
                 .padding(.bottom, 28)
                 ContentPageFooter(query: .collection(collectionID))
+            } action: {
+                await store.loadContentPage(.collection(collectionID), reset: true)
             }
-            .refreshable { await store.loadContentPage(.collection(collectionID), reset: true) }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -2078,13 +2072,14 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        ScrollView {
+        PullToRefreshScrollView {
             VStack {
                 WaterfallGrid(posts: favoritePosts).padding(12)
                 ContentPageFooter(query: .favorites)
             }
+        } action: {
+            await store.loadContentPage(.favorites, reset: true)
         }
-        .refreshable { await store.loadContentPage(.favorites, reset: true) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("我的收藏")
     }
@@ -2094,7 +2089,7 @@ struct ReminderCenterView: View {
     @EnvironmentObject private var store: MockAppStore
 
     var body: some View {
-        ScrollView {
+        PullToRefreshScrollView {
             VStack(spacing: 12) {
                 Text("显示收藏中尚未截团的内容。请打开 App 查看；目前不会发送系统通知。")
                     .font(.system(size: 13))
@@ -2114,8 +2109,9 @@ struct ReminderCenterView: View {
             }
             .padding(16)
             ContentPageFooter(query: .favorites)
+        } action: {
+            await store.loadContentPage(.favorites, reset: true)
         }
-        .refreshable { await store.loadContentPage(.favorites, reset: true) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("收藏截团日期")
     }
@@ -2475,14 +2471,7 @@ struct UserProfileView: View {
                 ? "解除拉黑 \(confirmation.nickname) 后，你会重新看到对方的内容，对方也可以再次私信你。"
                 : "拉黑 \(confirmation.nickname) 后，对方将无法私信你，你也会隐藏来自对方的内容。")
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 86,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
+        .interactiveBackSwipe(onBack: { dismiss() })
     }
 
     private func presentUserReport(_ user: User) {

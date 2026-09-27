@@ -54,11 +54,9 @@ struct PostDetailView: View {
                         }
                         .frame(height: detailImageHeight)
                         .tabViewStyle(.page(indexDisplayMode: .automatic))
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    handleImageSwipe(value)
-                                }
+                        .interactiveBackSwipe(
+                            onBack: { dismiss() },
+                            canGoBack: { selectedImageIndex == 0 }
                         )
 
                         VStack(alignment: .leading, spacing: 18) {
@@ -84,11 +82,15 @@ struct PostDetailView: View {
                             CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    handleDetailSwipe(value, authorID: author.id)
+                        .interactiveBackSwipe(
+                            onBack: { dismiss() },
+                            onForward: {
+                                hideKeyboard()
+                                authorProfileUserID = author.id
+                                withAnimation(AppMotion.page) {
+                                    isAuthorProfilePresented = true
                                 }
+                            }
                         )
                     }
                     .padding(.bottom, 20)
@@ -242,14 +244,7 @@ struct PostDetailView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 92,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
+        .interactiveBackSwipe(onBack: { dismiss() })
     }
 
     private func imageHeight(for post: GroupBuyPost, index: Int) -> CGFloat {
@@ -271,25 +266,6 @@ struct PostDetailView: View {
         return CGFloat(max(0.28, post.imageAspect))
     }
 
-    private func handleDetailSwipe(_ value: DragGesture.Value, authorID: String) {
-        guard abs(value.translation.height) < 72 else { return }
-        if value.translation.width > 92 {
-            dismiss()
-        } else if value.translation.width < -92 {
-            hideKeyboard()
-            authorProfileUserID = authorID
-            withAnimation(AppMotion.page) {
-                isAuthorProfilePresented = true
-            }
-        }
-    }
-
-    private func handleImageSwipe(_ value: DragGesture.Value) {
-        guard abs(value.translation.height) < 72 else { return }
-        if selectedImageIndex == 0 && value.translation.width > 92 {
-            dismiss()
-        }
-    }
 }
 
 struct PostDetailImagePage: View {

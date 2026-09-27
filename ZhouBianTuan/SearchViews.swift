@@ -224,9 +224,20 @@ struct SearchView: View {
         .onTapGesture {
             hideKeyboard()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 28)
-                .onEnded(handleBackSwipe)
+        .interactiveBackSwipe(
+            onBack: {
+                if isShowingResults {
+                    withAnimation(AppMotion.page) {
+                        committedQuery = ""
+                        query = ""
+                        selectedTab = "全部"
+                        selectedFilter = "综合"
+                    }
+                } else {
+                    dismiss()
+                }
+            },
+            resetOffsetAfterCommit: isShowingResults
         )
     }
 
@@ -248,21 +259,6 @@ struct SearchView: View {
         }
     }
 
-    private func handleBackSwipe(_ value: DragGesture.Value) {
-        guard value.startLocation.x < 56,
-              value.translation.width > 86,
-              abs(value.translation.height) < 72 else { return }
-        if isShowingResults {
-            withAnimation(AppMotion.page) {
-                committedQuery = ""
-                query = ""
-                selectedTab = "全部"
-                selectedFilter = "综合"
-            }
-            return
-        }
-        dismiss()
-    }
 }
 
 struct SearchSuggestionsContent: View {

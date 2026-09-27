@@ -114,7 +114,7 @@ struct ContentRemediationView: View {
         VStack(spacing: 0) {
             SimpleTopBar(title: "内容处理", trailing: nil) { dismiss() }
 
-            ScrollView(showsIndicators: false) {
+            PullToRefreshScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     if store.isLoadingSafetyContentActions && store.safetyContentActions.isEmpty {
                         ProgressView("正在读取内容状态")
@@ -149,8 +149,9 @@ struct ContentRemediationView: View {
                     }
                 }
                 .padding(.vertical, 24)
+            } action: {
+                await store.refreshSafetyContentActions()
             }
-            .refreshable { await store.refreshSafetyContentActions() }
         }
         .background(Theme.background.ignoresSafeArea())
         .navigationBarBackButtonHidden(true)

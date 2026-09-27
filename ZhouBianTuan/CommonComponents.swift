@@ -2,6 +2,246 @@ import CryptoKit
 import SwiftUI
 import UIKit
 
+private struct PullRefreshOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private enum PullRefreshPhase {
+    case idle
+    case ready
+    case refreshing
+}
+
+struct PullToRefreshScrollView<Content: View>: View {
+    private let threshold: CGFloat = 72
+    private let content: () -> Content
+    private let action: () async -> Void
+    private let coordinateSpace = UUID()
+
+    @State private var pullDistance: CGFloat = 0
+    @State private var phase: PullRefreshPhase = .idle
+
+    init(
+        @ViewBuilder content: @escaping () -> Content,
+        action: @escaping () async -> Void
+    ) {
+        self.content = content
+        self.action = action
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            ScrollView(showsIndicators: false) {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(
+                            key: PullRefreshOffsetKey.self,
+                            value: proxy.frame(in: .named(coordinateSpace)).minY
+                        )
+                }
+                .frame(height: 0)
+
+                content()
+            }
+            .coordinateSpace(name: coordinateSpace)
+            .refreshable {
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        phase = .refreshing
+                    }
+                }
+                await action()
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        phase = .idle
+                        pullDistance = 0
+                    }
+                }
+            }
+            .onPreferenceChange(PullRefreshOffsetKey.self) { value in
+                let distance = max(0, value)
+                pullDistance = distance
+                guard phase != .refreshing else { return }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    phase = distance >= threshold ? .ready : .idle
+                }
+            }
+
+            PullRefreshIndicator(
+                phase: phase,
+                distance: pullDistance
+            )
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct PullRefreshIndicator: View {
+    let phase: PullRefreshPhase
+    let distance: CGFloat
+
+    private var isVisible: Bool {
+        phase != .idle || distance > 2
+    }
+
+    private var title: String {
+        switch phase {
+        case .idle: "下拉刷新"
+        case .ready: "松开刷新"
+        case .refreshing: "正在刷新…"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if phase == .refreshing {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: phase == .ready ? "arrow.down.circle.fill" : "arrow.down")
+            }
+            Text(title)
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(Theme.subtext)
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: max(-36, min(18, distance * 0.5 - 18)))
+        .animation(.easeOut(duration: 0.12), value: phase == .ready)
+        .animation(.easeOut(duration: 0.12), value: distance)
+        .accessibilityLabel(title)
+    }
+}
+
+struct InteractiveBackSwipeModifier: ViewModifier {
+    private let screenWidth = UIScreen.main.bounds.width
+    private let edgeWidth: CGFloat = 52
+    private let commitDistanceRatio: CGFloat = 0.34
+    private let onBack: () -> Void
+    private let onForward: (() -> Void)?
+    private let canGoBack: () -> Bool
+    private let resetOffsetAfterCommit: Bool
+
+    @GestureState private var gestureTranslation: CGSize = .zero
+    @State private var settledOffset: CGFloat = 0
+
+    init(
+        onBack: @escaping () -> Void,
+        onForward: (() -> Void)? = nil,
+        canGoBack: @escaping () -> Bool = { true },
+        resetOffsetAfterCommit: Bool = false
+    ) {
+        self.onBack = onBack
+        self.onForward = onForward
+        self.canGoBack = canGoBack
+        self.resetOffsetAfterCommit = resetOffsetAfterCommit
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: effectiveOffset)
+            .opacity(1 - min(0.04, abs(effectiveOffset) / screenWidth * 0.04))
+            .overlay(alignment: effectiveOffset >= 0 ? .leading : .trailing) {
+                if abs(effectiveOffset) > 0.5 {
+                    Rectangle()
+                        .fill(.black.opacity(0.16))
+                        .frame(width: 7)
+                        .blur(radius: 3)
+                        .opacity(min(CGFloat(1), abs(effectiveOffset) / CGFloat(80)))
+                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .local)
+                    .updating($gestureTranslation) { value, state, _ in
+                        guard accepts(value) else { return }
+                        state = CGSize(width: clampedTranslation(value.translation.width), height: 0)
+                    }
+                    .onEnded { value in
+                        finish(value)
+                    }
+            )
+    }
+
+    private var effectiveOffset: CGFloat {
+        settledOffset + gestureTranslation.width
+    }
+
+    private func accepts(_ value: DragGesture.Value) -> Bool {
+        let translation = value.translation
+        guard abs(translation.width) > abs(translation.height) * 1.08 else { return false }
+        if translation.width >= 0 {
+            return canGoBack() && value.startLocation.x <= edgeWidth
+        }
+        return onForward != nil && value.startLocation.x >= screenWidth - edgeWidth
+    }
+
+    private func clampedTranslation(_ width: CGFloat) -> CGFloat {
+        let limit = screenWidth * 1.08
+        return min(limit, max(-limit, width))
+    }
+
+    private func finish(_ value: DragGesture.Value) {
+        guard accepts(value) else {
+            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.86)) {
+                settledOffset = 0
+            }
+            return
+        }
+
+        let width = value.translation.width
+        let predictedWidth = value.predictedEndTranslation.width
+        let shouldCommit = abs(width) >= screenWidth * commitDistanceRatio || abs(predictedWidth) >= screenWidth * 0.48
+        let direction: CGFloat = width >= 0 ? 1 : -1
+
+        guard shouldCommit else {
+            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.86)) {
+                settledOffset = 0
+            }
+            return
+        }
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            settledOffset = direction * screenWidth
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            if direction > 0 {
+                onBack()
+            } else {
+                onForward?()
+            }
+            if resetOffsetAfterCommit {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    settledOffset = 0
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    func interactiveBackSwipe(
+        onBack: @escaping () -> Void,
+        onForward: (() -> Void)? = nil,
+        canGoBack: @escaping () -> Bool = { true },
+        resetOffsetAfterCommit: Bool = false
+    ) -> some View {
+        modifier(
+            InteractiveBackSwipeModifier(
+                onBack: onBack,
+                onForward: onForward,
+                canGoBack: canGoBack,
+                resetOffsetAfterCommit: resetOffsetAfterCommit
+            )
+        )
+    }
+}
+
 // Authenticated assets bypass persistent caches so revocation and account changes take effect.
 // A bounded, session-scoped memory cache keeps navigation responsive without persisting
 // private images on disk or allowing one account to see another account's cached data.

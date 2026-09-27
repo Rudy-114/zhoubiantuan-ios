@@ -9,7 +9,7 @@ struct MessagesView: View {
     var body: some View {
         Group {
             if store.isLoggedIn {
-                ScrollView(showsIndicators: false) {
+                PullToRefreshScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         HeaderTitle(title: "消息", subtitle: "站内咨询与收藏截团日期")
                         VStack(spacing: 10) {
@@ -55,9 +55,10 @@ struct MessagesView: View {
                     }
                     .padding(.bottom, 28)
                     ContentPageFooter(query: .threads)
+                } action: {
+                    await store.loadContentPage(.threads, reset: true)
                 }
                 .background(Theme.background.ignoresSafeArea())
-                .refreshable { await store.loadContentPage(.threads, reset: true) }
                 .onAppear {
                     store.ensureMutualFriendThreads()
                 }
@@ -308,10 +309,10 @@ struct ChatView: View {
             .sheet(item: $reportSource) { source in
                 ReportSheet(source: source) {}
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded(handleExitSwipe)
-            )
+            .interactiveBackSwipe(onBack: {
+                closeInputSurfaces()
+                dismiss()
+            })
         } else {
             ContentUnavailableView("会话不存在", systemImage: "bubble.left")
         }
@@ -377,12 +378,6 @@ struct ChatView: View {
         }
     }
 
-    private func handleExitSwipe(_ value: DragGesture.Value) {
-        guard value.translation.width > 86,
-              abs(value.translation.height) < 72 else { return }
-        closeInputSurfaces()
-        dismiss()
-    }
 }
 
 enum ChatTimeSeparator {
