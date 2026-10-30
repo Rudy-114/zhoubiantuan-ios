@@ -18,7 +18,7 @@ struct MessagesView: View {
                                     NavigationLink(value: Route.postDetail(post.id)) {
                                         ReminderMiniCard(post: post, reminder: reminder)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                 }
                             }
                             if store.currentUserReminders.isEmpty {
@@ -45,7 +45,7 @@ struct MessagesView: View {
                                     NavigationLink(value: Route.chat(thread.id)) {
                                         ThreadRow(thread: thread)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     Divider().overlay(Theme.hairline).padding(.leading, 74)
                                 }
                             }
@@ -168,7 +168,7 @@ struct ChatView: View {
                             .foregroundStyle(Theme.text)
                             .frame(width: 42, height: 48)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     NavigationLink(value: Route.userProfile(peer.id)) {
                         HStack(spacing: 10) {
                             AvatarView(user: peer, size: 44)
@@ -177,7 +177,7 @@ struct ChatView: View {
                                 .foregroundStyle(Theme.text)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     Spacer()
                 }
                 .padding(.horizontal, 12)
@@ -216,6 +216,15 @@ struct ChatView: View {
                             store.markThreadRead(threadID: threadID)
                         }
                     }
+                    .task(id: thread.id) {
+                        // Existing conversations do not trigger the last-ID
+                        // change handler on first presentation. Yield once so
+                        // the rows are laid out, then reveal the newest message.
+                        await Task.yield()
+                        guard let last = visibleMessages.last else { return }
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                        store.markThreadRead(threadID: threadID)
+                    }
                     .onTapGesture {
                         closeInputSurfaces()
                     }
@@ -245,7 +254,7 @@ struct ChatView: View {
                                 .foregroundStyle(Theme.text)
                                 .frame(width: 42, height: 42)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
 
                         Button {
                             if draft.trimmed.isEmpty {
@@ -259,7 +268,7 @@ struct ChatView: View {
                                 .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.hotPink)
                                 .frame(width: 42, height: 42)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
@@ -294,10 +303,7 @@ struct ChatView: View {
                 }
                 .ignoresSafeArea()
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded(handleExitSwipe)
-            )
+            .interactiveBackSwipe()
         } else {
             ContentUnavailableView("会话不存在", systemImage: "bubble.left")
         }
@@ -363,12 +369,6 @@ struct ChatView: View {
         }
     }
 
-    private func handleExitSwipe(_ value: DragGesture.Value) {
-        guard value.translation.width > 86,
-              abs(value.translation.height) < 72 else { return }
-        closeInputSurfaces()
-        dismiss()
-    }
 }
 
 enum ChatTimeSeparator {
@@ -531,7 +531,7 @@ struct ChatAttachmentOption: View {
                     .foregroundStyle(Theme.subtext)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -586,7 +586,7 @@ struct ChatBubble: View {
                 NavigationLink(value: Route.postDetail(post.id)) {
                     SharedPostMessageCard(post: post)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 if isMine {
                     avatar(for: store.currentUser, size: 36)
                 } else {
@@ -603,7 +603,7 @@ struct ChatBubble: View {
                 NavigationLink(value: Route.userProfile(user.id)) {
                     SharedProfileMessageCard(user: user)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 if isMine {
                     avatar(for: store.currentUser, size: 36)
                 } else {
@@ -668,7 +668,7 @@ struct ChatBubble: View {
                             .font(.system(size: 22))
                             .foregroundStyle(.red)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     bubble
                 }
                 Text(failureReasonText)
@@ -699,9 +699,10 @@ struct ChatBubble: View {
                     }
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .disabled(isLoadingPreview)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityLabel("图片消息，点按查看大图")
     }
 
     @ViewBuilder
@@ -731,7 +732,7 @@ struct ChatBubble: View {
         NavigationLink(value: Route.userProfile(user.id)) {
             AvatarView(user: user, size: size)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 
     private func openImagePreview() {
@@ -747,14 +748,12 @@ struct ChatBubble: View {
         isLoadingPreview = true
         Task {
             do {
-                let (data, response) = try await URLSession.shared.data(from: url)
-                guard
-                    let http = response as? HTTPURLResponse,
-                    (200..<300).contains(http.statusCode),
-                    let image = UIImage(data: data)
-                else {
-                    throw URLError(.badServerResponse)
-                }
+                let data = try await RemoteAssetRequest.data(
+                    urlString: url.absoluteString,
+                    token: store.backendToken,
+                    accountID: store.currentUserID
+                )
+                guard let image = UIImage(data: data) else { throw URLError(.cannotDecodeContentData) }
                 await MainActor.run {
                     previewImage = ChatImagePreviewItem(image: image)
                     isLoadingPreview = false
@@ -808,7 +807,7 @@ private struct ChatImagePreviewView: View {
                             .frame(width: 44, height: 44)
                             .background(.white.opacity(0.14), in: Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
 
                     Spacer()
 
@@ -822,7 +821,7 @@ private struct ChatImagePreviewView: View {
                             .frame(height: 44)
                             .background(.white.opacity(0.14), in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     .disabled(isSavingImage || hasSavedImage)
                     .opacity(hasSavedImage ? 0.68 : 1)
                 }
@@ -918,14 +917,6 @@ struct SharedPostMessageCard: View {
                 .scaledToFill()
                 .frame(width: 250, height: 250)
                 .clipped()
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 46, height: 46)
-                        .background(.black.opacity(0.28), in: Circle())
-                        .padding(12)
-                }
             VStack(alignment: .leading, spacing: 12) {
                 Text(post.title)
                     .font(.system(size: 24, weight: .black))

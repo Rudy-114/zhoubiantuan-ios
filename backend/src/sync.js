@@ -1,9 +1,10 @@
 import { query, withTransaction } from "./db.js";
 import { logger } from "./logger.js";
+import { badRequest } from "./validators.js";
 import { collectionToClient, commentToClient, postToClient, reportToClient, userToClient } from "./mappers.js";
 import { loadMessageThreadsForUser, loadUnreadSnapshot } from "./messages.js";
 import { attachPostCounts } from "./postCounts.js";
-import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL } from "./visibility.js";
+import { visiblePostSQL, visibleCollectionSQL, visibleCommentSQL, unblockedSQL } from "./visibility.js";
 
 const DEFAULT_SYNC_LIMIT = 100;
 const MAX_SYNC_LIMIT = 200;
@@ -117,13 +118,15 @@ export async function loadSyncPayload(userId, { cursor, limit } = {}) {
 
 function normalizeCursor(value) {
   const text = String(value ?? "0").trim();
-  if (!/^\d{1,19}$/.test(text) || BigInt(text) > 9223372036854775807n) return "0";
+  if (!/^\d{1,19}$/.test(text) || BigInt(text) > 9223372036854775807n) throw badRequest("同步游标无效，请重新同步");
   return text;
 }
 
 function normalizeLimit(value) {
-  const parsed = Number.parseInt(String(value ?? DEFAULT_SYNC_LIMIT), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SYNC_LIMIT;
+  const raw = String(value ?? DEFAULT_SYNC_LIMIT).trim();
+  if (!/^\d{1,3}$/.test(raw)) throw badRequest("同步数量无效");
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw badRequest("同步数量无效");
   return Math.min(parsed, MAX_SYNC_LIMIT);
 }
 
@@ -139,8 +142,9 @@ async function loadUsersForSync(viewerUserId, userIds) {
       WHERE u.id = ANY($1::text[])
         AND u.deleted_at IS NULL
         AND u.status = 'active'
+        AND ${unblockedSQL('u.id', '$2')}
       ORDER BY u.created_at ASC`,
-    [ids]
+    [ids, viewerUserId]
   );
   return rows.map((row) => userToClient(row, row, viewerUserId));
 }

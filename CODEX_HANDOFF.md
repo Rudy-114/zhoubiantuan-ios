@@ -1,223 +1,216 @@
+# 2026-09-12 最新生产部署提示
+
+正式服务器已更新到发布提交 `913f05a0cf01bd31739690728e656df777af3710`，生产迁移、图片域名权限与缓存切换均已完成并验证。以下旧记录中“尚未部署”部分已过时。此次为保留原工作树中的用户改动，在独立工作树完成集成与发布；不要直接用当前旧分支覆盖服务器。
+
+- 继续维护请使用 `/Users/rudy2009/Documents/欧美团app/.worktrees/deploy-diagnostics-20260912`，分支 `codex/deploy-diagnostics-20260912`。
+- 完整部署记录：`docs/DEPLOYMENT_2026-09-12.md`；详细交接在发布工作树的 `CODEX_HANDOFF.md`。
+- iOS `1.0 (13)`（含橙色主题与诊断修复）已于 2026-09-13 10:45 经 Xcode Organizer 上传成功；手机安装仍需等待 Apple 处理及 TestFlight 测试组开放。上传记录位于维护工作树的 `docs/operations/verification/2026-09-13-testflight-build-13.md`。
+- 原有交接内容原样保留如下。
+
+---
+
 # Codex Conversation Handoff
 
-Status: Backend deployed, ready for iOS two-account verification
-Generated: 2026-07-07 22:45 CST
+Status: Ready for a new thread
+Generated: 2026-07-09 23:34 CST
 Project root: `/Users/rudy2009/Documents/欧美团app`
 
 ## Resume Prompt
 
-请读取 `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`，用当前文件系统、Git、服务器和模拟器状态复核后继续。当前不要优先处理 App Store Connect；第一优先级是用两台 iOS 18.5 模拟器重新登录双账号，手动验证最新拉黑/解除拉黑/私信失败气泡/双向取关/未关注两条私信限制。后端已于 2026-07-07 22:29 CST 部署到 ECS 并通过 API 集成测试。
+请先阅读 `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`，然后用当前文件系统和 Git 状态验证它是否仍然准确。项目现在应停在举报功能开工前的稳定版本，下一步只需要补齐生产级举报功能闭环：用户端举报入口、后端管理员举报处理 API、管理员处理界面和验证。
 
 ## Objective And User Intent
 
-项目是 iOS App「周边团」。当前阶段目标是稳定私信、拉黑、关注关系这些核心社交安全流程。Rudy 最新明确：App Store 资料现在不着急处理，后续 agent 应按本文件和最新代码继续，不要回到旧需求语义。
+Rudy 正在准备周边团 iOS App 上线。用户已经确认删除账号功能和双账号 QA 测试成功，目前判断上线前主要只差举报功能。
 
-最新产品语义：
+当前明确要求：
 
-- A 拉黑 B 后，双方真实互相取关；解除拉黑不自动恢复关注，需要手动重新关注。
-- 双方互相看不到主页内容/帖子，但消息列表入口、私信历史和主页「发私信」入口保留。
-- 只要任一方向存在拉黑关系，私信发送先显示拉黑失败，不再先触发「对方未关注你前最多发送两条消息」。
-- 拉黑期间发送的失败假消息只在发送方本地保留，不上传云端、不让对方看到、不计入两条额度；解除拉黑后允许点红色感叹号重发，并按当前真实关系重新判断。
+- 确保仓库回到“还没开始做举报功能”的上一个稳定版本。
+- 写一份新对话可直接接手的交接文档。
+- 暂时不要继续实现举报功能，等新对话开始后再做。
 
 ## Current State
 
-- Branch before the requested checkpoint commit: `main`, ahead of `origin/main` by 6 commits.
-- Backend production service: deployed and restarted on ECS.
-- ECS path: `/opt/zbt-backend`.
-- Service: `zbt-backend.service`.
-- Public API health: `https://api.zhoubiantuanmail.top/api/health` returned `{"ok":true}`.
-- Local Debug tunnel: `http://127.0.0.1:18080/api/health` returned `{"ok":true}`.
-- Local `127.0.0.1:18080` is an SSH tunnel to ECS `127.0.0.1:8080`, not a local Node server.
-- Public privacy policy is still live at `https://api.zhoubiantuanmail.top/privacy-policy`.
-- Two simulators were booted during verification:
-  - iPhone 16 Pro `4A818C18-C716-4104-A797-D2A0D5C422F9`
-  - iPhone 16 Pro Max `BF96DF18-2567-4945-90B2-37C3E45ABDED`
-- Both simulator app preferences showed backend enabled, logged out, and two-message limit enabled:
-  - `zhoubiantuan.isBackendEnabled = 1`
-  - `zhoubiantuan.isLoggedIn = 0`
-  - `zhoubiantuan.limitsUnrepliedMessages = 1`
+- 当前分支：`main`
+- 当前 HEAD：`74dffb4 Handle blocked follow attempts`
+- `main` 相对 `origin/main`：本地 ahead 11
+- 本地 checkpoint 分支：`codex/pre-report-feature-checkpoint`，指向 `74dffb4`
+- 写本交接文档前，Git 工作区是干净的，且没有保留刚才开始做举报功能时的代码改动。
+- 现在写入本文件后，工作区会出现 `CODEX_HANDOFF.md` 的修改，这是本次交接文档本身。
+
+重要说明：
+
+- 之前短暂开始过举报功能实现，涉及 `backend/src/routes.js`、`backend/src/mappers.js`、`ZhouBianTuan/Models.swift`、`ZhouBianTuan/BackendClient.swift`，但这些未提交改动已被撤掉。
+- 之前生成的 `.codegraph/` 索引目录已删除。
+- 当前代码状态就是举报功能正式开工前的稳定版本。
 
 ## Completed Work
 
-- Backend now returns machine-readable blocked-message codes via `error.apiCode` mapped to response `code`.
-- Bootstrap and sync payloads include `blockedUserIDs` and `blockedByUserIDs`.
-- Backend content bootstrap filters posts, collections, and comments in either block direction while preserving message threads/history.
-- Backend block route deletes both follow edges.
-- Backend unblock route does not restore follows.
-- Backend relationship sync events are emitted on follow/block/unblock changes.
-- iOS consumes `blockedUserIDs` and `blockedByUserIDs`.
-- iOS local block immediately removes both visible follow edges when known.
-- Text/image send and retry check local block failure before the two-message limit.
-- iOS maps:
-  - `blocked_by_recipient` -> `你已被对方拉黑，无法发送消息`
-  - `blocked_recipient` -> `你已拉黑对方，解除拉黑后才能发送`
-- iOS only treats HTTP `401` as auth expiry; `403` no longer logs the user out.
-- Debug/backend token handling was tightened to avoid fake logged-in states without a token.
-- Debug keychain fallback token support exists for simulator testing.
-- The two-message limit is on by default again and counts only successful/non-failed current-user messages while the peer does not follow the sender.
-- Chat timestamp separators now use real message times.
-- Realtime fallback sync was tightened to 3 seconds and no longer relies solely on websocket `connected` state.
-- Public HTTPS privacy policy and support email work from prior commits remain in place.
+最近已完成并提交的关键工作：
 
-## Deployment And Backend Verification
+- `74dffb4 Handle blocked follow attempts`
+  - 被对方拉黑后再关注，会提示“你已被对方拉黑，无法关注”。
+  - 自己已拉黑对方时关注，会提示“你已拉黑对方，解除拉黑后才能关注”。
+  - 后端 `/users/:id/follow` 返回明确错误 code，不再静默成功。
+  - 个人页侧边菜单里的“审核后台”入口已移除。
+- `8e7653e Fix chat profile navigation and blocked post state`
+  - 私信页点头像进入对方主页，不再重复进入私信页。
+  - 拉黑后返回原帖子，显示“帖子不可见”状态和破损/不可见图标文案。
+- `85fb0ef Improve auth validation feedback`
+  - 注册/登录按钮不再静默灰掉。
+  - 点击按钮时显示当前优先级最高的错误提示。
+  - 对应输入框下方显示红字错误，同时保留顶部 toast。
+- `0cb4058 Preserve debug backend token fallback`
+- `b0d46d5 Stabilize blocking and chat semantics`
+- `f41af0a Update handoff after privacy policy deployment`
+- `cd167e7 Stabilize OSS URL tests`
+- `ef5f92c Add public privacy policy page`
 
-Commands run locally before deployment:
+Rudy 已手动确认：
 
-```sh
-git diff --check
-node --check backend/src/routes.js
-node --check backend/src/app.js
-node --check backend/src/bootstrap.js
-node --check backend/src/sync.js
-node --check backend/src/validators.js
-npm --prefix backend test
-```
+- 删除账号功能测试成功。
+- 双账号 QA 测试成功。
+- 当前剩余上线缺口主要是举报功能。
 
-Result: passed; backend tests were 16/16 green.
+## Files Changed
 
-Deployment command used:
+当前交接动作只修改：
 
-```sh
-rsync -az --delete --exclude node_modules --exclude .env --exclude '.env.*' \
-  -e 'ssh -i ~/.ssh/zbt_backend.pem -o BatchMode=yes' \
-  backend/ ecs-user@47.103.44.42:/opt/zbt-backend/
-```
+- `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`
 
-Remote test/restart command used:
+当前稳定版本中已存在但未完成生产闭环的举报相关代码：
 
-```sh
-ssh -i ~/.ssh/zbt_backend.pem -o BatchMode=yes ecs-user@47.103.44.42 \
-  'set -e; cd /opt/zbt-backend; npm test; sudo systemctl restart zbt-backend; sleep 2; systemctl is-active zbt-backend; curl -fsS http://127.0.0.1:8080/api/health'
-```
-
-Remote result:
-
-- `npm test`: 16/16 passed.
-- `systemctl is-active zbt-backend`: `active`.
-- ECS local health: `{"ok":true}`.
-- Public health: `{"ok":true}`.
-- 18080 tunnel health: `{"ok":true}`.
-- Local and remote SHA-256 checksums matched for:
-  - `backend/src/app.js`
-  - `backend/src/bootstrap.js`
-  - `backend/src/routes.js`
-  - `backend/src/sync.js`
-  - `backend/src/validators.js`
-
-Production API smoke tests:
-
-- `GET /api/feed?limit=3` returned users/posts/collections.
-- Unauthenticated `GET /api/bootstrap` correctly returned `401`.
-- Privacy policy returned HTML.
-
-Production API integration test:
-
-- Used two temporary `codex-deploy-*` users created directly on ECS for the test.
-- Verified mutual follow setup.
-- Verified A blocks B -> both follow edges are removed.
-- Verified bootstrap exposes `blockedUserIDs` for blocker and `blockedByUserIDs` for blocked user.
-- Verified B -> A send returns `code: "blocked_by_recipient"`.
-- Verified A -> B send returns `code: "blocked_recipient"`.
-- Verified mutual block priority returns `blocked_by_recipient`.
-- Verified unblock does not restore follow edges.
-- Verified message send succeeds after both block relationships are removed.
-- Temporary users were cleaned up; remaining `codex-deploy-*` user count was `0`.
-
-## iOS Verification
-
-Latest Swift build run in this thread:
-
-```sh
-xcodebuild -project ZhouBianTuan.xcodeproj -scheme ZhouBianTuan \
-  -configuration Debug \
-  -destination 'id=4A818C18-C716-4104-A797-D2A0D5C422F9' \
-  build CODE_SIGNING_ALLOWED=NO
-```
-
-Result: `BUILD SUCCEEDED`.
-
-The Debug app existed at:
-
-```sh
-/Users/rudy2009/Library/Developer/Xcode/DerivedData/ZhouBianTuan-envkvyhnwuiedvfmxlwqqecpatcd/Build/Products/Debug-iphonesimulator/ZhouBianTuan.app
-```
-
-Manual UI matrix is still pending because both simulators are logged out.
-
-## Important Files
-
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/BackendClient.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MessageViews.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MockAppStore.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/Models.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/PostDetailViews.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/ProfileViews.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/SearchViews.swift`
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/SettingsViews.swift`
-- `/Users/rudy2009/Documents/欧美团app/backend/src/app.js`
-- `/Users/rudy2009/Documents/欧美团app/backend/src/bootstrap.js`
 - `/Users/rudy2009/Documents/欧美团app/backend/src/routes.js`
-- `/Users/rudy2009/Documents/欧美团app/backend/src/sync.js`
-- `/Users/rudy2009/Documents/欧美团app/backend/src/validators.js`
-- `/Users/rudy2009/Documents/欧美团app/BLOCKING_AND_CHAT_REQUIREMENTS.md`
-- `/Users/rudy2009/Documents/欧美团app/HANDOFF-2026-07-07.md`
+  - 已有 `POST /reports`，可写入举报记录。
+  - 还没有生产级管理员 `GET /reports` 和处理举报的 API。
+- `/Users/rudy2009/Documents/欧美团app/backend/src/mappers.js`
+  - 已有 `reportToClient`。
+- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/BackendClient.swift`
+  - 已有 `reportPost(token:postID:reason:)`。
+  - 还没有评论举报、管理员拉取举报、管理员处理举报的客户端方法。
+- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MockAppStore.swift`
+  - 已有本地 `reportPost` 和本地 `handleReport` 原型逻辑。
+- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/AdminViews.swift`
+  - 已有 `AdminReportView` 原型界面，但它目前主要使用本地 store，不是完整生产后端闭环。
+
+## Verification
+
+本次交接前实际运行：
+
+- `git status --short --branch`
+  - 结果：`## main...origin/main [ahead 11]`
+  - 写交接文档前没有 tracked diff，也没有 `.codegraph/`。
+- `git rev-parse --short HEAD`
+  - 结果：`74dffb4`
+- `git branch --show-current`
+  - 结果：`main`
+- `git branch --list codex/pre-report-feature-checkpoint`
+  - 结果：checkpoint 分支存在。
+- `npm --prefix backend test`
+  - 结果：通过，`16/16` pass。
+  - 有 npm warning：`Unknown user config "home"`，不影响测试通过。
+- `curl -fsS https://api.zhoubiantuanmail.top/api/health`
+  - 结果：`{"ok":true}`
+- `curl -fsS -I https://api.zhoubiantuanmail.top/privacy-policy | head -n 5`
+  - 结果：HTTP 200，隐私政策页面可访问。
+
+本次未重新运行：
+
+- iOS `xcodebuild`，因为本次目标是回到稳定版本并交接，不继续实现新功能。
+- 模拟器端完整手测，Rudy 已反馈删除账号和双账号 QA 成功。
+
+## Running Services And Environment
+
+- 项目根目录：`/Users/rudy2009/Documents/欧美团app`
+- 后端生产健康检查：`https://api.zhoubiantuanmail.top/api/health`
+- 隐私政策：`https://api.zhoubiantuanmail.top/privacy-policy`
+- 正式客服邮箱：`support@zhoubiantuanmail.top`
+- 之前两个 iOS 18.5 模拟器曾用于测试：
+  - iPhone 16 Pro：`4A818C18-C716-4104-A797-D2A0D5C422F9`
+  - iPhone 16 Pro Max：`BF96DF18-2567-4945-90B2-37C3E45ABDED`
+
+没有需要继续等待的长运行命令。
 
 ## Key Decisions And Constraints
 
-- Latest rule wins: block deletes both follow edges; unblock does not restore either follow edge.
-- Content/profile visibility is hidden in either block direction, but message threads and message history remain accessible as evidence.
-- Profile「发私信」 remains tappable even if blocked.
-- Mutual block priority: if both users block each other, sender sees the blocked-by-peer wording.
-- Failed local block messages are local-only and excluded from the two-message limit.
-- Two-message limit uses current real follow state, not historical follow state.
-- App Store work is deliberately not the next focus unless Rudy asks for it again.
-- `support@zhoubiantuanmail.top` is the formal support email, but operational support handling still needs a reply agent or human workflow later.
-- Do not write `.project-secrets/backend.env`, server `.env`, tokens, test passwords, SSH private keys, or email credentials into docs, commits, or chat.
+- 普通用户 App 菜单里不要暴露“审核后台”入口。
+- 举报/审核的运营入口可以是管理员专用界面、隐藏入口、单独内部工具或后端脚本，但必须能真实处理举报。
+- App Store 消费者版本不急着做审核后台入口，但 UGC 上线需要举报、拉黑、内容处理和客服联系方式形成闭环。
+- 下架/删除/审核隐藏的内容继续使用“内容不存在 / 已下架或被隐藏”语义。
+- 拉黑导致不可见的帖子使用单独文案：“你已拉黑该用户，或对方已拉黑你，因此无法查看这条帖子。”
+- 不要提交 secrets、token、测试账号密码、`.env`、上传缓存、DerivedData、`node_modules`。
+- 当前 `main` 本地 ahead 11，之后需要考虑 push 到远端，避免只有本机有稳定提交。
 
 ## Unfinished Work
 
-- Re-login both simulators with two test accounts.
-- Manually verify the full block/private-message matrix:
-  - A follows B and B follows A.
-  - A blocks B -> both follow edges disappear.
-  - B can still enter old chat thread and sending creates local failed bubble: `你已被对方拉黑，无法发送消息`.
-  - A sending to B creates local failed bubble: `你已拉黑对方，解除拉黑后才能发送`.
-  - Mutual block prioritizes blocked-by-peer wording.
-  - A unblocks B -> neither follow edge is restored.
-  - After unblock, if peer does not follow sender, the two-message limit applies based on prior successful messages only.
-- Confirm backend sync makes the other device pick up `blockedByUserIDs` quickly after block/unblock.
-- Consider adding permanent backend integration tests for block/unblock/follow/message-limit-adjacent semantics. The ad-hoc production integration test passed, but the committed backend test suite still does not cover those flows.
-- Commit/push state as requested by Rudy.
-- Later, when Rudy resumes App Store work: support URL, App Privacy, screenshots, description, keywords, age rating, review account, and support email reply workflow.
+当前上线前主要剩余：生产级举报功能。
+
+建议最小上线范围：
+
+1. 用户端举报入口
+   - 帖子详情页增加明确“举报”入口。
+   - 评论长按菜单增加“举报”。
+   - 可选但推荐：用户主页增加“举报用户”；私信消息增加“举报消息”。
+2. 后端举报管理 API
+   - `GET /reports?status=pending|all`
+   - `POST /reports/:id/decision`
+   - 处理动作至少包括：忽略、隐藏、下架、警告。
+   - 隐藏/下架应更新目标帖子或评论状态。
+   - 仅管理员邮箱可访问，复用现有 `requireModerationAdmin`。
+3. iOS 后端客户端
+   - 补 `reportComment`
+   - 补 `adminReports`
+   - 补 `decideReport`
+4. 管理员处理 UI
+   - 让 `AdminReportView` 从真实后端拉取 reports。
+   - 展示被举报目标、举报原因、举报人、状态。
+   - 点击处理后刷新数据并触发前端同步。
+5. 验证
+   - 后端测试。
+   - Xcode Debug build。
+   - 双账号提交举报、管理员处理举报、普通用户刷新后目标内容不可见。
+
+## Risks And Known Issues
+
+- 当前已有 `POST /reports`，但生产管理员读取和处理举报的闭环缺失。
+- `AdminReportView` 目前看起来仍偏本地原型，不应误认为已经完成生产后台。
+- 帖子详情里是否存在实际可点击的举报入口需要新对话重新确认；之前检查时没有看到明确入口。
+- 本地 `main` ahead 11 尚未 push，换机器或远端协作前有丢失风险。
+- 后端生产环境看起来健康，但新对话若要部署举报功能，需要重新确认 ECS 服务、迁移状态和环境变量，不要假设。
 
 ## Next Actions
 
-1. Commit the current checkpoint if not already committed.
-2. Launch/relaunch the Debug app on both simulators if needed:
+1. 先运行 `git status --short --branch && git rev-parse --short HEAD`，确认仍在 `main` 且 HEAD 是 `74dffb4`，只有 `CODEX_HANDOFF.md` 可能是交接文档改动。
+2. 为当前交接文档做一个小提交，或由 Rudy 决定是否先 push 当前 ahead 11 的稳定提交。
+3. 开始实现最小生产举报闭环：后端 `GET /reports` 和 `POST /reports/:id/decision`。
+4. 接 Swift `BackendClient` 和 `MockAppStore`。
+5. 补用户端帖子/评论举报入口。
+6. 改 `AdminReportView` 为真实后端数据源。
+7. 跑 `npm --prefix backend test`、`xcodebuild`，再做双账号举报手测。
+8. 部署后端到 ECS，并用生产 API 验证举报写入和管理员处理。
 
-```sh
-APP='/Users/rudy2009/Library/Developer/Xcode/DerivedData/ZhouBianTuan-envkvyhnwuiedvfmxlwqqecpatcd/Build/Products/Debug-iphonesimulator/ZhouBianTuan.app'
-for UDID in 4A818C18-C716-4104-A797-D2A0D5C422F9 BF96DF18-2567-4945-90B2-37C3E45ABDED; do
-  xcrun simctl terminate "$UDID" com.panpanpan.zhoubiantuan >/dev/null 2>&1 || true
-  xcrun simctl install "$UDID" "$APP"
-  xcrun simctl launch "$UDID" com.panpanpan.zhoubiantuan
-done
-```
+## Important Commands And Paths
 
-3. Login both simulator accounts and run the manual matrix above.
-4. If UI behavior is correct, push the branch or continue to the next requested work.
-
-## Important Paths
-
-- Project root: `/Users/rudy2009/Documents/欧美团app`
-- Main handoff: `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`
-- iOS project: `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan.xcodeproj`
-- Backend source: `/Users/rudy2009/Documents/欧美团app/backend`
-- ECS backend path: `/opt/zbt-backend`
-- ECS host: `47.103.44.42`
-- Service: `zbt-backend`
-- Tunnel LaunchAgent label: `com.zhoubiantuan.backend-tunnel`
-- Bundle ID: `com.panpanpan.zhoubiantuan`
-- Public privacy policy: `https://api.zhoubiantuanmail.top/privacy-policy`
-- Public API health: `https://api.zhoubiantuanmail.top/api/health`
-- Support email: `support@zhoubiantuanmail.top`
+- 项目根目录：
+  - `/Users/rudy2009/Documents/欧美团app`
+- 查看状态：
+  - `git status --short --branch`
+  - `git log --oneline -n 8`
+  - `git rev-parse --short HEAD`
+- 当前稳定提交：
+  - `74dffb4 Handle blocked follow attempts`
+- 当前稳定 checkpoint 分支：
+  - `codex/pre-report-feature-checkpoint`
+- 后端测试：
+  - `npm --prefix backend test`
+- 后端健康检查：
+  - `curl -fsS https://api.zhoubiantuanmail.top/api/health`
+- 隐私政策检查：
+  - `curl -fsS -I https://api.zhoubiantuanmail.top/privacy-policy | head -n 5`
+- 关键文件：
+  - `/Users/rudy2009/Documents/欧美团app/backend/src/routes.js`
+  - `/Users/rudy2009/Documents/欧美团app/backend/src/mappers.js`
+  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/BackendClient.swift`
+  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MockAppStore.swift`
+  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/AdminViews.swift`
+  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/PostDetailViews.swift`

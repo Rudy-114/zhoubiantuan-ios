@@ -41,6 +41,9 @@
 		8860DF79402457AD79EBFEEB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 98E2B2B491589A3229D8BFF3 /* Foundation.framework */; };
 		AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC92AFDAFEFFD87760019198 /* ContentPaging.swift */; };
 		F50A070706C513B87E7830B6 /* MessageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */; };
+		A17D4F0D0C8A4A5100A10001 /* OfflineFeedCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17D4F0D0C8A4A5100A10001 /* OfflineFeedCache.swift */; };
+		A17D4F0E0C8A4A5100A10001 /* PostDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17D4F0E0C8A4A5100A10001 /* PostDraftStore.swift */; };
+		A17D4F0F0C8A4A5100A10001 /* FeedEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17D4F0F0C8A4A5100A10001 /* FeedEvents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,6 +110,9 @@
 		98E2B2B491589A3229D8BFF3 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		B604123493D0B684AFB21B06 /* MessageMerging.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageMerging.swift; sourceTree = "<group>"; };
 		DC92AFDAFEFFD87760019198 /* ContentPaging.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentPaging.swift; sourceTree = "<group>"; };
+		B17D4F0D0C8A4A5100A10001 /* OfflineFeedCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OfflineFeedCache.swift; sourceTree = "<group>"; };
+		B17D4F0E0C8A4A5100A10001 /* PostDraftStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PostDraftStore.swift; sourceTree = "<group>"; };
+		B17D4F0F0C8A4A5100A10001 /* FeedEvents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FeedEvents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -194,6 +200,9 @@
 				DC92AFDAFEFFD87760019198 /* ContentPaging.swift */,
 				B604123493D0B684AFB21B06 /* MessageMerging.swift */,
 				316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */,
+				B17D4F0D0C8A4A5100A10001 /* OfflineFeedCache.swift */,
+				B17D4F0E0C8A4A5100A10001 /* PostDraftStore.swift */,
+				B17D4F0F0C8A4A5100A10001 /* FeedEvents.swift */,
 			);
 			path = ZhouBianTuan;
 			sourceTree = "<group>";
@@ -370,6 +379,9 @@
 				AB149C271C67F7CD953A1190 /* ContentPaging.swift in Sources */,
 				50402D5CE53C32E98FCB7691 /* MessageMerging.swift in Sources */,
 				F50A070706C513B87E7830B6 /* MessageCache.swift in Sources */,
+				A17D4F0D0C8A4A5100A10001 /* OfflineFeedCache.swift in Sources */,
+				A17D4F0E0C8A4A5100A10001 /* PostDraftStore.swift in Sources */,
+				A17D4F0F0C8A4A5100A10001 /* FeedEvents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

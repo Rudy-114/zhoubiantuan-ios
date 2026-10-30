@@ -80,7 +80,7 @@ struct LegalAgreementRow: View {
                     .foregroundStyle(isAccepted ? Theme.hotPink : Color.white.opacity(0.36))
                     .padding(.top, 1)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .accessibilityLabel(isAccepted ? "取消同意协议" : "同意协议")
 
             VStack(alignment: .leading, spacing: 7) {
@@ -100,7 +100,7 @@ struct LegalAgreementRow: View {
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
             }
@@ -136,7 +136,7 @@ struct SettingsLegalLinks: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.82)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
             }

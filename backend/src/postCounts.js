@@ -8,7 +8,9 @@ export async function attachPostCounts(postRows, client = { query }) {
     countByPost(client, "post_likes", "post_id = ANY($1::text[])", "post_id", ids),
     countByPost(client, "post_favorites", "post_id = ANY($1::text[])", "post_id", ids),
     countByPost(client, "comments", "post_id = ANY($1::text[]) AND status = 'active'", "post_id", ids),
-    countByPost(client, "reports", "target_type = 'post' AND target_id = ANY($1::text[])", "target_id", ids)
+    // Report badges represent actionable moderation pressure; handled/ignored
+    // reports should not keep a post looking actively reported forever.
+    countByPost(client, "reports", "target_type = 'post' AND status = 'pending' AND target_id = ANY($1::text[])", "target_id", ids)
   ]);
 
   return postRows.map((row) => ({

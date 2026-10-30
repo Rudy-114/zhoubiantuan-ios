@@ -281,6 +281,39 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertTrue(store.contentPages.isEmpty)
     }
 
+    func testFailedFeedRefreshKeepsThePreviousSeedForTheNextPage() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        let query = ContentQuery(parameters: ["groupType": "followGroup", "feedMode": "forYou"])
+        var requestNumber = 0
+        var expectedSeed: String?
+        let nextPage = expectation(description: "next page keeps the previous feed seed")
+        StubProtocol.handler = { request in
+            requestNumber += 1
+            switch requestNumber {
+            case 1:
+                expectedSeed = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "refreshSeed" }?.value
+                request.reply(["posts": [], "hasMore": true, "nextCursor": "cursor-a"])
+            case 2:
+                request.reply(["error": "temporary failure"], status: 503)
+            default:
+                let items = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                XCTAssertEqual(items.first { $0.name == "cursor" }?.value, "cursor-a")
+                XCTAssertEqual(items.first { $0.name == "refreshSeed" }?.value, expectedSeed)
+                nextPage.fulfill()
+                request.reply(["posts": [], "hasMore": false])
+            }
+        }
+
+        await store.loadContentPage(query, reset: true)
+        XCTAssertNotNil(expectedSeed)
+        await store.loadContentPage(query, reset: true)
+        XCTAssertEqual(store.pageState(query).feedRefreshSeed, expectedSeed)
+        await store.loadContentPage(query)
+        await fulfillment(of: [nextPage], timeout: 3)
+    }
+
     func testSwitchingAccountsDoesNotCarryAnUnsentMessageInASharedConversation() async {
         let store = store()
         defer { store.logOut() }

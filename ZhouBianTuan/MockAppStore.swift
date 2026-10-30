@@ -46,6 +46,9 @@ final class MockAppStore: ObservableObject {
     @Published var currentUserID = "u-me"
     @Published var authSessionVersion = UUID()
     @Published private(set) var isLoadingInitialFeed = false
+    @Published var isShowingOfflineFeed = false
+    @Published private(set) var pendingReactionKeys: Set<String> = []
+    @Published var reactionErrors: [String: String] = [:]
     @Published var isDarkModeEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
@@ -64,7 +67,7 @@ final class MockAppStore: ObservableObject {
 
     // MARK: - Storage and Configuration
 
-    private static let demoUserID = "u-me"
+    static let demoUserID = "u-me"
     private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
     private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
     private static let messageLimitDefaultsKey = "zhoubiantuan.limitsUnrepliedMessages"
@@ -73,6 +76,7 @@ final class MockAppStore: ObservableObject {
     private static let backendEnabledDefaultsKey = "zhoubiantuan.isBackendEnabled"
     private static let backendTokenDefaultsKey = "zhoubiantuan.backendToken"
     private static let backendTokenFallbackDefaultsKey = "zhoubiantuan.backendToken.fallback"
+    private static let lastAuthenticatedUserDefaultsKey = "zhoubiantuan.lastAuthenticatedUserID"
     private static let browsingHistoryDefaultsKeyPrefix = "zhoubiantuan.browsingHistory"
     private static let messageThreadsDefaultsKey = "zhoubiantuan.messageThreads"
     private static let searchHistoryDefaultsKey = "zhoubiantuan.searchHistory"
@@ -81,7 +85,7 @@ final class MockAppStore: ObservableObject {
     private static let backendFallbackRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
     private static let backendHealthySyncInterval: TimeInterval = 60
     let backendClient: AliyunBackendClient
-    private let persistsData: Bool
+    let persistsData: Bool
     private let automaticallyRefresh: Bool
     private var cachedBackendToken: String?
     private var isRestoringThreads = false
@@ -98,6 +102,10 @@ final class MockAppStore: ObservableObject {
     private var authenticationAttempt = UUID()
     var moderationRequestID: UUID?
     private var pendingPostUploads: [String: (originals: [String], previews: [String])] = [:]
+    var prefetchedFeedPostIDs = Set<String>()
+    private var pendingFeedEvents: [FeedEventDraft] = []
+    private var feedEventFlushTask: Task<Void, Never>?
+    private var impressedFeedPostIDs = Set<String>()
     private var realtimeConnection: RealtimeConnection?
     private var isRealtimeConnected = false
     private var nextFallbackSyncAt = Date.distantPast
@@ -292,14 +300,102 @@ final class MockAppStore: ObservableObject {
         authenticationAttempt = UUID()
         sessionTasks.values.forEach { $0.cancel() }
         sessionTasks.removeAll()
+        feedEventFlushTask?.cancel()
+        feedEventFlushTask = nil
+        pendingFeedEvents.removeAll()
+        impressedFeedPostIDs.removeAll()
         pendingPostUploads.removeAll()
         invalidateContentPages()
+        isShowingOfflineFeed = false
+        prefetchedFeedPostIDs.removeAll()
         postDetailErrors.removeAll()
+        pendingReactionKeys.removeAll()
+        reactionErrors.removeAll()
         stopBackendAutoRefresh()
         refreshRequestID = nil
         syncRequestID = nil
         feedRequestID = nil
         isLoadingInitialFeed = false
+    }
+
+    /// Queues Feed behavior locally and uploads in small batches. Impression IDs
+    /// are stable for this session so LazyVStack re-appearance cannot inflate
+    /// exposure counts while like/favorite/comment actions remain individually
+    /// attributable.
+    func recordFeedEvent(_ eventType: String, postID: String?, position: Int? = nil,
+                         feedMode: String = "forYou", algorithmVersion: String = "rules-v2",
+                         contentRevision: String = "", metadata: [String: String] = [:]) {
+        guard isBackendEnabled, isLoggedIn, backendToken != nil else { return }
+        if eventType == "impression", let postID, impressedFeedPostIDs.contains(postID) { return }
+        if eventType == "impression", let postID { impressedFeedPostIDs.insert(postID) }
+        let eventID: String
+        if eventType == "impression", let postID {
+            eventID = "impression-\(authSessionVersion.uuidString)-\(postID)"
+        } else {
+            eventID = "\(eventType)-\(UUID().uuidString)"
+        }
+        pendingFeedEvents.append(FeedEventDraft(eventID: eventID,
+                                                 requestID: authSessionVersion.uuidString,
+                                                 eventType: eventType,
+                                                 postID: postID,
+                                                 position: position,
+                                                 dwellMs: nil,
+                                                 feedMode: feedMode,
+                                                 algorithmVersion: algorithmVersion,
+                                                 contentRevision: contentRevision,
+                                                 occurredAt: Date(),
+                                                 metadata: metadata))
+        if pendingFeedEvents.count >= 20 {
+            feedEventFlushTask?.cancel()
+            feedEventFlushTask = nil
+            Task { @MainActor [weak self] in await self?.flushFeedEvents() }
+        } else if feedEventFlushTask == nil {
+            feedEventFlushTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.flushFeedEvents()
+            }
+        }
+    }
+
+    func flushFeedEvents() async {
+        feedEventFlushTask = nil
+        guard isBackendEnabled, let token = backendToken, !pendingFeedEvents.isEmpty else { return }
+        let session = authSessionVersion
+        let batch = Array(pendingFeedEvents.prefix(50))
+        pendingFeedEvents.removeFirst(batch.count)
+        do {
+            _ = try await backendClient.recordFeedEvents(token: token, events: batch)
+        } catch {
+            guard isCurrentSession(session) else { return }
+            pendingFeedEvents.insert(contentsOf: batch, at: 0)
+            if pendingFeedEvents.count > 100 { pendingFeedEvents.removeLast(pendingFeedEvents.count - 100) }
+        }
+        if !pendingFeedEvents.isEmpty, feedEventFlushTask == nil {
+            feedEventFlushTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.flushFeedEvents()
+            }
+        }
+    }
+
+    func markFeedPostNotInterested(_ postID: String) {
+        guard requireLogin(prompt: "登录后才能调整推荐") else { return }
+        recordFeedEvent("notInterested", postID: postID)
+        for key in contentPages.keys {
+            contentPages[key]?.ids.removeAll { $0 == postID }
+        }
+        showToast("已减少类似内容")
+    }
+
+    func hideFeedAuthor(_ authorID: String, postID: String) {
+        guard requireLogin(prompt: "登录后才能调整推荐") else { return }
+        recordFeedEvent("hideAuthor", postID: postID, metadata: ["authorID": authorID])
+        for key in contentPages.keys {
+            contentPages[key]?.ids.removeAll { id in posts.first(where: { $0.id == id })?.authorID == authorID }
+        }
+        showToast("已减少该团长的内容")
     }
 
     // MARK: - Initialization
@@ -322,7 +418,9 @@ final class MockAppStore: ObservableObject {
         isBackendEnabled = true
         let blankUser = Self.blankUser
         users = [blankUser]
-        currentUserID = blankUser.id
+        let cachedAccountID = persistsData ? UserDefaults.standard.string(forKey: Self.lastAuthenticatedUserDefaultsKey) : nil
+        let initialUserID = startsLoggedIn ? (cachedAccountID ?? blankUser.id) : blankUser.id
+        currentUserID = initialUserID
         posts = []
         collections = []
         reviews = []
@@ -334,10 +432,15 @@ final class MockAppStore: ObservableObject {
         favoritePostIDs = []
         followedUserIDs = []
         followingIDsByUserID = [blankUser.id: []]
-        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: blankUser.id)) ?? []
+        browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: initialUserID)) ?? []
         searchHistory = UserDefaults.standard.stringArray(forKey: Self.searchHistoryDefaultsKey) ?? []
         if isBackendEnabled, backendToken == nil {
             invalidateCloudSessionForMissingToken(prompt: false)
+        }
+        if startsLoggedIn, currentUserID != blankUser.id {
+            Task { @MainActor [weak self] in
+                await self?.restoreOfflineFeedIfAvailable()
+            }
         }
     }
 
@@ -350,6 +453,44 @@ final class MockAppStore: ObservableObject {
     func loadBackendIfNeeded() async {
         guard isBackendEnabled else { return }
         await refreshFromBackend(silent: true)
+    }
+
+    /// Restores the most recent authenticated home Feed before the network request
+    /// finishes. A successful online request replaces the snapshot in the background.
+    func restoreOfflineFeedIfAvailable() async {
+        guard persistsData, isLoggedIn, currentUserID != Self.demoUserID else { return }
+        let session = authSessionVersion
+        let epoch = contentPageEpoch
+        guard let snapshot = await OfflineFeedCache.shared.load(accountID: currentUserID) else { return }
+        guard isCurrentSession(session), contentPageEpoch == epoch, snapshot.accountID == currentUserID else { return }
+        mergeUsers(snapshot.users)
+        mergePosts(snapshot.posts)
+        mergeCollections(snapshot.collections)
+        mergeComments(snapshot.comments)
+        let cachedImageURLs = (snapshot.posts.flatMap { $0.previewRemoteImageURLs + $0.remoteImageURLs } +
+            snapshot.users.flatMap { [$0.avatarURL, $0.backgroundURL] }).filter { !$0.isEmpty }.map(RemoteAssetRequest.canonicalURLString)
+        RemoteImageCache.shared.register(cachedImageURLs, accountID: currentUserID)
+        for page in snapshot.pages {
+            var state = ContentPageState()
+            state.ids = page.ids
+            state.nextCursor = page.nextCursor
+            state.hasMore = false
+            state.isLoaded = true
+            state.isOfflineSnapshot = true
+            contentPages[page.key] = state
+        }
+        isShowingOfflineFeed = true
+
+        // Refresh asynchronously. If the device is in Airplane Mode this request
+        // fails silently and the restored snapshot remains visible.
+        let homePages = snapshot.pages.filter { $0.key.hasPrefix("/feed?") }
+        for page in homePages {
+            let query = contentQuery(from: page.key)
+            Task { @MainActor [weak self] in
+                guard let self, self.isCurrentSession(session), self.contentPageEpoch == epoch else { return }
+                await self.loadContentPage(query, reset: true)
+            }
+        }
     }
 
     func loadPublicFeedIfNeeded() async {
@@ -621,6 +762,9 @@ final class MockAppStore: ObservableObject {
         if let currentUser = payload.currentUser?.localUser() {
             mergeUsers([currentUser])
             currentUserID = currentUser.id
+            if persistsData {
+                UserDefaults.standard.set(currentUser.id, forKey: Self.lastAuthenticatedUserDefaultsKey)
+            }
             browsingHistoryIDs = UserDefaults.standard.stringArray(forKey: Self.browsingHistoryDefaultsKey(for: currentUser.id)) ?? []
         }
         followingIDsByUserID[currentUserID] = followedUserIDs
@@ -708,6 +852,7 @@ final class MockAppStore: ObservableObject {
         }
         followingIDsByUserID[currentUserID] = followedUserIDs
         SyncCursorStore.set(payload.nextCursor, for: currentUserID)
+        persistOfflineFeedSnapshot()
     }
 
     func mergeUsers(_ backendUsers: [User]) {
@@ -791,6 +936,32 @@ final class MockAppStore: ObservableObject {
                     await refreshFromBackend(silent: true)
                     guard isCurrentSession(session) else { return }
                 }
+            }
+        }
+    }
+
+    private func runOptimisticReaction(key: String, rollback: @escaping () -> Void,
+                                       _ operation: @escaping (String, UUID) async throws -> Void) {
+        guard isBackendEnabled else { return }
+        guard let token = backendToken else {
+            rollback()
+            showToast("登录状态已失效，请重新登录")
+            return
+        }
+        pendingReactionKeys.insert(key)
+        reactionErrors[key] = nil
+        runSessionTask { [self] session in
+            do {
+                try await operation(token, session)
+                guard isCurrentSession(session) else { return }
+                pendingReactionKeys.remove(key)
+                await syncFromBackend(reason: "reaction")
+            } catch {
+                guard isCurrentSession(session) else { return }
+                rollback()
+                pendingReactionKeys.remove(key)
+                reactionErrors[key] = error.localizedDescription
+                showToast("操作未成功，可稍后重试")
             }
         }
     }
@@ -1098,17 +1269,26 @@ final class MockAppStore: ObservableObject {
     func toggleLike(postID: String) {
         guard requireLogin(prompt: "登录后才能点赞") else { return }
         guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
-        if likedPostIDs.contains(postID) {
+        let wasLiked = likedPostIDs.contains(postID)
+        if wasLiked {
             likedPostIDs.remove(postID)
             posts[index].likedCount = max(0, posts[index].likedCount - 1)
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
+            recordFeedEvent("like", postID: postID, metadata: ["enabled": "false"])
+            runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
+                guard let self, !self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                self.likedPostIDs.insert(postID); self.posts[index].likedCount += 1
+            }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
                 guard isCurrentSession(session) else { return }
             }
         } else {
             likedPostIDs.insert(postID)
             posts[index].likedCount += 1
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
+            recordFeedEvent("like", postID: postID, metadata: ["enabled": "true"])
+            runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
+                guard let self, self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                self.likedPostIDs.remove(postID); self.posts[index].likedCount = max(0, self.posts[index].likedCount - 1)
+            }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
                 guard isCurrentSession(session) else { return }
             }
@@ -1118,11 +1298,16 @@ final class MockAppStore: ObservableObject {
     func toggleFavorite(postID: String) {
         guard requireLogin(prompt: "登录后才能收藏") else { return }
         guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
-        if favoritePostIDs.contains(postID) {
+        let wasFavorite = favoritePostIDs.contains(postID)
+        if wasFavorite {
             favoritePostIDs.remove(postID)
             posts[index].favoriteCount = max(0, posts[index].favoriteCount - 1)
             showToast("已取消收藏")
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
+            recordFeedEvent("favorite", postID: postID, metadata: ["enabled": "false"])
+            runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
+                guard let self, !self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                self.favoritePostIDs.insert(postID); self.posts[index].favoriteCount += 1
+            }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
                 guard isCurrentSession(session) else { return }
             }
@@ -1130,7 +1315,11 @@ final class MockAppStore: ObservableObject {
             favoritePostIDs.insert(postID)
             posts[index].favoriteCount += 1
             showToast("已收藏，可在收藏中查看截团日期")
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
+            recordFeedEvent("favorite", postID: postID, metadata: ["enabled": "true"])
+            runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
+                guard let self, self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                self.favoritePostIDs.remove(postID); self.posts[index].favoriteCount = max(0, self.posts[index].favoriteCount - 1)
+            }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
                 guard isCurrentSession(session) else { return }
             }
@@ -1140,9 +1329,10 @@ final class MockAppStore: ObservableObject {
     func toggleFollow(userID: String) {
         guard requireLogin(prompt: "登录后才能关注") else { return }
         guard userID != currentUserID else { return }
+        let wasFollowing = followedUserIDs.contains(userID)
         let targetIndex = users.firstIndex(where: { $0.id == userID })
         let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
-        if followedUserIDs.contains(userID) {
+        if wasFollowing {
             followedUserIDs.remove(userID)
             followingIDsByUserID[currentUserID] = followedUserIDs
             if let currentIndex {
@@ -1152,7 +1342,9 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
             }
             showToast("已取消关注")
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
+            runOptimisticReaction(key: "follow:\(userID)", rollback: { [weak self] in
+                self?.restoreFollowState(userID: userID, wasFollowing: true)
+            }) { [self] token, session in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
                 guard isCurrentSession(session) else { return }
             }
@@ -1174,22 +1366,11 @@ final class MockAppStore: ObservableObject {
                 users[targetIndex].followersCount += 1
             }
             showToast("已关注团长")
-            runBackendMutation(syncAfterSuccess: true) { [self] token, session in
-                do {
-                    try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
-                    guard isCurrentSession(session) else { return }
-                } catch {
-                    guard isCurrentSession(session) else { return }
-                    await MainActor.run {
-                        guard self.isCurrentSession(session) else { return }
-                        if let failureMessage = self.followBlockedFailureMessage(error, userID: userID) {
-                            self.revertLocalFollow(userID: userID)
-                            self.showToast(failureMessage)
-                        } else {
-                            self.showToast(error.localizedDescription)
-                        }
-                    }
-                }
+            runOptimisticReaction(key: "follow:\(userID)", rollback: { [weak self] in
+                self?.restoreFollowState(userID: userID, wasFollowing: false)
+            }) { [self] token, session in
+                try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
+                guard isCurrentSession(session) else { return }
             }
         }
     }
@@ -1221,6 +1402,18 @@ final class MockAppStore: ObservableObject {
         }
     }
 
+    private func restoreFollowState(userID: String, wasFollowing: Bool) {
+        if wasFollowing {
+            guard !followedUserIDs.contains(userID) else { return }
+            followedUserIDs.insert(userID)
+            followingIDsByUserID[currentUserID] = followedUserIDs
+            if let currentIndex = users.firstIndex(where: { $0.id == currentUserID }) { users[currentIndex].followingCount = followedUserIDs.count }
+            if let targetIndex = users.firstIndex(where: { $0.id == userID }) { users[targetIndex].followersCount += 1 }
+        } else {
+            revertLocalFollow(userID: userID)
+        }
+    }
+
     // MARK: - Comments and Reports
 
     func addComment(postID: String, body: String, replyToID: String? = nil) {
@@ -1239,6 +1432,7 @@ final class MockAppStore: ObservableObject {
                     if !alreadyHadComment, localComment.status == .active, let index = posts.firstIndex(where: { $0.id == postID }) {
                         posts[index].commentCount += 1
                     }
+                    recordFeedEvent("comment", postID: postID)
                     await syncFromBackend(reason: "comment.created")
                     guard isCurrentSession(session) else { return }
                     showToast(response.moderation?.userMessage ?? "评论已发布")
@@ -1253,6 +1447,7 @@ final class MockAppStore: ObservableObject {
         if let index = posts.firstIndex(where: { $0.id == postID }) {
             posts[index].commentCount += 1
         }
+        recordFeedEvent("comment", postID: postID)
         showToast("评论已发布")
     }
 
@@ -1346,34 +1541,43 @@ final class MockAppStore: ObservableObject {
     }
 
     func updateCurrentBio(_ bio: String) {
-        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
+        runSessionTask { [self] _ in _ = await saveCurrentBio(bio) }
+    }
+
+    @discardableResult
+    func saveCurrentBio(_ bio: String) async -> Bool {
+        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return false }
         var updatedUser = users[index]
         updatedUser.bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
         if isBackendEnabled {
-            runSessionTask { [self] session in
-                guard let backendToken else { return }
-                do {
-                    let response = try await backendClient.updateProfile(token: backendToken, user: updatedUser)
-                    guard isCurrentSession(session) else { return }
-                    if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
-                        users[userIndex] = response.user.localUser()
-                    }
-                    await refreshFromBackend(silent: true)
-                    guard isCurrentSession(session) else { return }
-                    showToast(response.moderation?.userMessage ?? "简介已保存")
-                } catch {
-                    guard isCurrentSession(session) else { return }
-                    showToast(error.localizedDescription)
-                }
+            guard let backendToken else { return false }
+            let session = authSessionVersion
+            do {
+                let response = try await backendClient.updateProfile(token: backendToken, user: updatedUser)
+                guard isCurrentSession(session) else { return false }
+                if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) { users[userIndex] = response.user.localUser() }
+                await refreshFromBackend(silent: true)
+                guard isCurrentSession(session) else { return false }
+                showToast(response.moderation?.userMessage ?? "简介已保存")
+                return true
+            } catch {
+                guard isCurrentSession(session) else { return false }
+                showToast(error.localizedDescription)
+                return false
             }
-            return
         }
         users[index] = updatedUser
         showToast("简介已保存")
+        return true
     }
 
     func updateCurrentProfile(nickname: String, redBookID: String, bio: String, gender: String, birthday: String, region: String, avatarSymbol: String, avatarTint: ColorToken, backgroundImageName: String, avatarImageData: Data?, backgroundImageData: Data?) {
-        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return }
+        runSessionTask { [self] _ in _ = await saveCurrentProfile(nickname: nickname, redBookID: redBookID, bio: bio, gender: gender, birthday: birthday, region: region, avatarSymbol: avatarSymbol, avatarTint: avatarTint, backgroundImageName: backgroundImageName, avatarImageData: avatarImageData, backgroundImageData: backgroundImageData) }
+    }
+
+    @discardableResult
+    func saveCurrentProfile(nickname: String, redBookID: String, bio: String, gender: String, birthday: String, region: String, avatarSymbol: String, avatarTint: ColorToken, backgroundImageName: String, avatarImageData: Data?, backgroundImageData: Data?) async -> Bool {
+        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return false }
         var rejectedNicknameChange = false
         let trimmedNickname = nickname.trimmed
         var proposedUser = users[index]
@@ -1397,18 +1601,18 @@ final class MockAppStore: ObservableObject {
         let backgroundUploadData = backgroundImageData
 
         if isBackendEnabled {
-            runSessionTask { [self] session in
-                guard let backendToken else { return }
-                do {
+            guard let backendToken else { return false }
+            let session = authSessionVersion
+            do {
                     var avatarObjectKey: String?
                     if let avatarUploadData {
                         avatarObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: avatarUploadData, kind: "avatar")
-                        guard isCurrentSession(session) else { return }
+                        guard isCurrentSession(session) else { return false }
                     }
                     var backgroundObjectKey: String?
                     if let backgroundUploadData {
                         backgroundObjectKey = try await backendClient.uploadProfileImage(token: backendToken, data: backgroundUploadData, kind: "background")
-                        guard isCurrentSession(session) else { return }
+                        guard isCurrentSession(session) else { return false }
                     }
                     let response = try await backendClient.updateProfile(
                         token: backendToken,
@@ -1416,25 +1620,26 @@ final class MockAppStore: ObservableObject {
                         avatarObjectKey: avatarObjectKey,
                         backgroundObjectKey: backgroundObjectKey
                     )
-                    guard isCurrentSession(session) else { return }
+                    guard isCurrentSession(session) else { return false }
                     if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
                         users[userIndex] = response.user.localUser()
                     }
                     await refreshFromBackend(silent: true)
-                    guard isCurrentSession(session) else { return }
+                    guard isCurrentSession(session) else { return false }
                     showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : response.moderation?.userMessage ?? "资料已保存")
+                    return true
                 } catch {
-                    guard isCurrentSession(session) else { return }
+                    guard isCurrentSession(session) else { return false }
                     showToast(error.localizedDescription)
+                    return false
                 }
-            }
-            return
         }
 
         proposedUser.avatarImageData = avatarImageData
         proposedUser.backgroundImageData = backgroundImageData
         users[index] = proposedUser
         showToast(rejectedNicknameChange ? "资料已保存，昵称四个月内只能修改一次" : "资料已保存")
+        return true
     }
 
     // MARK: - Authentication
@@ -1593,7 +1798,10 @@ final class MockAppStore: ObservableObject {
     }
 
     func logOut() {
+        let previousAccountID = currentUserID
         invalidateSessionWork()
+        OfflineFeedCache.shared.remove(accountID: previousAccountID)
+        RemoteImageCache.shared.remove(accountID: previousAccountID)
         SyncCursorStore.remove(for: currentUserID)
         isLoggedIn = false
         isAuthPromptPresented = false

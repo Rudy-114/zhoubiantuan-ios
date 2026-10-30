@@ -3,8 +3,15 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var feed: HomeFeed = .followGroup
+    @State private var feedDragOffset: CGFloat = 0
+    @State private var isFeedDragging = false
 
-    var pageQuery: ContentQuery { .init(parameters: ["groupType": feed == .splitGoods ? "splitGoods" : "followGroup"]) }
+    var pageQuery: ContentQuery {
+        .init(parameters: [
+            "groupType": feed == .splitGoods ? "splitGoods" : "followGroup",
+            "feedMode": "forYou"
+        ])
+    }
 
     var posts: [GroupBuyPost] {
         if store.isBackendEnabled { return store.pagePosts(pageQuery) }
@@ -19,15 +26,38 @@ struct HomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             HomeHeader(feed: $feed, onSelect: selectFeed)
+            if store.isShowingOfflineFeed {
+                HStack(spacing: 7) {
+                    Image(systemName: "wifi.slash")
+                    Text("离线内容 · 最近同步的帖子和评论")
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.subtext)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Theme.panelRaised)
+            }
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                if posts.isEmpty && store.isLoadingInitialFeed {
+                if posts.isEmpty && (store.isLoadingInitialFeed || store.pageState(pageQuery).requestID != nil) {
                     HomeFeedSkeletonGrid()
                         .padding(.horizontal, 12)
                         .padding(.top, 12)
                         .padding(.bottom, 28)
+                } else if posts.isEmpty {
+                    HomeFeedStateView(error: store.pageState(pageQuery).error,
+                                      isOffline: store.isShowingOfflineFeed,
+                                      onRetry: {
+                                          Task { await store.loadContentPage(pageQuery, reset: true) }
+                                      })
+                    .padding(.horizontal, 28)
+                    .padding(.top, 100)
                 } else {
-                    WaterfallGrid(posts: posts)
+                    WaterfallGrid(posts: posts, onNearEnd: {
+                        store.prefetchFeedAssets(for: Array(posts.suffix(10)))
+                        Task { await store.loadContentPage(pageQuery) }
+                    })
                         .padding(.horizontal, 12)
                         .padding(.top, 12)
                         .padding(.bottom, 28)
@@ -36,18 +66,26 @@ struct HomeView: View {
                 }
             }
             .refreshable { await store.loadContentPage(pageQuery, reset: true) }
-            .id(feed)
             .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
             .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
         }
+        .offset(x: feedDragOffset)
         .contentShape(Rectangle())
         .simultaneousGesture(
-            DragGesture(minimumDistance: 28)
-                .onEnded(handleFeedSwipe)
+            DragGesture(minimumDistance: 8, coordinateSpace: .local)
+                .onChanged(handleFeedDragChanged)
+                .onEnded(handleFeedDragEnded)
         )
         .background(Theme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
+        .task(id: pageQuery) {
+            // Load the first page on cold start and whenever the user switches
+            // between the two home feeds. This also keeps the public feed
+            // usable before authentication and gives the seeded test content
+            // a real pagination path instead of relying on an old cache.
+            await store.loadContentPage(pageQuery, reset: true)
+        }
     }
 
     private func selectFeed(_ nextFeed: HomeFeed) {
@@ -57,14 +95,95 @@ struct HomeView: View {
         }
     }
 
-    private func handleFeedSwipe(_ value: DragGesture.Value) {
-        guard abs(value.translation.width) > 88,
-              abs(value.translation.height) < 70 else { return }
-        if value.translation.width < 0 {
-            selectFeed(.splitGoods)
-        } else {
-            selectFeed(.followGroup)
+    private func handleFeedDragChanged(_ value: DragGesture.Value) {
+        // Only the header owns the feed switch. This keeps a horizontal drift
+        // inside the vertical waterfall from hijacking scrolling.
+        guard value.startLocation.y < 110 else { return }
+        let horizontal = value.translation.width
+        let vertical = value.translation.height
+        if !isFeedDragging {
+            guard abs(horizontal) > 2, abs(horizontal) > abs(vertical) * 1.15 else { return }
+            isFeedDragging = true
         }
+        guard isFeedDragging else { return }
+
+        let width = max(UIScreen.main.bounds.width, 1)
+        let atLeadingBoundary = feed == .followGroup && horizontal > 0
+        let atTrailingBoundary = feed == .splitGoods && horizontal < 0
+        feedDragOffset = (atLeadingBoundary || atTrailingBoundary)
+            ? rubberBandFeedOffset(horizontal, width: width)
+            : horizontal
+    }
+
+    private func handleFeedDragEnded(_ value: DragGesture.Value) {
+        guard isFeedDragging else { return }
+        isFeedDragging = false
+
+        let width = max(UIScreen.main.bounds.width, 1)
+        let translation = value.translation.width
+        let projected = value.predictedEndTranslation.width
+        let movingForward = translation < 0 || projected < 0
+        let movingBackward = translation > 0 || projected > 0
+        let canMoveForward = feed == .followGroup && movingForward
+        let canMoveBackward = feed == .splitGoods && movingBackward
+        let shouldSwitch = canMoveForward || canMoveBackward
+            ? abs(translation) >= width * 0.24 || abs(projected) >= width * 0.34
+            : false
+
+        guard shouldSwitch else {
+            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.86)) {
+                feedDragOffset = 0
+            }
+            return
+        }
+
+        let destinationOffset: CGFloat = canMoveForward ? -width : width
+        withAnimation(.easeOut(duration: 0.2)) {
+            feedDragOffset = destinationOffset
+        }
+        let nextFeed: HomeFeed = canMoveForward ? .splitGoods : .followGroup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                feed = nextFeed
+                feedDragOffset = 0
+            }
+        }
+    }
+
+    private func rubberBandFeedOffset(_ distance: CGFloat, width: CGFloat) -> CGFloat {
+        let sign: CGFloat = distance < 0 ? -1 : 1
+        let magnitude = abs(distance)
+        let resistanceStart = width * 0.68
+        guard magnitude > resistanceStart else { return distance }
+        return sign * (resistanceStart + (magnitude - resistanceStart) * 0.18)
+    }
+}
+
+struct HomeFeedStateView: View {
+    let error: String?
+    let isOffline: Bool
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: isOffline ? "wifi.slash" : (error == nil ? "sparkles" : "arrow.clockwise.circle"))
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(Theme.softPink)
+            Text(isOffline ? "当前没有可用的离线内容" : (error == nil ? "还没有相关帖子" : "内容加载失败"))
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.text)
+            Text(isOffline ? "联网后刷新即可继续浏览" : (error ?? "换个分类或稍后再试"))
+                .font(.subheadline)
+                .foregroundStyle(Theme.subtext)
+                .multilineTextAlignment(.center)
+            Button("重新加载", action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.hotPink)
+                .accessibilityHint("重新请求当前信息流")
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -96,10 +215,10 @@ struct HomeHeader: View {
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
                                 Capsule()
                                     .fill(feed == item ? Theme.hotPink : Color.clear)
-                                    .frame(width: 40, height: 4)
+                                .frame(width: 40, height: 4)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
                 Spacer()
@@ -109,6 +228,7 @@ struct HomeHeader: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -143,7 +263,7 @@ struct FollowingFeedView: View {
                                     .frame(width: 92)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -159,33 +279,53 @@ struct FollowingFeedView: View {
 
 struct WaterfallGrid: View {
     let posts: [GroupBuyPost]
+    var onNearEnd: (() -> Void)? = nil
     private let spacing: CGFloat = FeedCardMetrics.columnSpacing
 
     private var columnWidth: CGFloat {
         FeedCardMetrics.columnWidth(screenWidth: UIScreen.main.bounds.width)
     }
 
-    private var leftPosts: [GroupBuyPost] {
-        posts.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
+    private var columns: [[GroupBuyPost]] {
+        var result = [[], []] as [[GroupBuyPost]]
+        var heights = [CGFloat.zero, .zero]
+        for post in posts {
+            let column = heights[0] <= heights[1] ? 0 : 1
+            result[column].append(post)
+            heights[column] += estimatedHeight(for: post) + 14
+        }
+        return result
     }
 
-    private var rightPosts: [GroupBuyPost] {
-        posts.enumerated().filter { !$0.offset.isMultiple(of: 2) }.map(\.element)
+    private func estimatedHeight(for post: GroupBuyPost) -> CGFloat {
+        let imageHeight = FeedCardMetrics.feedImageHeight(for: columnWidth, aspect: post.imageAspect)
+        let titleLines = post.title.count > 18 ? 2 : 1
+        let tagHeight: CGFloat = post.categoryTags.isEmpty ? 0 : 22
+        return imageHeight + CGFloat(titleLines) * 19 + 76 + tagHeight
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             LazyVStack(spacing: 14) {
-                ForEach(leftPosts) { post in
+                ForEach(columns[0]) { post in
                     PostCard(post: post, cardWidth: columnWidth)
+                        .onAppear { notifyIfNearEnd(post) }
                 }
             }
             LazyVStack(spacing: 14) {
-                ForEach(rightPosts) { post in
+                ForEach(columns[1]) { post in
                     PostCard(post: post, cardWidth: columnWidth)
+                        .onAppear { notifyIfNearEnd(post) }
                 }
             }
         }
+    }
+
+    private func notifyIfNearEnd(_ post: GroupBuyPost) {
+        guard let onNearEnd,
+              let triggerID = posts.dropLast(min(5, posts.count)).last?.id,
+              post.id == triggerID else { return }
+        onNearEnd()
     }
 }
 
@@ -200,12 +340,12 @@ struct HomeFeedSkeletonGrid: View {
         HStack(alignment: .top, spacing: spacing) {
             LazyVStack(spacing: 14) {
                 ForEach(0..<3, id: \.self) { index in
-                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 1 ? 1.24 : 1)
+                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 1 ? 1.12 : 1)
                 }
             }
             LazyVStack(spacing: 14) {
                 ForEach(0..<3, id: \.self) { index in
-                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 0 ? 1.18 : 1)
+                    HomeFeedSkeletonCard(cardWidth: columnWidth, imageRatio: index == 0 ? 1.08 : 1)
                 }
             }
         }
@@ -221,7 +361,7 @@ struct HomeFeedSkeletonCard: View {
         VStack(alignment: .leading, spacing: 0) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Theme.hairline.opacity(0.55))
-                .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth) * imageRatio)
+                .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth) * imageRatio)
 
             VStack(alignment: .leading, spacing: 10) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -264,6 +404,26 @@ enum FeedCardMetrics {
     static func imageHeight(for width: CGFloat) -> CGFloat {
         width / imageAspect
     }
+
+    static func imageHeight(for width: CGFloat, aspect: Double) -> CGFloat {
+        let ratio = CGFloat(min(max(aspect, 0.56), 1.8))
+        return min(width / ratio, width * 1.55)
+    }
+
+    /// Feed cards give the image more visual weight than the source asset's
+    /// exact ratio. The image is still cropped with `.scaledToFill`, while a
+    /// conservative cap keeps very tall portrait assets from taking over the
+    /// entire feed. This matches the compact title treatment below and keeps
+    /// the card closer to a Xiaohongshu-style visual rhythm.
+    static func feedImageHeight(for width: CGFloat, aspect: Double) -> CGFloat {
+        let sourceRatio = CGFloat(min(max(aspect, 0.56), 1.8))
+        let feedRatio = min(max(sourceRatio * 0.82, 0.58), 1.15)
+        return min(width / feedRatio, width * 1.62)
+    }
+
+    static func feedImageHeight(for width: CGFloat) -> CGFloat {
+        feedImageHeight(for: width, aspect: Double(imageAspect))
+    }
 }
 
 struct PostCard: View {
@@ -281,10 +441,10 @@ struct PostCard: View {
                     ZStack {
                         PostImageView(post: livePost, preferPreview: true)
                             .scaledToFill()
-                            .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
+                            .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
                             .clipped()
                     }
-                    .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
+                    .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
                     .overlay(alignment: .topLeading) {
                         PostCardTypeBadge(post: livePost)
                             .padding(8)
@@ -293,42 +453,51 @@ struct PostCard: View {
                         PostCardDeadlineBadge(text: isEnded ? "已结团" : livePost.deadline.shortDeadlineText)
                             .padding(8)
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        guard !isEnded else { return }
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
+                            store.toggleLike(postID: livePost.id)
+                        }
+                    }
 
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text(livePost.title)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Theme.text)
                             .lineLimit(2)
+                            .lineSpacing(-1.5)
+                            .minimumScaleFactor(0.88)
                             .fixedSize(horizontal: false, vertical: true)
 
                         ModerationStatusBadge(status: livePost.status, reason: livePost.moderationReason)
 
                         if livePost.groupType == .splitGoods {
-                            VStack(alignment: .leading, spacing: 5) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(livePost.pingguAveragePrice.isEmpty ? livePost.price : livePost.pingguAveragePrice)
-                                    .font(.system(size: 14, weight: .black))
+                                    .font(.system(size: 13, weight: .black))
                                     .foregroundStyle(livePost.groupType.accent)
                                 if !livePost.pingguNote.isEmpty {
                                     Text(livePost.pingguNote)
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(Theme.subtext)
-                                        .lineLimit(2)
+                                        .lineLimit(1)
                                 }
                             }
-                            .padding(9)
+                            .padding(7)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(livePost.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         }
 
                         HStack(spacing: 6) {
-                            AvatarView(user: author, size: 24)
+                            AvatarView(user: author, size: 22)
                             Text(author.nickname)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.subtext)
                                 .lineLimit(1)
                             Spacer(minLength: 4)
                             Color.clear
-                                .frame(width: 72, height: 32)
+                                .frame(width: 72, height: 28)
                         }
 
                         HStack(spacing: 5) {
@@ -337,12 +506,13 @@ struct PostCard: View {
                                     .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(Theme.softPink)
                                     .padding(.horizontal, 7)
-                                    .padding(.vertical, 4)
+                                    .padding(.vertical, 3)
                                     .background(Theme.hotPink.opacity(0.13), in: Capsule())
                             }
                         }
                     }
-                    .padding(10)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 8)
                 }
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
@@ -351,9 +521,21 @@ struct PostCard: View {
                 }
                 .frame(width: cardWidth)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .saturation(isEnded ? 0 : 1)
             .opacity(isEnded ? 0.58 : 1)
+            .contextMenu {
+                Button {
+                    store.markFeedPostNotInterested(livePost.id)
+                } label: {
+                    Label("不感兴趣", systemImage: "hand.thumbsdown")
+                }
+                Button {
+                    store.hideFeedAuthor(livePost.authorID, postID: livePost.id)
+                } label: {
+                    Label("减少该团长内容", systemImage: "person.slash")
+                }
+            }
 
             if !isEnded {
                 PostLikeCountButton(postID: livePost.id)
@@ -362,6 +544,9 @@ struct PostCard: View {
             }
         }
         .frame(width: cardWidth)
+        .onAppear {
+            store.recordFeedEvent("impression", postID: livePost.id)
+        }
     }
 }
 
@@ -425,7 +610,7 @@ struct PostLikeCountButton: View {
             .frame(minWidth: 68, minHeight: 32, alignment: .trailing)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .accessibilityLabel(isLiked ? "取消点赞" : "点赞")
         .accessibilityValue((post?.likedCount ?? 0).formattedCount)
     }

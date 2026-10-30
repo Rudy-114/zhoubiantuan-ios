@@ -112,7 +112,13 @@ enum Route: Hashable {
 struct RootView: View {
     @EnvironmentObject private var store: MockAppStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: AppTab = .home
+    @State private var homePath: [Route] = []
+    @State private var marketPath: [Route] = []
+    @State private var createPath: [Route] = []
+    @State private var messagesPath: [Route] = []
+    @State private var profilePath: [Route] = []
     @State private var showsLaunchSplash = true
 
     private var isAuthenticated: Bool {
@@ -127,47 +133,85 @@ struct RootView: View {
         ZStack {
             Theme.background.ignoresSafeArea()
             TabView(selection: $selectedTab) {
-                NavigationStack {
+                NavigationStack(path: $homePath) {
                     HomeView()
-                        .withAppDestinations()
+                        .withAppDestinations(popNavigationRoute: {
+                            popHomeRoute()
+                        })
                 }
+                .environment(\.popNavigationRoute, {
+                    popHomeRoute()
+                })
+                .environment(\.navigationBackdrop, AnyView(HomeView()))
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.icon) }
                 .tag(AppTab.home)
 
-                NavigationStack {
+                NavigationStack(path: $marketPath) {
                     AuthenticatedTabContent {
                         MarketView()
                     }
-                        .withAppDestinations()
+                        .withAppDestinations(popNavigationRoute: {
+                            popMarketRoute()
+                        })
                 }
+                .environment(\.popNavigationRoute, {
+                    popMarketRoute()
+                })
+                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
+                    MarketView()
+                }))
                 .tabItem { Label(AppTab.market.title, systemImage: AppTab.market.icon) }
                 .tag(AppTab.market)
 
-                NavigationStack {
+                NavigationStack(path: $createPath) {
                     AuthenticatedTabContent {
                         CreatePostView()
                     }
-                        .withAppDestinations()
+                        .withAppDestinations(popNavigationRoute: {
+                            popCreateRoute()
+                        })
                 }
+                .environment(\.popNavigationRoute, {
+                    popCreateRoute()
+                })
+                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
+                    CreatePostView()
+                }))
                 .tabItem { Label(AppTab.create.title, systemImage: AppTab.create.icon) }
                 .tag(AppTab.create)
 
-                NavigationStack {
+                NavigationStack(path: $messagesPath) {
                     AuthenticatedTabContent {
                         MessagesView()
                     }
-                        .withAppDestinations()
+                        .withAppDestinations(popNavigationRoute: {
+                            popMessagesRoute()
+                        })
                 }
+                .environment(\.popNavigationRoute, {
+                    popMessagesRoute()
+                })
+                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
+                    MessagesView()
+                }))
                 .tabItem { Label(AppTab.messages.title, systemImage: AppTab.messages.icon) }
                 .badge(unreadMessageCount)
                 .tag(AppTab.messages)
 
-                NavigationStack {
+                NavigationStack(path: $profilePath) {
                     AuthenticatedTabContent {
                         ProfileView()
                     }
-                        .withAppDestinations()
+                        .withAppDestinations(popNavigationRoute: {
+                            popProfileRoute()
+                        })
                 }
+                .environment(\.popNavigationRoute, {
+                    popProfileRoute()
+                })
+                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
+                    ProfileView()
+                }))
                 .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
                 .tag(AppTab.profile)
             }
@@ -201,18 +245,82 @@ struct RootView: View {
                     store.stopBackendAutoRefresh()
                 }
             }
+            .onOpenURL { url in
+                guard let route = Route(url: url) else {
+                    store.showToast("无法打开这个周边团链接")
+                    return
+                }
+                selectedTab = .home
+                homePath.append(route)
+            }
 
             if showsLaunchSplash {
                 LaunchSplashView(isDarkMode: store.isDarkModeEnabled)
                     .transition(.opacity)
                     .zIndex(10)
                     .task {
-                        try? await Task.sleep(nanoseconds: 1_250_000_000)
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            showsLaunchSplash = false
-                        }
+                        if !reduceMotion { try? await Task.sleep(nanoseconds: 450_000_000) }
+                        if reduceMotion { showsLaunchSplash = false }
+                        else { withAnimation(.easeOut(duration: 0.35)) { showsLaunchSplash = false } }
                     }
             }
+        }
+    }
+
+    private func popHomeRoute() {
+        popRoute(&homePath)
+    }
+
+    private func popMarketRoute() {
+        popRoute(&marketPath)
+    }
+
+    private func popCreateRoute() {
+        popRoute(&createPath)
+    }
+
+    private func popMessagesRoute() {
+        popRoute(&messagesPath)
+    }
+
+    private func popProfileRoute() {
+        popRoute(&profilePath)
+    }
+
+    private func popRoute(_ path: inout [Route]) {
+        guard !path.isEmpty else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        _ = withTransaction(transaction) {
+            path.removeLast()
+        }
+    }
+}
+
+extension Route {
+    init?(url: URL) {
+        let scheme = url.scheme?.lowercased()
+        let components = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        let kind: String
+        let identifier: String
+        if scheme == "zhoubiantuan" {
+            kind = url.host?.lowercased() ?? ""
+            guard let value = components.first else { return nil }
+            identifier = value
+        } else if scheme == "https" || scheme == "http" {
+            let host = url.host?.lowercased() ?? ""
+            guard host == "zhoubiantuanmail.top" || host == "www.zhoubiantuanmail.top" else { return nil }
+            guard components.count >= 2 else { return nil }
+            kind = components[0].lowercased()
+            identifier = components[1]
+        } else {
+            return nil
+        }
+        switch kind {
+        case "post": self = .postDetail(identifier)
+        case "profile", "user": self = .userProfile(identifier)
+        case "collection": self = .collectionDetail(identifier)
+        default: return nil
         }
     }
 }
@@ -258,13 +366,13 @@ struct AuthenticatedTabContent<Content: View>: View {
 }
 
 extension View {
-    func withAppDestinations() -> some View {
+    func withAppDestinations(popNavigationRoute: (() -> Void)? = nil) -> some View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case .search:
                 SearchView()
             case .postDetail(let id):
-                PostDetailView(postID: id)
+                PostDetailView(postID: id, onInteractiveBack: popNavigationRoute)
             case .collectionDetail(let id):
                 CollectionDetailView(collectionID: id)
             case .tag(let tag):

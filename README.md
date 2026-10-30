@@ -21,6 +21,14 @@ ENV_FILE="$PWD/.env" npm start
 
 开发时可用 Mock 审核，但不会因此提供免费的真实 OSS/邮件发送。未配置 SMTP 时验证码请求返回发送不可用，不能当作发送成功。不要对真实业务数据库运行 `seed`。
 
+本地刷 Feed 时可以使用幂等的批量演示数据脚本。它只接受回环地址上的开发/测试 PostgreSQL，并会拒绝 `NODE_ENV=production` 或非本机数据库；默认生成 100 条 active 帖子、评论、5 个测试团长以及 `u-me` 的关注关系。图片使用 App 自带的 `merch_*` 资源，不需要上传 OSS：
+
+```sh
+ENV_FILE="$PWD/.env" NODE_ENV=development npm --prefix backend run seed:batch -- --count 100
+```
+
+脚本使用固定的 `p-batch-001`… ID，重复运行会更新同一批数据而不会不断增加帖子。新建的本地演示账号密码为 `123456`；已有 `u-me` 账号会保留原邮箱和资料。不要把这条命令指向线上数据库。
+
 用 Xcode 打开 `ZhouBianTuan.xcodeproj`，选择 `ZhouBianTuan` scheme。Debug 默认 API 为 `http://127.0.0.1:18080/api`；后端示例同端口。模拟器中的该地址可以访问开发电脑，真机中的该地址指手机本身。真机调试可在 Xcode Scheme 的启动参数中加入 `-zhoubiantuan.backendBaseURL http://开发电脑局域网地址:18080/api`，指定手机可达的开发服务器地址；Release 固定使用正式 HTTPS API。
 
 ## 验证

@@ -9,6 +9,7 @@ import { startSyncEventPruner } from "./sync.js";
 import { startUploadPruner } from "./uploads.js";
 import { pruneModerationReceipts } from "./moderation/budget.js";
 import { objectStorage } from "./oss.js";
+import { startFeedDataPruner } from "./feed.js";
 
 const server = http.createServer(createApp());
 server.requestTimeout = 60000;
@@ -17,6 +18,7 @@ server.keepAliveTimeout = 5000;
 server.maxRequestsPerSocket = 1000;
 const hub = attachRealtime(server);
 const timers = [startRateLimitEventPruner(), startSyncEventPruner(), startUploadPruner(objectStorage),
+  startFeedDataPruner(),
   setInterval(() => void pruneModerationReceipts().catch(error => logger.error("moderation.prune_failed", { error })), 3600000)];
 for (const timer of timers) timer.unref();
 let shuttingDown = false;

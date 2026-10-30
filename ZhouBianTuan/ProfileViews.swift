@@ -71,7 +71,7 @@ struct ProfileView: View {
                                             }
                                             .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     .foregroundStyle(.white)
 
                                     Spacer()
@@ -88,7 +88,7 @@ struct ProfileView: View {
                                             }
                                             .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 3)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
 
                                     Button {
                                         isShareSheetPresented = true
@@ -102,7 +102,7 @@ struct ProfileView: View {
                                             }
                                             .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     .foregroundStyle(.white)
                                 }
 
@@ -126,11 +126,11 @@ struct ProfileView: View {
                                     NavigationLink(value: Route.userRelations(user.id, .following)) {
                                         StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     NavigationLink(value: Route.userRelations(user.id, .followers)) {
                                         StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     StatInline(value: "\(store.likedPostIDs.count + store.favoritePostIDs.count)", title: "获赞与收藏")
                                 }
 
@@ -144,7 +144,7 @@ struct ProfileView: View {
                                         .lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                             }
                             .padding(.horizontal, 16)
                             .padding(.top, 12)
@@ -172,7 +172,7 @@ struct ProfileView: View {
                                         }
                                         .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                 }
                             }
                             .padding(.top, 20)
@@ -228,8 +228,7 @@ struct ProfileView: View {
         }
         .fullScreenCover(isPresented: $isBioEditorPresented) {
             ProfileBioEditorView(bio: $bioDraft) {
-                store.updateCurrentBio(bioDraft)
-                isBioEditorPresented = false
+                await store.saveCurrentBio(bioDraft)
             }
         }
     }
@@ -238,7 +237,9 @@ struct ProfileView: View {
 struct ProfileBioEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var bio: String
-    let onSave: () -> Void
+    let onSave: () async -> Bool
+    @State private var isSaving = false
+    @State private var saveError: String?
     private let maxLength = 160
     private var canSave: Bool { !bio.trimmed.isEmpty }
 
@@ -260,14 +261,21 @@ struct ProfileBioEditorView: View {
 
                 Spacer()
 
-                Button("保存") {
-                    onSave()
-                    dismiss()
+                Button(isSaving ? "保存中…" : "保存") {
+                    Task {
+                        guard !isSaving else { return }
+                        isSaving = true
+                        let saved = await onSave()
+                        isSaving = false
+                        if saved { dismiss() }
+                        else { saveError = "简介保存失败，内容已保留。" }
+                    }
                 }
                 .font(.system(size: 20, weight: canSave ? .bold : .medium))
                 .foregroundStyle(canSave ? Theme.hotPink : Color(red: 0.45, green: 0.08, blue: 0.13))
                 .frame(width: 86, height: 48, alignment: .trailing)
                 .animation(.easeInOut(duration: 0.16), value: canSave)
+                .disabled(!canSave || isSaving)
             }
             .padding(.horizontal, 18)
             .padding(.top, 0)
@@ -308,6 +316,20 @@ struct ProfileBioEditorView: View {
             Spacer()
         }
         .background(Theme.background.ignoresSafeArea())
+        .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("重试") {
+                Task {
+                    guard !isSaving else { return }
+                    isSaving = true
+                    let saved = await onSave()
+                    isSaving = false
+                    if saved { dismiss() } else { saveError = "简介保存失败，内容已保留。" }
+                }
+            }
+            Button("取消", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "请检查网络后重试")
+        }
         .onChange(of: bio) { _, newValue in
             if newValue.count > maxLength {
                 bio = String(newValue.prefix(maxLength))
@@ -353,7 +375,7 @@ struct UserRelationListView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(kind.title)
@@ -398,17 +420,10 @@ struct UserRelationListView: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 86,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
     }
 }
 
@@ -436,7 +451,7 @@ struct UserRelationRow: View {
                     }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
 
             Spacer(minLength: 8)
 
@@ -451,7 +466,7 @@ struct UserRelationRow: View {
                         .padding(.vertical, 8)
                         .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
         }
         .padding(14)
@@ -490,7 +505,7 @@ struct ProfileEmptyNotesView: View {
                             Capsule().stroke(Theme.subtext, lineWidth: 1)
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             Spacer()
         }
@@ -539,7 +554,7 @@ struct ProfileNotesPanel: View {
                                 .padding(.vertical, 8)
                                 .background(Theme.panelRaised, in: Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
@@ -591,6 +606,7 @@ struct ProfileNotesPanel: View {
 
 struct ProfileAttentionPostRow: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var showsDeleteConfirmation = false
     let post: GroupBuyPost
 
     var subtitle: String {
@@ -639,7 +655,7 @@ struct ProfileAttentionPostRow: View {
                             .padding(.vertical, 10)
                             .background(Theme.hotPink, in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 } else {
                     Label("等待审核", systemImage: "clock")
                         .font(.system(size: 14, weight: .black))
@@ -650,7 +666,7 @@ struct ProfileAttentionPostRow: View {
                 }
 
                 Button {
-                    store.deleteOwnPost(postID: post.id)
+                    showsDeleteConfirmation = true
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 16, weight: .bold))
@@ -658,7 +674,7 @@ struct ProfileAttentionPostRow: View {
                         .frame(width: 44, height: 40)
                         .background(Theme.hotPink.opacity(0.12), in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
         }
         .padding(12)
@@ -667,11 +683,18 @@ struct ProfileAttentionPostRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
+        .confirmationDialog("删除这条帖子？", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { store.deleteOwnPost(postID: post.id) }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("删除后无法恢复。")
+        }
     }
 }
 
 struct ProfilePostManageRow: View {
     @EnvironmentObject private var store: MockAppStore
+    @State private var showsDeleteConfirmation = false
     let post: GroupBuyPost
 
     var body: some View {
@@ -697,7 +720,7 @@ struct ProfilePostManageRow: View {
             Spacer()
 
             Button {
-                store.deleteOwnPost(postID: post.id)
+                showsDeleteConfirmation = true
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .bold))
@@ -705,13 +728,19 @@ struct ProfilePostManageRow: View {
                     .frame(width: 42, height: 42)
                     .background(Theme.hotPink.opacity(0.12), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
         }
         .padding(12)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
+        }
+        .confirmationDialog("删除这条帖子？", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { store.deleteOwnPost(postID: post.id) }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("删除后无法恢复。")
         }
         .saturation(post.isEnded ? 0 : 1)
         .opacity(post.isEnded ? 0.72 : 1)
@@ -790,6 +819,7 @@ struct ProfileCollectionsPanel: View {
     @State private var isCreatingCollection = false
     @State private var isManaging = false
     @State private var isDeletingCollections = false
+    @State private var showsDeleteConfirmation = false
     @State private var selectedCollectionIDs: Set<String> = []
     let ownerID: String
     let canManage: Bool
@@ -823,7 +853,7 @@ struct ProfileCollectionsPanel: View {
                                     .frame(height: 36)
                                     .background(isManaging ? Theme.hotPink : Theme.panelRaised, in: Capsule())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
 
                         if !isManaging {
@@ -836,7 +866,7 @@ struct ProfileCollectionsPanel: View {
                                     .frame(width: 38, height: 38)
                                     .background(Theme.hotPink, in: Circle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                     }
                 }
@@ -874,16 +904,7 @@ struct ProfileCollectionsPanel: View {
         .safeAreaInset(edge: .bottom) {
             if canManage && isManaging {
                 Button {
-                    let ids = selectedCollectionIDs
-                    let session = store.authSessionVersion
-                    isDeletingCollections = true
-                    Task { @MainActor in
-                        guard store.isCurrentSession(session) else { return }
-                        let deleted = await store.deleteCollections(ids: ids)
-                        guard store.isCurrentSession(session) else { return }
-                        isDeletingCollections = false
-                        if deleted { selectedCollectionIDs.removeAll(); isManaging = false }
-                    }
+                    showsDeleteConfirmation = true
                 } label: {
                     Text(selectedCollectionIDs.isEmpty ? "选择要删除的合集" : "删除 \(selectedCollectionIDs.count) 个合集")
                         .font(.system(size: 16, weight: .black))
@@ -896,9 +917,26 @@ struct ProfileCollectionsPanel: View {
                         .padding(.bottom, 8)
                 }
                 .disabled(selectedCollectionIDs.isEmpty || isDeletingCollections)
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .background(.ultraThinMaterial)
             }
+        }
+        .confirmationDialog("删除所选合集？", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                let ids = selectedCollectionIDs
+                let session = store.authSessionVersion
+                isDeletingCollections = true
+                Task { @MainActor in
+                    guard store.isCurrentSession(session) else { return }
+                    let deleted = await store.deleteCollections(ids: ids)
+                    guard store.isCurrentSession(session) else { return }
+                    isDeletingCollections = false
+                    if deleted { selectedCollectionIDs.removeAll(); isManaging = false }
+                }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("删除后无法恢复。")
         }
     }
 
@@ -934,7 +972,7 @@ struct CollectionCard: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .saturation(isEnded ? 0 : 1)
         .opacity(isEnded ? 0.58 : 1)
     }
@@ -1066,7 +1104,7 @@ struct CreateCollectionSheet: View {
                             .background(canCreate ? Theme.hotPink : Theme.panelRaised, in: Capsule())
                             .foregroundStyle(canCreate ? .white : Theme.muted)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     .disabled(!canCreate)
                     .padding(.top, 8)
                     if saveFailed, let editingCollection {
@@ -1118,7 +1156,7 @@ struct CollectionDetailView: View {
                                 .padding(.vertical, 12)
                                 .background(Theme.hotPink, in: Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         .padding(.horizontal, 16)
                     }
                     CollectionSharedInfoCard(collection: collection)
@@ -1219,7 +1257,7 @@ struct CollectionPostManager: View {
                                 .padding(.vertical, 8)
                                 .background(Theme.hotPink, in: Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
             }
@@ -1258,29 +1296,88 @@ struct CollectionSharedInfoCard: View {
 
 struct DraftsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var drafts: [PostDraft] = []
+    @State private var selectedDraft: PostDraft?
 
     var body: some View {
         VStack(spacing: 0) {
             SimpleTopBar(title: "我的草稿", trailing: nil) {
                 dismiss()
             }
-            VStack(spacing: 16) {
-                Image(systemName: "tray")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(Theme.muted)
-                Text("暂无草稿")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.text)
-                Text("未发布的团购帖会保存在这里")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.subtext)
+            if drafts.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 48, weight: .light))
+                        .foregroundStyle(Theme.muted)
+                    Text("暂无草稿")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Theme.text)
+                    Text("发布页点击“保存草稿”后会显示在这里")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.subtext)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(drafts) { draft in
+                        Button {
+                            selectedDraft = draft
+                        } label: {
+                            HStack(spacing: 12) {
+                                if let image = draft.imageData.first.flatMap(UIImage.init(data:)) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 74, height: 74)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                } else {
+                                    Image(systemName: "photo")
+                                        .frame(width: 74, height: 74)
+                                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(draft.previewTitle)
+                                        .font(.system(size: 17, weight: .bold))
+                                        .foregroundStyle(Theme.text)
+                                        .lineLimit(2)
+                                    Text("更新于 (draft.updatedAt.relativeText)")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.muted)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(Theme.muted)
+                            }
+                        }
+                        .buttonStyle(.pressFeedback)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                PostDraftStore.shared.remove(draft)
+                                drafts.removeAll { $0.id == draft.id }
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+                .listStyle(.plain)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .onAppear {
+            drafts = PostDraftStore.shared.drafts(ownerID: store.currentUserID)
+        }
+        .sheet(item: $selectedDraft, onDismiss: {
+            drafts = PostDraftStore.shared.drafts(ownerID: store.currentUserID)
+        }) { draft in
+            CreatePostView(initialDraft: draft)
+                .environment(\.popNavigationRouteEnabled, false)
+        }
     }
 }
 
@@ -1362,11 +1459,12 @@ struct BrowsingHistoryView: View {
                         .padding(.bottom, 8)
                 }
                 .disabled(selectedIDs.isEmpty)
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .background(.ultraThinMaterial)
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -1436,12 +1534,12 @@ struct HistoryCard: View {
                 Button(action: toggleSelection) {
                     cardBody
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             } else {
                 NavigationLink(value: Route.postDetail(post.id)) {
                     cardBody
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
         }
     }
@@ -1504,19 +1602,19 @@ struct ProfileSideMenu: View {
                     DrawerRowContent(icon: "tray", title: "我的草稿")
                 }
                 .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 NavigationLink(value: Route.browsingHistory) {
                     DrawerRowContent(icon: "clock.arrow.circlepath", title: "浏览记录")
                 }
                 .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 NavigationLink(value: Route.settings) {
                     DrawerRowContent(icon: "gearshape", title: "设置")
                 }
                 .simultaneousGesture(TapGesture().onEnded(closeMenuAfterNavigation))
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.vertical, 12)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1528,7 +1626,7 @@ struct ProfileSideMenu: View {
                 } label: {
                     DrawerRowContent(icon: "rectangle.portrait.and.arrow.right", title: "退出登录")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.vertical, 12)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1628,6 +1726,8 @@ struct EditProfileView: View {
     @State private var backgroundImageData: Data?
     @State private var avatarPickerItem: PhotosPickerItem?
     @State private var backgroundPickerItem: PhotosPickerItem?
+    @State private var isSaving = false
+    @State private var saveError: String?
 
     let tintChoices: [ColorToken] = [.amber, .rose, .violet, .teal, .blue]
 
@@ -1667,7 +1767,7 @@ struct EditProfileView: View {
                         .foregroundStyle(Color.black.opacity(0.82))
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 Spacer()
                 Text("编辑资料")
                     .font(.system(size: 24, weight: .black))
@@ -1700,7 +1800,7 @@ struct EditProfileView: View {
                                     }
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
 
                         HStack(spacing: 10) {
                             TextField("头像字", text: $avatarSymbol)
@@ -1721,7 +1821,7 @@ struct EditProfileView: View {
                                             Circle().stroke(avatarTint == tint ? Color.black.opacity(0.82) : Color.clear, lineWidth: 2)
                                         }
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                             }
                         }
 
@@ -1761,7 +1861,7 @@ struct EditProfileView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 18)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
 
                         if backgroundImageData != nil {
                             Button {
@@ -1776,7 +1876,7 @@ struct EditProfileView: View {
                                 .padding(.horizontal, 146)
                                 .padding(.bottom, 16)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                     }
                     .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1797,16 +1897,17 @@ struct EditProfileView: View {
                     .padding(.horizontal, 16)
 
                     Button {
-                        saveProfile(shouldDismiss: true)
+                        Task { await saveProfile(shouldDismiss: true) }
                     } label: {
-                        Text("保存资料")
+                        Text(isSaving ? "正在保存…" : "保存资料")
                             .font(.system(size: 20, weight: .black))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
                             .background(Theme.hotPink, in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
+                    .disabled(isSaving)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 30)
                 }
@@ -1814,10 +1915,17 @@ struct EditProfileView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(Color(red: 0.95, green: 0.95, blue: 0.95).ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .onAppear(perform: loadProfile)
+        .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("重试") { Task { await saveProfile(shouldDismiss: false) } }
+            Button("取消", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "请检查网络后重试")
+        }
         .onChange(of: avatarPickerItem) { _, item in
             loadImage(from: item, maxSide: 512, compressionQuality: 0.72) { data in
                 avatarImageData = data
@@ -1856,8 +1964,10 @@ struct EditProfileView: View {
         didLoad = true
     }
 
-    private func saveProfile(shouldDismiss: Bool) {
-        store.updateCurrentProfile(
+    private func saveProfile(shouldDismiss: Bool) async {
+        guard !isSaving else { return }
+        isSaving = true
+        let saved = await store.saveCurrentProfile(
             nickname: nickname,
             redBookID: redBookID,
             bio: bio,
@@ -1870,6 +1980,11 @@ struct EditProfileView: View {
             avatarImageData: avatarImageData,
             backgroundImageData: backgroundImageData
         )
+        isSaving = false
+        guard saved else {
+            saveError = "资料保存失败，草稿已保留。"
+            return
+        }
         if shouldDismiss {
             dismiss()
         }
@@ -2009,7 +2124,7 @@ struct ReminderCenterView: View {
                         NavigationLink(value: Route.postDetail(post.id)) {
                             ReminderLargeCard(post: post, reminder: reminder)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
                 if store.currentUserReminders.isEmpty {
@@ -2059,7 +2174,7 @@ struct TagContentView: View {
                                 .font(.system(size: 27, weight: .medium))
                                 .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         .foregroundStyle(Theme.text)
 
                         Text("# \(tag)")
@@ -2074,7 +2189,7 @@ struct TagContentView: View {
                                 .font(.system(size: 27, weight: .medium))
                                 .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         .foregroundStyle(Theme.text)
 
                         EmptyView()
@@ -2098,7 +2213,7 @@ struct TagContentView: View {
                                         .frame(width: 42, height: 4)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                         Spacer()
                     }
@@ -2106,13 +2221,26 @@ struct TagContentView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 14)
 
-                    WaterfallGrid(posts: posts.isEmpty ? store.sortedFeedPosts(store.activePosts) : posts)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 28)
+                    if posts.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "number")
+                                .font(.system(size: 38, weight: .light))
+                            Text("这个话题还没有内容")
+                                .font(.system(size: 17, weight: .bold))
+                        }
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 72)
+                    } else {
+                        WaterfallGrid(posts: posts)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 28)
+                    }
                 }
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -2164,7 +2292,7 @@ struct UserProfileView: View {
                                         .frame(width: 48, height: 48)
                                         .background(.black.opacity(0.22), in: Circle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
 
                                 Spacer()
                                 if userID != store.currentUserID { ReportButton(target: .user(userID)).tint(.white) }
@@ -2196,11 +2324,11 @@ struct UserProfileView: View {
                                 NavigationLink(value: Route.userRelations(user.id, .following)) {
                                     StatInline(value: "\(store.followingUsers(for: user.id).count)", title: "关注")
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                                 NavigationLink(value: Route.userRelations(user.id, .followers)) {
                                     StatInline(value: "\(store.followerUsers(for: user.id).count)", title: "粉丝")
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                                 StatInline(value: "\(userPosts.reduce(0) { $0 + $1.likedCount + $1.favoriteCount })", title: "获赞与收藏")
                             }
 
@@ -2221,7 +2349,7 @@ struct UserProfileView: View {
                                         .padding(.vertical, 15)
                                         .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                                 .disabled(user.id == store.currentUserID || store.isBlocked(user.id))
 
                                 if let threadID = store.directMessageThreadRouteID(for: user.id) {
@@ -2233,7 +2361,7 @@ struct UserProfileView: View {
                                             .padding(.vertical, 15)
                                             .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     .simultaneousGesture(
                                         TapGesture().onEnded {
                                             _ = store.directMessageThreadID(for: user.id)
@@ -2250,7 +2378,7 @@ struct UserProfileView: View {
                                             .padding(.vertical, 15)
                                             .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     .disabled(user.id == store.currentUserID)
                                 }
                             }
@@ -2270,7 +2398,7 @@ struct UserProfileView: View {
                                         .padding(.vertical, 12)
                                         .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                                 .padding(.top, 10)
                             }
                         }
@@ -2299,7 +2427,7 @@ struct UserProfileView: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 18)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                             }
                         }
 
@@ -2364,14 +2492,7 @@ struct UserProfileView: View {
                 ? "解除拉黑 \(confirmation.nickname) 后，你会重新看到对方的内容，对方也可以再次私信你。"
                 : "拉黑 \(confirmation.nickname) 后，对方将无法私信你，你也会隐藏来自对方的内容。")
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 86,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
+        .interactiveBackSwipe()
     }
 
     private func profileEmptyMessage(for user: User) -> String {

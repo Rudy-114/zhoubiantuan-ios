@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-struct User: Identifiable, Hashable {
+struct User: Identifiable, Hashable, Codable {
     let id: String
     var email: String = ""
     var nickname: String
@@ -31,7 +31,77 @@ struct User: Identifiable, Hashable {
     var moderationRole: String = "user"
 }
 
-struct GroupBuyPost: Identifiable, Hashable {
+extension User {
+    private enum CodingKeys: String, CodingKey {
+        case id, email, nickname, bio, followingCount, followersCount, postCount
+        case isRestricted, canShowContact, avatarSymbol, avatarTint, redBookID, gender
+        case birthday, region, backgroundImageName, avatarURL, backgroundURL
+        case lastNicknameChangedAt, moderationStatus, moderationReason, reviewID
+        case phoneNumber, moderationRole
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        email = try container.decodeIfPresent(String.self, forKey: .email) ?? ""
+        nickname = try container.decode(String.self, forKey: .nickname)
+        bio = try container.decodeIfPresent(String.self, forKey: .bio) ?? ""
+        followingCount = try container.decodeIfPresent(Int.self, forKey: .followingCount) ?? 0
+        followersCount = try container.decodeIfPresent(Int.self, forKey: .followersCount) ?? 0
+        postCount = try container.decodeIfPresent(Int.self, forKey: .postCount) ?? 0
+        isRestricted = try container.decodeIfPresent(Bool.self, forKey: .isRestricted) ?? false
+        canShowContact = try container.decodeIfPresent(Bool.self, forKey: .canShowContact) ?? false
+        avatarSymbol = try container.decodeIfPresent(String.self, forKey: .avatarSymbol) ?? ""
+        avatarTint = try container.decodeIfPresent(ColorToken.self, forKey: .avatarTint) ?? .rose
+        redBookID = try container.decodeIfPresent(String.self, forKey: .redBookID) ?? ""
+        gender = try container.decodeIfPresent(String.self, forKey: .gender) ?? ""
+        birthday = try container.decodeIfPresent(String.self, forKey: .birthday) ?? ""
+        region = try container.decodeIfPresent(String.self, forKey: .region) ?? ""
+        backgroundImageName = try container.decodeIfPresent(String.self, forKey: .backgroundImageName) ?? "merch_magazine"
+        avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL) ?? ""
+        backgroundURL = try container.decodeIfPresent(String.self, forKey: .backgroundURL) ?? ""
+        lastNicknameChangedAt = try container.decodeIfPresent(Date.self, forKey: .lastNicknameChangedAt)
+        moderationStatus = try container.decodeIfPresent(ContentStatus.self, forKey: .moderationStatus)
+        moderationReason = try container.decodeIfPresent(String.self, forKey: .moderationReason) ?? ""
+        reviewID = try container.decodeIfPresent(String.self, forKey: .reviewID) ?? ""
+        phoneNumber = try container.decodeIfPresent(String.self, forKey: .phoneNumber) ?? ""
+        moderationRole = try container.decodeIfPresent(String.self, forKey: .moderationRole) ?? "user"
+        // Password and in-memory image data are intentionally never persisted.
+        password = ""
+        avatarImageData = nil
+        backgroundImageData = nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(email, forKey: .email)
+        try container.encode(nickname, forKey: .nickname)
+        try container.encode(bio, forKey: .bio)
+        try container.encode(followingCount, forKey: .followingCount)
+        try container.encode(followersCount, forKey: .followersCount)
+        try container.encode(postCount, forKey: .postCount)
+        try container.encode(isRestricted, forKey: .isRestricted)
+        try container.encode(canShowContact, forKey: .canShowContact)
+        try container.encode(avatarSymbol, forKey: .avatarSymbol)
+        try container.encode(avatarTint, forKey: .avatarTint)
+        try container.encode(redBookID, forKey: .redBookID)
+        try container.encode(gender, forKey: .gender)
+        try container.encode(birthday, forKey: .birthday)
+        try container.encode(region, forKey: .region)
+        try container.encode(backgroundImageName, forKey: .backgroundImageName)
+        try container.encode(avatarURL, forKey: .avatarURL)
+        try container.encode(backgroundURL, forKey: .backgroundURL)
+        try container.encodeIfPresent(lastNicknameChangedAt, forKey: .lastNicknameChangedAt)
+        try container.encodeIfPresent(moderationStatus, forKey: .moderationStatus)
+        try container.encode(moderationReason, forKey: .moderationReason)
+        try container.encode(reviewID, forKey: .reviewID)
+        try container.encode(phoneNumber, forKey: .phoneNumber)
+        try container.encode(moderationRole, forKey: .moderationRole)
+    }
+}
+
+struct GroupBuyPost: Identifiable, Hashable, Codable {
     let id: String
     var title: String
     var imageNames: [String]
@@ -80,7 +150,7 @@ struct GroupBuyPost: Identifiable, Hashable {
     }
 }
 
-enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
+enum GroupBuyType: String, CaseIterable, Identifiable, Hashable, Codable {
     case followGroup = "跟团"
     case splitGoods = "拼谷"
 
@@ -131,7 +201,7 @@ enum GroupBuyType: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-struct UnsoldRole: Identifiable, Hashable {
+struct UnsoldRole: Identifiable, Hashable, Codable {
     let id: String
     var name: String
     var quantity: Int
@@ -156,7 +226,7 @@ struct UnsoldRole: Identifiable, Hashable {
     }
 }
 
-struct GroupCollection: Identifiable, Hashable {
+struct GroupCollection: Identifiable, Hashable, Codable {
     let id: String
     var ownerID: String
     var name: String
@@ -189,7 +259,7 @@ struct ReviewPost: Identifiable, Hashable {
     var createdAt: Date
 }
 
-struct Comment: Identifiable, Hashable {
+struct Comment: Identifiable, Hashable, Codable {
     let id: String
     var body: String
     var authorID: String
@@ -351,7 +421,7 @@ enum ReportTarget: Hashable, Identifiable {
     }
 }
 
-enum ContentStatus: String, Hashable {
+enum ContentStatus: String, Hashable, Codable {
     case pending = "待处理"
     case review = "审核中"
     case active = "公开"
@@ -388,7 +458,7 @@ enum ReportStatus: String, Hashable {
     case suspended = "账号已停用"
 }
 
-enum ColorToken: String, Hashable {
+enum ColorToken: String, Hashable, Codable {
     case rose
     case violet
     case amber

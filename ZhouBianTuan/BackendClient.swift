@@ -544,6 +544,12 @@ final class AliyunBackendClient {
         try await request("/feed?limit=\(limit)")
     }
 
+    @discardableResult
+    func recordFeedEvents(token: String, events: [FeedEventDraft]) async throws -> BackendFeedEventsResponse {
+        let payload: [String: Any] = ["events": events.map { $0.requestBody() }]
+        return try await request("/feed/events", method: "POST", token: token, body: payload)
+    }
+
     func sync(token: String, cursor: String, limit: Int = 100) async throws -> BackendSyncPayload {
         let encodedCursor = cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "0"
         return try await request("/sync?cursor=\(encodedCursor)&limit=\(limit)", token: token)

@@ -31,6 +31,11 @@ struct ContentPageState {
     var isLoaded = false
     var requestID: UUID?
     var error: String?
+    var isOfflineSnapshot = false
+    /// The server ranking seed for the current personalized feed snapshot.
+    /// It is intentionally kept out of ContentQuery.key so offline restore
+    /// remains stable while pagination stays pinned to one ordering.
+    var feedRefreshSeed: String?
 }
 
 struct BackendContentPage: Decodable {
@@ -50,10 +55,11 @@ struct BackendContentPage: Decodable {
 }
 
 extension AliyunBackendClient {
-    func contentPage(_ query: ContentQuery, cursor: String?, token: String?) async throws -> BackendContentPage {
+    func contentPage(_ query: ContentQuery, cursor: String?, token: String?, refreshSeed: String? = nil) async throws -> BackendContentPage {
         var parameters = query.parameters
         parameters["limit"] = "30"
         if let cursor { parameters["cursor"] = cursor }
+        if let refreshSeed, !refreshSeed.isEmpty { parameters["refreshSeed"] = refreshSeed }
         var components = URLComponents()
         components.queryItems = parameters.keys.sorted().map { URLQueryItem(name: $0, value: parameters[$0]) }
         return try await request(query.path + "?" + (components.percentEncodedQuery ?? ""), token: token)
@@ -90,6 +96,12 @@ extension MockAppStore {
         guard isBackendEnabled else { return }
         var state = pageState(query)
         guard reset || (state.requestID == nil && state.hasMore) else { return }
+        let refreshSeed: String?
+        if reset, query.path == "/feed", query.parameters["feedMode"] == "forYou" {
+            refreshSeed = UUID().uuidString.lowercased()
+        } else {
+            refreshSeed = state.feedRefreshSeed
+        }
         let session = authSessionVersion, epoch = contentPageEpoch, requestID = UUID()
         state.requestID = requestID
         state.error = nil
@@ -98,7 +110,7 @@ extension MockAppStore {
             if contentPages[query.key]?.requestID == requestID { contentPages[query.key]?.requestID = nil }
         }
         do {
-            let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken)
+            let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken, refreshSeed: refreshSeed)
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
             mergeContentPage(page)
             let ids: [String]
@@ -112,11 +124,26 @@ extension MockAppStore {
             state.isLoaded = true
             state.hasMore = page.hasMore ?? false
             state.nextCursor = page.nextCursor
+            state.feedRefreshSeed = refreshSeed
             state.requestID = nil
+            state.isOfflineSnapshot = false
             contentPages[query.key] = state
+            isShowingOfflineFeed = false
+            if query.path == "/feed" {
+                persistOfflineFeedSnapshot()
+                let warmPosts = Array(pagePosts(query).prefix(OfflineFeedCache.maximumPostsPerPage))
+                if reset { prefetchedFeedPostIDs.subtract(warmPosts.map(\.id)) }
+                prefetchFeedDetailsIfNeeded(for: warmPosts[...])
+                prefetchFeedAssets(for: warmPosts)
+            }
         } catch {
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
-            contentPages[query.key]?.error = error.localizedDescription
+            if contentPages[query.key]?.isOfflineSnapshot == true {
+                contentPages[query.key]?.error = nil
+                isShowingOfflineFeed = true
+            } else {
+                contentPages[query.key]?.error = error.localizedDescription
+            }
         }
     }
 
@@ -130,6 +157,8 @@ extension MockAppStore {
     }
 
     func loadPostDetail(_ id: String) async {
+        let cachedComments = pageState(ContentQuery.comments(id))
+        if isShowingOfflineFeed, cachedComments.isOfflineSnapshot { return }
         guard isBackendEnabled, postDetailRequests[id] == nil else { return }
         let session = authSessionVersion, requestID = UUID()
         postDetailRequests[id] = requestID
@@ -145,11 +174,117 @@ extension MockAppStore {
             state.isLoaded = true
             contentPages[ContentQuery.comments(id).key] = state
             postDetailErrors[id] = nil
+            persistOfflineFeedSnapshot()
         } catch {
             guard isCurrentSession(session), postDetailRequests[id] == requestID else { return }
             postDetailErrors[id] = error.localizedDescription
             if (error as NSError).domain == "AliyunBackendClient", (error as NSError).code == 404 {
                 posts.removeAll { $0.id == id }
+            }
+        }
+    }
+
+    func contentQuery(from key: String) -> ContentQuery {
+        guard let separator = key.firstIndex(of: "?") else { return ContentQuery(path: key) }
+        let path = String(key[..<separator])
+        let query = String(key[key.index(after: separator)...])
+        var parameters: [String: String] = [:]
+        URLComponents(string: "https://offline.local/?\(query)")?.queryItems?.forEach { item in
+            if let value = item.value { parameters[item.name] = value }
+        }
+        return ContentQuery(path: path, parameters: parameters)
+    }
+
+    func persistOfflineFeedSnapshot() {
+        guard persistsData, isLoggedIn, currentUserID != Self.demoUserID else { return }
+        let homeKeys = contentPages.keys.filter { $0.hasPrefix("/feed?") }.sorted { lhs, rhs in
+            // Keep the default tab's personalized posts first, then use any
+            // remaining slots for the second home tab. The total is always 10.
+            let lhsDefault = lhs.contains("groupType=followGroup")
+            let rhsDefault = rhs.contains("groupType=followGroup")
+            return lhsDefault != rhsDefault ? lhsDefault : lhs < rhs
+        }
+        var remaining = OfflineFeedCache.maximumPostsPerPage
+        var pages: [OfflineFeedPage] = []
+        for key in homeKeys where remaining > 0 {
+            guard let state = contentPages[key], state.isLoaded else { continue }
+            let ids = Array(state.ids.prefix(remaining))
+            guard !ids.isEmpty else { continue }
+            pages.append(OfflineFeedPage(key: key, ids: ids, nextCursor: state.nextCursor, hasMore: state.hasMore))
+            remaining -= ids.count
+        }
+        guard !pages.isEmpty else { return }
+        let postIDs = Set(pages.flatMap(\.ids))
+        let commentPages = contentPages.keys.filter { $0.hasPrefix("/posts/") && $0.contains("/comments?") }.compactMap { key -> OfflineFeedPage? in
+            let components = key.split(separator: "/")
+            guard components.count >= 3, postIDs.contains(String(components[1])),
+                  let state = contentPages[key], state.isLoaded else { return nil }
+            return OfflineFeedPage(key: key, ids: Array(state.ids.prefix(20)), nextCursor: state.nextCursor, hasMore: state.hasMore)
+        }
+        pages.append(contentsOf: commentPages)
+        let commentPostIDs = Set(commentPages.compactMap { page -> String? in
+            let components = page.key.split(separator: "/")
+            guard components.count >= 3 else { return nil }
+            return String(components[1])
+        })
+        let allPostIDs = postIDs.union(commentPostIDs)
+        let hiddenAuthorIDs = blockedUserIDs.union(blockedByUserIDs)
+        let blockedPosts = posts.filter { allPostIDs.contains($0.id) && hiddenAuthorIDs.contains($0.authorID) }
+        let blockedURLs = blockedPosts.flatMap { $0.previewRemoteImageURLs + $0.remoteImageURLs }.map(RemoteAssetRequest.canonicalURLString)
+        if !blockedURLs.isEmpty { RemoteImageCache.shared.remove(urls: blockedURLs, accountID: currentUserID) }
+        let snapshotPosts = posts.filter { allPostIDs.contains($0.id) && !hiddenAuthorIDs.contains($0.authorID) }
+        let authorIDs = Set(snapshotPosts.map { $0.authorID })
+        let collectionIDs = Set(snapshotPosts.compactMap { $0.collectionID })
+        let snapshotPostIDs = Set(snapshotPosts.map { $0.id })
+        let snapshotComments = comments.filter { snapshotPostIDs.contains($0.postID) }
+        let commentAuthorIDs = Set(snapshotComments.map { $0.authorID })
+        let snapshotUsers = users.filter { authorIDs.contains($0.id) || commentAuthorIDs.contains($0.id) || $0.id == currentUserID }
+        let snapshotCollections = collections.filter { collectionIDs.contains($0.id) }
+        OfflineFeedCache.shared.save(OfflineFeedSnapshot(accountID: currentUserID, savedAt: Date(), pages: pages,
+                                                          users: snapshotUsers, posts: snapshotPosts,
+                                                          collections: snapshotCollections, comments: snapshotComments))
+    }
+
+    private func prefetchFeedDetailsIfNeeded(for feedPosts: ArraySlice<GroupBuyPost>) {
+        let candidates = feedPosts.filter { !prefetchedFeedPostIDs.contains($0.id) }
+        guard !candidates.isEmpty else { return }
+        prefetchedFeedPostIDs.formUnion(candidates.map(\.id))
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for chunkStart in stride(from: 0, to: candidates.count, by: 4) {
+                    let chunk = Array(candidates[chunkStart..<min(chunkStart + 4, candidates.count)])
+                    group.addTask {
+                        for post in chunk {
+                            guard !Task.isCancelled else { return }
+                            await self.loadPostDetail(post.id)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func prefetchFeedAssets(for feedPosts: [GroupBuyPost]) {
+        guard isBackendEnabled else { return }
+        let posts = feedPosts.prefix(OfflineFeedCache.maximumPostsPerPage)
+        let urls = Array(Set(posts.flatMap { post in
+            post.previewRemoteImageURLs + post.remoteImageURLs +
+            (users.first { $0.id == post.authorID }.map { [$0.avatarURL, $0.backgroundURL] } ?? [])
+        }.filter { !$0.isEmpty }.map(RemoteAssetRequest.canonicalURLString)))
+        let token = backendToken, accountID = currentUserID
+        RemoteImageCache.shared.register(urls, accountID: accountID)
+        Task.detached(priority: .utility) {
+            await withTaskGroup(of: Void.self) { group in
+                for chunkStart in stride(from: 0, to: urls.count, by: 4) {
+                    let chunk = Array(urls[chunkStart..<min(chunkStart + 4, urls.count)])
+                    group.addTask {
+                        for url in chunk {
+                            guard !Task.isCancelled else { return }
+                            _ = try? await RemoteAssetRequest.data(urlString: url, token: token, accountID: accountID)
+                        }
+                    }
+                }
             }
         }
     }

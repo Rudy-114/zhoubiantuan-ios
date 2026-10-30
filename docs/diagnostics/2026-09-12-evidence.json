@@ -1,0 +1,219 @@
+{
+  "date": "2026-09-12",
+  "head": "0e9b02c",
+  "scope": "Local source and isolated PostgreSQL; production only public health, public feed and image TLS checks",
+  "tests": {
+    "normal": {
+      "pass": 16,
+      "fail": 0
+    },
+    "withoutPrivateEnvironment": {
+      "pass": 13,
+      "fail": 3,
+      "error": "Missing required environment variable JWT_SECRET"
+    },
+    "releaseSimulatorBuild": "BUILD SUCCEEDED",
+    "runtime": "iOS 18.5 fresh iPhone 16 Pro simulator; guest home launched and inspected",
+    "productionHealth": {
+      "status": 200,
+      "elapsedSeconds": 2.99946
+    }
+  },
+  "certificate": {
+    "host": "img.zhoubiantuanmail.top",
+    "notBeforeUTC": "2026-06-11T00:00:00Z",
+    "notAfterUTC": "2026-09-08T23:59:59Z",
+    "error": "CERT_HAS_EXPIRED",
+    "simulatorObservation": "Post images and avatars show placeholders"
+  },
+  "isolatedReproductions": {
+    "migrations": "12 migrations executed successfully against isolated PostgreSQL 16.14",
+    "unverified_admin": {
+      "registerStatus": 201,
+      "emailVerified": false,
+      "adminEndpointStatus": 200
+    },
+    "otp_attempts": {
+      "wrongRequests": [
+        400,
+        400,
+        400,
+        400,
+        400,
+        400
+      ],
+      "storedAttempts": 0
+    },
+    "rate_limit": {
+      "max": 3,
+      "statuses": [
+        200,
+        200,
+        200,
+        200,
+        429
+      ]
+    },
+    "rate_limit_cleanup": {
+      "authWindowMinutes": 15,
+      "recordAgeMinutes": 3,
+      "rowsAfterShortWindowCleanup": 0
+    },
+    "moderation": {
+      "emptyProviderResponseStatus": "active",
+      "inputLength": 707,
+      "reviewedLength": 600
+    },
+    "preview_moderation": {
+      "httpStatus": 201,
+      "postStatus": "active",
+      "unreviewedPreviewReturned": true
+    },
+    "block_enforcement": {
+      "commentStatus": 201,
+      "likeStatus": 204
+    },
+    "post_delete_sync": {
+      "viewerEvents": 0,
+      "viewerPosts": 0
+    },
+    "private_asset": {
+      "anonymousStatus": 200,
+      "cloudFetches": 1,
+      "cacheControl": "public, max-age=2592000, immutable"
+    },
+    "health_error": {
+      "unhandledRejections": [
+        "diagnostic database unavailable"
+      ],
+      "requestResult": "TimeoutError"
+    },
+    "out_of_order_sync": {
+      "lateId": "11",
+      "fastId": "12",
+      "firstEventTypes": [
+        "test.fast"
+      ],
+      "cursor": "12",
+      "afterLateCommitEvents": 0
+    },
+    "pagination": {
+      "databaseActivePosts": 201,
+      "returnedPosts": 200,
+      "favoriteIDPresent": true,
+      "favoritePostLoaded": false
+    },
+    "unblocked_delete_sync": {
+      "viewerInitiallyHadPost": true,
+      "deleteStatus": 204,
+      "viewerEvents": 0,
+      "viewerPostUpdates": 0
+    },
+    "message_history": {
+      "totalMessages": 600,
+      "bootstrapMessages": 500,
+      "oneReadEventSyncMessages": 600
+    }
+  },
+  "dependencyAudit": {
+    "registry": "https://registry.npmjs.org",
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 4,
+      "high": 2,
+      "critical": 0,
+      "total": 6
+    },
+    "packages": [
+      {
+        "name": "body-parser",
+        "severity": "moderate",
+        "fixAvailable": true,
+        "advisories": [
+          {
+            "title": "body-parser vulnerable to denial of service when invalid limit value silently disables size enforcement",
+            "url": "https://github.com/advisories/GHSA-v422-hmwv-36x6"
+          }
+        ]
+      },
+      {
+        "name": "express",
+        "severity": "moderate",
+        "fixAvailable": true,
+        "advisories": []
+      },
+      {
+        "name": "morgan",
+        "severity": "moderate",
+        "fixAvailable": true,
+        "advisories": [
+          {
+            "title": "morgan vulnerable to Log Forging via unneutralized control characters in :remote-user",
+            "url": "https://github.com/advisories/GHSA-4vj7-5mj6-jm8m"
+          },
+          {
+            "title": "morgan vulnerable to Log Forging via unescaped Unicode line separators",
+            "url": "https://github.com/advisories/GHSA-jxfw-x594-9x9m"
+          }
+        ]
+      },
+      {
+        "name": "nodemailer",
+        "severity": "high",
+        "fixAvailable": true,
+        "advisories": [
+          {
+            "title": "Nodemailer: resolveContent() on a MailMessage bypasses disableFileAccess/disableUrlAccess when called with the legacy signature",
+            "url": "https://github.com/advisories/GHSA-8m3c-c648-2xjj"
+          },
+          {
+            "title": "Nodemailer: IDN/Punycode domain allow-list bypass leads to email delivery to an attacker-controlled domain",
+            "url": "https://github.com/advisories/GHSA-wmmp-3585-3rmp"
+          },
+          {
+            "title": "Nodemailer: Quadratic (O(n²)) time complexity in addressparser allows remote denial of service via a crafted address list",
+            "url": "https://github.com/advisories/GHSA-2x7j-588g-ccc2"
+          },
+          {
+            "title": "Nodemailer: Recipient-domain validation bypass via RFC 5322 comment mis-parsing leads to email delivery to an attacker-controlled domain",
+            "url": "https://github.com/advisories/GHSA-cc9r-2j5m-2m83"
+          }
+        ]
+      },
+      {
+        "name": "qs",
+        "severity": "moderate",
+        "fixAvailable": true,
+        "advisories": [
+          {
+            "title": "qs array-limit bypass via bracket-key comma parsing",
+            "url": "https://github.com/advisories/GHSA-x5fp-wj9c-mxmx"
+          },
+          {
+            "title": "qs: Denial of Service via Attacker Controlled isBuffer",
+            "url": "https://github.com/advisories/GHSA-4mjr-xmp4-gh2g"
+          }
+        ]
+      },
+      {
+        "name": "urllib",
+        "severity": "high",
+        "fixAvailable": true,
+        "advisories": [
+          {
+            "title": "urllib's cross-origin redirects preserve credential-bearing request headers, leading to potential credential leakage",
+            "url": "https://github.com/advisories/GHSA-hq3h-g68c-hp78"
+          }
+        ]
+      }
+    ]
+  },
+  "cleanup": {
+    "temporaryPostgres": "stopped",
+    "temporarySimulator": "shutdown and deleted",
+    "productionMutations": false,
+    "paidAPICalls": false,
+    "businessCodeModified": false
+  }
+}

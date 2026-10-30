@@ -9,7 +9,10 @@ struct SearchView: View {
     @State private var selectedFilter = "综合"
     @State private var isManagingHistory = false
 
-    let tabs = ["全部", "拼谷角色", "团长", "商品"]
+    // Search is organized by content type.  "商品" duplicated the post
+    // results without adding a distinct query or filter, so keep the tabs
+    // limited to the three supported result scopes.
+    let tabs = ["全部", "拼谷角色", "团长"]
     let filters = ["综合", "拼谷有货", "跟团", "最新"]
 
     var activeQuery: String {
@@ -146,7 +149,7 @@ struct SearchView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 42, height: 50)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 HStack(spacing: 10) {
                     TextField("搜索角色名 / 团长名", text: $query)
@@ -167,7 +170,7 @@ struct SearchView: View {
                                 .font(.system(size: 20, weight: .bold))
                                 .foregroundStyle(Theme.muted)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     Rectangle()
@@ -179,7 +182,7 @@ struct SearchView: View {
                             .font(.system(size: 20, weight: .black))
                             .foregroundStyle(Theme.text)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 }
                 .padding(.horizontal, 18)
                 .frame(height: 62)
@@ -224,14 +227,15 @@ struct SearchView: View {
         .onTapGesture {
             hideKeyboard()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 28)
-                .onEnded(handleBackSwipe)
-        )
+        .interactiveBackSwipe()
     }
 
     private func submitSearch() {
-        commitSearch(query.trimmed.isEmpty ? "Bucky" : query.trimmed)
+        // Do not silently search a hard-coded term when the user submits an
+        // empty field. That made an accidental tap look like a failed search.
+        let term = query.trimmed
+        guard !term.isEmpty else { return }
+        commitSearch(term)
     }
 
     private func commitSearch(_ term: String) {
@@ -248,21 +252,6 @@ struct SearchView: View {
         }
     }
 
-    private func handleBackSwipe(_ value: DragGesture.Value) {
-        guard value.startLocation.x < 56,
-              value.translation.width > 86,
-              abs(value.translation.height) < 72 else { return }
-        if isShowingResults {
-            withAnimation(AppMotion.page) {
-                committedQuery = ""
-                query = ""
-                selectedTab = "全部"
-                selectedFilter = "综合"
-            }
-            return
-        }
-        dismiss()
-    }
 }
 
 struct SearchSuggestionsContent: View {
@@ -292,7 +281,7 @@ struct SearchSuggestionsContent: View {
                         .padding(.vertical, 17)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                     Divider()
                         .overlay(Theme.hairline)
                         .padding(.leading, 60)
@@ -352,7 +341,7 @@ struct SearchInitialContent: View {
                                 .foregroundStyle(history.isEmpty ? Theme.muted : Theme.subtext)
                         }
                         .disabled(history.isEmpty)
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
 
                         Rectangle()
                             .fill(Theme.hairline)
@@ -368,7 +357,7 @@ struct SearchInitialContent: View {
                                 .font(.system(size: 20, weight: .semibold))
                                 .foregroundStyle(Theme.subtext)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     } else {
                         Button {
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
@@ -380,7 +369,7 @@ struct SearchInitialContent: View {
                                 .foregroundStyle(Theme.muted)
                                 .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -450,7 +439,7 @@ struct SearchHistoryChip: View {
                 Capsule().stroke(Theme.hairline, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -516,6 +505,7 @@ private struct SearchWrappingLayout: Layout {
 }
 
 struct SearchResultsContent: View {
+    @EnvironmentObject private var store: MockAppStore
     @Namespace private var tabIndicator
     let query: String
     let tabs: [String]
@@ -563,7 +553,7 @@ struct SearchResultsContent: View {
                                 }
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -596,7 +586,7 @@ struct SearchResultsContent: View {
                                         .padding(.vertical, 12)
                                         .background(selectedFilter == filter ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -620,10 +610,24 @@ struct SearchResultsContent: View {
                                 .padding(.horizontal, 16)
                                 .padding(.top, 8)
                             }
+                        } else if store.isBackendEnabled,
+                                  results.isEmpty,
+                                  store.pageState(pagingQuery ?? .init()).requestID != nil {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                Text("正在搜索…")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.muted)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 80)
                         } else if results.isEmpty {
                             SearchEmptyState(icon: "magnifyingglass", text: "没有找到和“\(query)”相关的内容")
                         } else {
-                            WaterfallGrid(posts: results)
+                            WaterfallGrid(posts: results, onNearEnd: {
+                                guard let pagingQuery else { return }
+                                Task { await store.loadContentPage(pagingQuery) }
+                            })
                                 .padding(.horizontal, 12)
                                 .padding(.bottom, 28)
                         }
@@ -698,7 +702,7 @@ struct SearchLeaderRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
 
             Spacer(minLength: 10)
 
@@ -720,7 +724,7 @@ struct SearchLeaderRow: View {
                             .stroke(isFollowing ? Theme.hairline : Theme.hotPink, lineWidth: 1.5)
                     }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
         }
         .padding(.vertical, 16)
     }

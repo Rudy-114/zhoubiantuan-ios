@@ -11,15 +11,24 @@ struct PostDetailView: View {
     @State private var isShareSheetPresented = false
     @State private var isAuthorProfilePresented = false
     @State private var authorProfileUserID: String?
+    @State private var pendingDeleteCommentID: String?
     @State private var selectedImageIndex = 0
     let postID: String
+    let onInteractiveBack: (() -> Void)?
+
+    init(postID: String, onInteractiveBack: (() -> Void)? = nil) {
+        self.postID = postID
+        self.onInteractiveBack = onInteractiveBack
+    }
 
     var body: some View {
         detailBody
+            .interactiveBackSwipe(onComplete: onInteractiveBack)
             .task(id: "\(store.authSessionVersion)-\(postID)") { await store.loadPostDetail(postID) }
             .navigationDestination(isPresented: $isAuthorProfilePresented) {
                 if let authorProfileUserID {
                     UserProfileView(userID: authorProfileUserID)
+                        .environment(\.popNavigationRouteEnabled, false)
                 }
             }
     }
@@ -47,12 +56,6 @@ struct PostDetailView: View {
                         }
                         .frame(height: detailImageHeight)
                         .tabViewStyle(.page(indexDisplayMode: .automatic))
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    handleImageSwipe(value)
-                                }
-                        )
 
                         VStack(alignment: .leading, spacing: 18) {
                             VStack(alignment: .leading, spacing: 10) {
@@ -78,12 +81,6 @@ struct PostDetailView: View {
                             CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 30)
-                                .onEnded { value in
-                                    handleDetailSwipe(value, authorID: author.id)
-                                }
-                        )
                     }
                     .padding(.bottom, 20)
                 }
@@ -127,10 +124,10 @@ struct PostDetailView: View {
                             if replyTargetCommentID == actionComment.id {
                                 replyTargetCommentID = nil
                             }
-                            store.deleteComment(commentID: actionComment.id)
                             withAnimation(.easeInOut(duration: 0.18)) {
                                 actionCommentID = nil
                             }
+                            pendingDeleteCommentID = actionComment.id
                         }
                     )
                     .transition(.opacity)
@@ -141,6 +138,17 @@ struct PostDetailView: View {
                 ShareSheetView(post: post)
                     .presentationDetents([.height(440), .large])
                     .presentationDragIndicator(.hidden)
+            }
+            .alert("删除这条评论？", isPresented: Binding(get: { pendingDeleteCommentID != nil }, set: { if !$0 { pendingDeleteCommentID = nil } })) {
+                Button("取消", role: .cancel) { pendingDeleteCommentID = nil }
+                Button("删除", role: .destructive) {
+                    if let commentID = pendingDeleteCommentID {
+                        store.deleteComment(commentID: commentID)
+                    }
+                    pendingDeleteCommentID = nil
+                }
+            } message: {
+                Text("删除后无法恢复。")
             }
             .onAppear {
                 store.recordBrowse(postID: post.id)
@@ -175,7 +183,7 @@ struct PostDetailView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 48, height: 48)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 Spacer()
             }
@@ -210,14 +218,6 @@ struct PostDetailView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    guard value.translation.width > 92,
-                          abs(value.translation.height) < 72 else { return }
-                    dismiss()
-                }
-        )
     }
 
     private func imageHeight(for post: GroupBuyPost, index: Int) -> CGFloat {
@@ -239,28 +239,15 @@ struct PostDetailView: View {
         return CGFloat(max(0.28, post.imageAspect))
     }
 
-    private func handleDetailSwipe(_ value: DragGesture.Value, authorID: String) {
-        guard abs(value.translation.height) < 72 else { return }
-        if value.translation.width > 92 {
-            dismiss()
-        } else if value.translation.width < -92 {
-            hideKeyboard()
-            authorProfileUserID = authorID
-            withAnimation(AppMotion.page) {
-                isAuthorProfilePresented = true
-            }
-        }
-    }
-
-    private func handleImageSwipe(_ value: DragGesture.Value) {
-        guard abs(value.translation.height) < 72 else { return }
-        if selectedImageIndex == 0 && value.translation.width > 92 {
-            dismiss()
-        }
-    }
 }
 
 struct PostDetailImagePage: View {
+    @EnvironmentObject private var store: MockAppStore
+    @State private var zoomScale: CGFloat = 1
+    @State private var committedScale: CGFloat = 1
+    @State private var imageOffset: CGSize = .zero
+    @State private var panStartOffset: CGSize = .zero
+    @State private var isPanning = false
     let post: GroupBuyPost
     let index: Int
     let canvasWidth: CGFloat
@@ -269,13 +256,114 @@ struct PostDetailImagePage: View {
     var body: some View {
         ZStack {
             Theme.background
-            PostImageView(post: post, index: index)
-                .scaledToFit()
-                .frame(width: canvasWidth, height: canvasHeight)
+            interactiveImage
         }
         .frame(width: canvasWidth, height: canvasHeight)
         .clipped()
         .background(Theme.background)
+        .accessibilityHint("双指缩放，双击点赞")
+    }
+
+    /// Keep the image page free of a single-finger drag recognizer while it is
+    /// at its normal scale.  A drag recognizer attached to every page wins the
+    /// gesture race with TabView's paging scroll view, which prevents users
+    /// from moving between images.  We only install panning after the image is
+    /// zoomed, where it is actually needed.
+    @ViewBuilder
+    private var interactiveImage: some View {
+        let image = PostImageView(post: post, index: index)
+            .scaledToFit()
+            .frame(width: canvasWidth, height: canvasHeight)
+            .scaleEffect(zoomScale)
+            .offset(imageOffset)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                    if zoomScale > 1.01 {
+                        zoomScale = 1
+                        committedScale = 1
+                        imageOffset = .zero
+                    } else {
+                        zoomScale = 2
+                        committedScale = 2
+                    }
+                }
+                guard store.isLoggedIn else {
+                    store.requireLogin(prompt: "登录后才能点赞")
+                    return
+                }
+                store.toggleLike(postID: post.id)
+            }
+            .simultaneousGesture(magnificationGesture)
+
+        if zoomScale > 1.01 {
+            image
+                .simultaneousGesture(panGesture)
+        } else {
+            image
+        }
+    }
+
+    private var magnificationGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                zoomScale = min(4, max(1, committedScale * value))
+            }
+            .onEnded { _ in
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                    if zoomScale < 1.05 {
+                        zoomScale = 1
+                        committedScale = 1
+                        imageOffset = .zero
+                    } else {
+                        committedScale = zoomScale
+                    }
+                }
+            }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                if !isPanning {
+                    panStartOffset = imageOffset
+                    isPanning = true
+                }
+                let rawOffset = CGSize(
+                    width: panStartOffset.width + value.translation.width,
+                    height: panStartOffset.height + value.translation.height
+                )
+                imageOffset = CGSize(
+                    width: rubberBand(rawOffset.width, limit: horizontalOffsetLimit),
+                    height: rubberBand(rawOffset.height, limit: verticalOffsetLimit)
+                )
+            }
+            .onEnded { _ in
+                isPanning = false
+                let clamped = CGSize(
+                    width: min(max(imageOffset.width, -horizontalOffsetLimit), horizontalOffsetLimit),
+                    height: min(max(imageOffset.height, -verticalOffsetLimit), verticalOffsetLimit)
+                )
+                withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.86)) {
+                    imageOffset = zoomScale <= 1.01 ? .zero : clamped
+                }
+            }
+    }
+
+    private var horizontalOffsetLimit: CGFloat {
+        max(0, canvasWidth * (zoomScale - 1) * 0.5)
+    }
+
+    private var verticalOffsetLimit: CGFloat {
+        max(0, canvasHeight * (zoomScale - 1) * 0.5)
+    }
+
+    private func rubberBand(_ value: CGFloat, limit: CGFloat) -> CGFloat {
+        guard limit > 0 else { return 0 }
+        let sign: CGFloat = value < 0 ? -1 : 1
+        let magnitude = abs(value)
+        guard magnitude > limit else { return value }
+        return sign * (limit + (magnitude - limit) * 0.18)
     }
 }
 
@@ -295,7 +383,7 @@ struct DetailTopBar: View {
                     .font(.system(size: 24, weight: .semibold))
                     .frame(width: 42, height: 42)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .foregroundStyle(Theme.text)
 
             NavigationLink(value: Route.userProfile(author.id)) {
@@ -306,7 +394,7 @@ struct DetailTopBar: View {
                         .foregroundStyle(Theme.text)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
 
             Spacer()
             Button {
@@ -321,7 +409,7 @@ struct DetailTopBar: View {
                         Capsule().stroke(store.followedUserIDs.contains(author.id) ? Theme.hairline : Theme.hotPink, lineWidth: 1)
                     }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
 
             Button {
                 if store.requireLogin(prompt: "登录后才能分享") {
@@ -332,7 +420,7 @@ struct DetailTopBar: View {
                     .font(.system(size: 24, weight: .semibold))
                     .frame(width: 42, height: 42)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .foregroundStyle(Theme.text)
         }
         .padding(.horizontal, 12)
@@ -375,7 +463,7 @@ struct ShareSheetView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -397,7 +485,7 @@ struct ShareSheetView: View {
                                     .frame(width: 82)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     EmptyView()
@@ -423,6 +511,9 @@ struct ShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
+                    ShareLink(item: URL(string: "zhoubiantuan://post/\(post.id)")!, subject: Text(post.title), message: Text("查看周边团：\(post.title)")) {
+                        SystemShareButton(title: "系统分享")
+                    }
                     ShareUtilityButton(title: "复制链接", icon: "link") {
                         store.copyToPasteboard("zhoubiantuan://post/\(post.id)", label: "站内链接")
                     }
@@ -491,7 +582,7 @@ struct ShareRecipientPickerView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 72, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 Spacer()
                 Text("分享至")
@@ -535,7 +626,7 @@ struct ShareRecipientPickerView: View {
                             } label: {
                                 ShareRecipientRow(user: user)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                     }
                 }
@@ -620,7 +711,7 @@ struct ProfileShareSheetView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -642,7 +733,7 @@ struct ProfileShareSheetView: View {
                                     .frame(width: 82)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     EmptyView()
@@ -668,6 +759,9 @@ struct ProfileShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
+                    ShareLink(item: URL(string: "zhoubiantuan://profile/\(user.id)")!, subject: Text(user.nickname), message: Text("查看周边团主页：\(user.nickname)")) {
+                        SystemShareButton(title: "系统分享")
+                    }
                     ShareUtilityButton(title: "复制链接", icon: "link") {
                         store.copyToPasteboard("zhoubiantuan://profile/\(user.id)", label: "主页链接")
                     }
@@ -707,7 +801,7 @@ struct ShareOptionButton: View {
                     .lineLimit(1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -731,7 +825,27 @@ struct ShareUtilityButton: View {
                     .lineLimit(1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
+    }
+}
+
+private struct SystemShareButton: View {
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 27, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .frame(width: 74, height: 74)
+                .background(Theme.panelRaised, in: Circle())
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.subtext)
+                .frame(width: 88)
+                .lineLimit(1)
+        }
+        .accessibilityLabel(title)
     }
 }
 
@@ -763,12 +877,61 @@ struct GroupBuyInfoCard: View {
             InfoRow(title: "定金比例", value: post.deposit)
             InfoRow(title: "截团时间", value: (collection?.deadline ?? post.deadline).fullDisplay)
             InfoRow(title: "成团条件", value: post.condition)
-            InfoRow(title: "外部表单", value: post.externalLink.isEmpty ? "无，联系团长登记" : post.externalLink)
+            if post.externalLink.trimmed.isEmpty {
+                InfoRow(title: "外部表单", value: "无，联系团长登记")
+            } else {
+                ExternalLinkRow(urlString: post.externalLink)
+            }
         }
         .padding(16)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 0.5)
+        }
+    }
+}
+
+private struct ExternalLinkRow: View {
+    @EnvironmentObject private var store: MockAppStore
+    let urlString: String
+
+    private var validURL: URL? {
+        guard let url = URL(string: urlString.trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("外部表单")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.subtext)
+            Spacer(minLength: 12)
+            if let validURL {
+                Link(destination: validURL) {
+                    Text(urlString.trimmed)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Theme.hotPink)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(2)
+                }
+                .accessibilityLabel("打开外部表单")
+            } else {
+                Text("链接格式无效")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+            }
+            Button {
+                store.copyToPasteboard(urlString.trimmed, label: "外部表单链接")
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.pressFeedback)
+            .accessibilityLabel("复制外部表单链接")
         }
     }
 }
@@ -781,6 +944,12 @@ struct PingguRoleAvailabilityCard: View {
     @State private var revision = 1
     @State private var saveFailed = false
     let postID: String
+
+    private var rolesAreValid: Bool {
+        !draftRoles.isEmpty && draftRoles.allSatisfy {
+            !$0.name.trimmed.isEmpty && $0.quantity > 0 && $0.quantity <= 1_000_000
+        }
+    }
 
     var body: some View {
         if let post = store.post(id: postID) {
@@ -818,6 +987,11 @@ struct PingguRoleAvailabilityCard: View {
                             saveFailed = false
                         }
                     }
+                    if !draftRoles.isEmpty && !rolesAreValid {
+                        Text("请填写角色名称，并将余量设置为大于 0 的整数。")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.hotPink)
+                    }
                     Button(isSaving ? "正在保存…" : "保存库存") {
                         let session = store.authSessionVersion
                         isSaving = true
@@ -831,6 +1005,7 @@ struct PingguRoleAvailabilityCard: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!rolesAreValid)
                 } else {
                     let roles = store.availableRoles(for: postID)
                     if roles.isEmpty { Text("当前没有可购买角色。").foregroundStyle(Theme.muted) }
@@ -945,6 +1120,7 @@ struct ContactCard: View {
                 destination: Group {
                     if let chatThreadID {
                         ChatView(threadID: chatThreadID)
+                            .environment(\.popNavigationRouteEnabled, false)
                     }
                 },
                 isActive: Binding(
@@ -982,7 +1158,36 @@ struct CommentSection: View {
                     .foregroundStyle(Theme.muted)
             }
             let comments = store.comments(for: postID)
-            if comments.isEmpty {
+            let page = store.pageState(.comments(postID))
+            if !page.isLoaded && page.requestID != nil {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在加载评论…")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.muted)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 36)
+            } else if let error = page.error, comments.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                    Text("评论加载失败")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(2)
+                    Button("重试") {
+                        Task { await store.loadContentPage(.comments(postID), reset: true) }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 28)
+            } else if comments.isEmpty && page.isLoaded {
                 VStack(spacing: 10) {
                     Image(systemName: "bubble.left")
                         .font(.system(size: 32))
@@ -1011,6 +1216,7 @@ struct CommentRow: View {
     @EnvironmentObject private var store: MockAppStore
     let comment: Comment
     let onLongPress: () -> Void
+    @State private var isPressing = false
 
     var body: some View {
         let author = store.user(id: comment.authorID)
@@ -1047,9 +1253,13 @@ struct CommentRow: View {
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onLongPressGesture(minimumDuration: 0.35) {
-            onLongPress()
-        }
+        .scaleEffect(isPressing ? 0.985 : 1)
+        .background(isPressing ? Theme.panelRaised.opacity(0.7) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 24, pressing: { pressing in
+            withAnimation(.easeOut(duration: 0.08)) {
+                isPressing = pressing
+            }
+        }, perform: onLongPress)
     }
 }
 
@@ -1104,11 +1314,20 @@ struct CommentActionOverlay: View {
                         .frame(height: 62)
                         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        guard value.translation.height > 70,
+                              abs(value.translation.width) < 80 else { return }
+                        onDismiss()
+                    }
+            )
             .background(
                 Color(red: 0.12, green: 0.12, blue: 0.14)
                     .clipShape(TopRoundedRectangle(radius: 28))
@@ -1141,7 +1360,7 @@ struct CommentActionRow: View {
             .padding(.horizontal, 18)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -1198,7 +1417,7 @@ struct DetailActionBar: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(Theme.muted)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 }
                 .padding(.horizontal, 14)
             }
@@ -1238,7 +1457,7 @@ struct DetailActionBar: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.panelRaised, in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 }
 
                 ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
@@ -1246,9 +1465,11 @@ struct DetailActionBar: View {
                         store.toggleLike(postID: post.id)
                     }
                 }
+                .disabled(store.pendingReactionKeys.contains("like:\(post.id)"))
                 ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
                     store.toggleFavorite(postID: post.id)
                 }
+                .disabled(store.pendingReactionKeys.contains("favorite:\(post.id)"))
                 ActionIconButton(icon: "bubble.left", title: commentTitle, tint: Theme.text) {
                     guard store.requireLogin(prompt: "登录后才能评论") else { return }
                     if commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

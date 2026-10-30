@@ -44,10 +44,16 @@ struct CreatePostView: View {
     @State private var publishTask: Task<Void, Never>?
     @State private var publishRequestID = UUID()
     @State private var draftOwnerID = ""
+    @State private var validationMessage: String?
+    @State private var draftID = UUID().uuidString
+    @State private var loadedDraftID = ""
+    @State private var isPreviewPresented = false
     let republishingPostID: String?
+    let initialDraft: PostDraft?
 
-    init(republishingPostID: String? = nil) {
+    init(republishingPostID: String? = nil, initialDraft: PostDraft? = nil) {
         self.republishingPostID = republishingPostID
+        self.initialDraft = initialDraft
     }
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
@@ -69,17 +75,35 @@ struct CreatePostView: View {
         selectedGroupType == .splitGoods
     }
 
-    var canPublish: Bool {
-        selectedGroupType != nil &&
-        !title.trimmed.isEmpty &&
-        !uploadedImageData.isEmpty &&
-        !priceLowerBound.trimmed.isEmpty &&
-        !priceUpperBound.trimmed.isEmpty &&
-        !condition.trimmed.isEmpty &&
-        usesCollection &&
-        !description.trimmed.isEmpty &&
-        (!isSplitGoods || (!pingguAveragePrice.trimmed.isEmpty && !pingguNote.trimmed.isEmpty && !roleDrafts.filter(\.isAvailable).isEmpty))
+    var validationIssues: [String] {
+        var issues: [String] = []
+        if selectedGroupType == nil { issues.append("请选择拼团类型") }
+        if !usesCollection { issues.append("请选择拼团合集") }
+        if title.trimmed.isEmpty { issues.append("请填写标题") }
+        if title.contains(where: { $0.isNewline || $0 == "\u{0000}" }) || title.count > 80 { issues.append("标题不能超过 80 字且不能包含换行") }
+        if uploadedImageData.isEmpty { issues.append("请上传至少一张产品图片") }
+        let lower = Double(priceLowerBound.trimmed)
+        let upper = Double(priceUpperBound.trimmed)
+        if lower == nil || upper == nil || (lower ?? 0) < 0 || (upper ?? 0) < 0 {
+            issues.append("请输入有效的价格")
+        } else if let lower, let upper, lower > upper {
+            issues.append("价格下限不能高于上限")
+        }
+        let deposit = finalizedDepositPercent(depositPercent)
+        if let value = Double(deposit), !(0...100).contains(value) { issues.append("定金比例应为 0–100%") }
+        if condition.trimmed.isEmpty { issues.append("请填写成团条件") }
+        if description.trimmed.isEmpty { issues.append("请填写团购说明") }
+        if description.count > 5000 { issues.append("团购说明不能超过 5000 字") }
+        if deadline <= Date() { issues.append("截止时间必须晚于当前时间") }
+        if isSplitGoods {
+            if pingguAveragePrice.trimmed.isEmpty || pingguNote.trimmed.isEmpty { issues.append("请填写拼谷均价和描述") }
+            if roleDrafts.filter(\.isAvailable).isEmpty { issues.append("请至少录入一个可售角色") }
+            if roleDrafts.contains(where: { $0.name.trimmed.isEmpty || $0.quantity <= 0 }) { issues.append("角色名称和数量必须有效") }
+        }
+        return issues
     }
+
+    var canPublish: Bool { validationIssues.isEmpty }
 
     var priceRangeText: String {
         let lower = priceLowerBound.trimmed
@@ -87,6 +111,18 @@ struct CreatePostView: View {
         if lower.isEmpty && upper.isEmpty { return "" }
         if upper.isEmpty || lower == upper { return "¥\(lower)" }
         return "¥\(lower)-¥\(upper)"
+    }
+
+    var priceBoundsAreValid: Bool {
+        guard let lower = Double(priceLowerBound.trimmed),
+              let upper = Double(priceUpperBound.trimmed),
+              lower >= 0, upper >= 0 else { return false }
+        return lower <= upper
+    }
+
+    var depositPercentIsValid: Bool {
+        guard let value = Double(finalizedDepositPercent(depositPercent)) else { return false }
+        return (0...100).contains(value)
     }
 
     var depositText: String {
@@ -99,6 +135,19 @@ struct CreatePostView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     HeaderTitle(title: isRepublishing ? "重新编辑团购帖" : "发布团购帖", subtitle: isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
+                    HStack {
+                        Spacer()
+                        Button {
+                            isPreviewPresented = true
+                        } label: {
+                            Label("预览", systemImage: "eye")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.hotPink)
+                        }
+                        .buttonStyle(.pressFeedback)
+                        .disabled(!hasDraftContent)
+                    }
+                    .padding(.horizontal, 16)
                 VStack(alignment: .leading, spacing: 14) {
                     RequiredLabel("拼团类型")
                     HStack(spacing: 10) {
@@ -122,7 +171,7 @@ struct CreatePostView: View {
                                         .stroke(selectedGroupType == type ? type.accent : Theme.hairline, lineWidth: 1)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                     }
                 }
@@ -148,7 +197,7 @@ struct CreatePostView: View {
                                     .padding(.vertical, 11)
                                     .background(Theme.hotPink, in: Capsule())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -158,7 +207,7 @@ struct CreatePostView: View {
                         } label: {
                             CollectionPickerSummary(collection: selectedCollection)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     if let selectedCollection {
@@ -242,7 +291,7 @@ struct CreatePostView: View {
                                             Image(systemName: "xmark.circle.fill")
                                                 .foregroundStyle(Theme.muted)
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(.pressFeedback)
                                     }
                                     .padding(12)
                                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -274,7 +323,7 @@ struct CreatePostView: View {
                                         .frame(width: 44, height: 44)
                                         .background(GroupBuyType.splitGoods.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                             }
                         }
                     }
@@ -284,9 +333,12 @@ struct CreatePostView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ValidationRow(isValid: selectedGroupType != nil, text: "已选择拼团类型")
                     ValidationRow(isValid: usesCollection, text: "已选择拼团合集")
-                    ValidationRow(isValid: !title.trimmed.isEmpty, text: "已填写标题")
+                    ValidationRow(isValid: !title.trimmed.isEmpty && title.count <= 80, text: "已填写有效标题")
                     ValidationRow(isValid: !uploadedImageData.isEmpty, text: "已上传产品图片")
-                    ValidationRow(isValid: !priceLowerBound.trimmed.isEmpty && !priceUpperBound.trimmed.isEmpty, text: "已填写商品价格范围")
+                    ValidationRow(isValid: priceBoundsAreValid, text: "已填写有效商品价格范围")
+                    if !finalizedDepositPercent(depositPercent).isEmpty {
+                        ValidationRow(isValid: depositPercentIsValid, text: "定金比例在 0–100% 之间")
+                    }
                     ValidationRow(isValid: !condition.trimmed.isEmpty, text: "已填写成团条件")
                     ValidationRow(isValid: !description.trimmed.isEmpty, text: "已填写团购说明")
                     if isSplitGoods {
@@ -299,7 +351,8 @@ struct CreatePostView: View {
                 .padding(.horizontal, 16)
 
                 Button {
-                    if let selectedGroupType, let selectedCollection {
+                    guard let firstIssue = validationIssues.first else {
+                        guard let selectedGroupType, let selectedCollection else { return }
                         let identity = PostSubmissionIdentity(fields: [store.currentUserID, republishingPostID ?? "", title,
                             selectedGroupType.rawValue, selectedCollection.id, priceRangeText, depositText, condition, description,
                             isSplitGoods ? pingguAveragePrice : "", isSplitGoods ? pingguNote : "",
@@ -320,11 +373,14 @@ struct CreatePostView: View {
                             guard publishRequestID == requestID else { return }
                             isPublishing = false
                             if success {
+                                PostDraftStore.shared.remove(id: draftID, ownerID: store.currentUserID)
                                 lastSubmission = nil
                                 if isRepublishing { dismiss() } else { reset() }
                             }
                         }
+                        return
                     }
+                    validationMessage = firstIssue
                 } label: {
                     Text(isPublishing ? "正在上传并提交审核…" : canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
                         .font(.system(size: 17, weight: .bold))
@@ -333,8 +389,21 @@ struct CreatePostView: View {
                         .background(canPublish ? Theme.hotPink : Theme.panelRaised, in: Capsule())
                         .foregroundStyle(canPublish ? .white : Theme.muted)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .disabled(!canPublish || isPublishing)
+                .padding(.horizontal, 16)
+                Button {
+                    saveDraft()
+                } label: {
+                    Label("保存草稿", systemImage: "tray.and.arrow.down")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Theme.subtext)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.panelRaised, in: Capsule())
+                }
+                .buttonStyle(.pressFeedback)
+                .disabled(!hasDraftContent || isPublishing)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
                 }
@@ -355,6 +424,9 @@ struct CreatePostView: View {
                 }
             }
             .onDisappear {
+                if !isPublishing, hasDraftContent, store.isLoggedIn, draftOwnerID == store.currentUserID {
+                    saveDraft()
+                }
                 if !store.isLoggedIn || draftOwnerID != store.currentUserID {
                     publishTask?.cancel()
                     publishRequestID = UUID()
@@ -365,9 +437,27 @@ struct CreatePostView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.background.ignoresSafeArea())
+            .interactiveBackSwipe()
             .navigationBarHidden(true)
             .task(id: republishingPostID) {
                 await loadRepublishDraftIfNeeded()
+            }
+            .task(id: initialDraft?.id) {
+                loadInitialDraftIfNeeded()
+            }
+            .onChange(of: selectedCollectionID) { _, newValue in
+                if let collection = store.collection(id: newValue), !isRepublishing {
+                    deadline = collection.deadline
+                }
+            }
+            .alert("无法发布", isPresented: Binding(get: { validationMessage != nil }, set: { if !$0 { validationMessage = nil } })) {
+                Button("知道了", role: .cancel) { validationMessage = nil }
+            } message: {
+                Text(validationMessage ?? "请检查必填字段")
+            }
+            .sheet(isPresented: $isPreviewPresented) {
+                PostDraftPreviewView(draft: currentDraftSnapshot())
+                    .presentationDetents([.large])
             }
             .sheet(isPresented: $isCollectionPickerPresented) {
                 CollectionPickerSheet(
@@ -416,6 +506,65 @@ struct CreatePostView: View {
         newRoleQuantity = "1"
         newRolePriceAdjustment = ""
         roleDrafts = []
+        draftID = UUID().uuidString
+    }
+
+    private var hasDraftContent: Bool {
+        !title.trimmed.isEmpty || !uploadedImageData.isEmpty || !description.trimmed.isEmpty || !roleDrafts.isEmpty
+    }
+
+    private func saveDraft() {
+        guard store.isLoggedIn, !store.currentUserID.isEmpty, hasDraftContent else { return }
+        PostDraftStore.shared.save(currentDraftSnapshot())
+        store.showToast("草稿已保存")
+    }
+
+    private func currentDraftSnapshot() -> PostDraft {
+        PostDraft(
+            id: draftID,
+            ownerID: store.currentUserID,
+            updatedAt: Date(),
+            title: title,
+            groupType: selectedGroupType,
+            collectionID: selectedCollectionID,
+            imageData: uploadedImageData,
+            tags: selectedTags.sorted(),
+            priceLowerBound: priceLowerBound,
+            priceUpperBound: priceUpperBound,
+            depositPercent: depositPercent,
+            deadline: deadline,
+            condition: condition,
+            wechat: wechat,
+            qq: qq,
+            groupInfo: groupInfo,
+            description: description,
+            pingguAveragePrice: pingguAveragePrice,
+            pingguNote: pingguNote,
+            roleDrafts: roleDrafts
+        )
+    }
+
+    private func loadInitialDraftIfNeeded() {
+        guard let initialDraft, loadedDraftID != initialDraft.id else { return }
+        loadedDraftID = initialDraft.id
+        draftID = initialDraft.id
+        title = initialDraft.title
+        selectedGroupType = initialDraft.groupType
+        selectedCollectionID = initialDraft.collectionID
+        uploadedImageData = initialDraft.imageData
+        selectedTags = Set(initialDraft.tags)
+        priceLowerBound = initialDraft.priceLowerBound
+        priceUpperBound = initialDraft.priceUpperBound
+        depositPercent = initialDraft.depositPercent
+        deadline = initialDraft.deadline
+        condition = initialDraft.condition
+        wechat = initialDraft.wechat
+        qq = initialDraft.qq
+        groupInfo = initialDraft.groupInfo
+        description = initialDraft.description
+        pingguAveragePrice = initialDraft.pingguAveragePrice
+        pingguNote = initialDraft.pingguNote
+        roleDrafts = initialDraft.roleDrafts
     }
 
     @MainActor
@@ -452,7 +601,7 @@ struct CreatePostView: View {
     func loadImageData(from urlStrings: [String]) async -> [Data] {
         var loaded: [Data] = []
         for urlString in urlStrings.prefix(16) {
-            guard let data = try? await RemoteAssetRequest.data(urlString: urlString, token: store.backendToken),
+            guard let data = try? await RemoteAssetRequest.data(urlString: urlString, token: store.backendToken, accountID: store.currentUserID),
                   UIImage(data: data) != nil else { continue }
             loaded.append(data)
         }
@@ -467,6 +616,49 @@ struct CreatePostView: View {
         newRoleName = ""
         newRoleQuantity = "1"
         newRolePriceAdjustment = ""
+    }
+}
+
+struct PostDraftPreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let draft: PostDraft
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let image = draft.imageData.first.flatMap(UIImage.init(data:)) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    Text(draft.previewTitle)
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(Theme.text)
+                    if !draft.description.trimmed.isEmpty {
+                        Text(draft.description)
+                            .font(.body)
+                            .foregroundStyle(Theme.subtext)
+                    }
+                    if !draft.tags.isEmpty {
+                        TagCloud(tags: draft.tags)
+                    }
+                    InfoRow(title: "价格", value: draft.priceLowerBound + (draft.priceUpperBound.isEmpty ? "" : "–" + draft.priceUpperBound))
+                    InfoRow(title: "截团时间", value: draft.deadline.fullDisplay)
+                }
+                .padding(18)
+            }
+            .background(Theme.background.ignoresSafeArea())
+            .navigationTitle("预览")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
     }
 }
 
@@ -503,7 +695,7 @@ struct ImageUploadComposer: View {
                             .stroke(Theme.hairline, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .accessibilityLabel("从相册上传产品图片")
             }
             .padding(.vertical, 2)
@@ -549,7 +741,7 @@ struct UploadedImageTile: View {
                     .background(Color.black.opacity(0.68), in: Circle())
                     .padding(7)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .accessibilityLabel("删除第 \(index + 1) 张图片")
         }
         .opacity(draggingIndex == index ? 0.55 : 1)
@@ -597,6 +789,7 @@ struct PhotoLibraryImportView: View {
     @State private var authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     @State private var assets: [PhotoAssetPreview] = []
     @State private var selectedIDs: [String] = []
+    @State private var requestedThumbnailIDs: Set<String> = []
     @State private var isLoadingAssets = false
     @State private var isImporting = false
     @State private var importErrorMessage: String?
@@ -630,7 +823,7 @@ struct PhotoLibraryImportView: View {
                     .foregroundStyle(Theme.text)
                     .frame(width: 52, height: 52)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .accessibilityLabel("关闭相册选择")
 
             Spacer()
@@ -684,7 +877,8 @@ struct PhotoLibraryImportView: View {
                             PhotoLibraryGridCell(
                                 item: item,
                                 selectionIndex: selectionIndex(for: item.id),
-                                isSelectionDisabled: selectedIDs.count >= maxSelection && selectionIndex(for: item.id) == nil
+                                isSelectionDisabled: selectedIDs.count >= maxSelection && selectionIndex(for: item.id) == nil,
+                                onAppear: { requestThumbnailIfNeeded(for: item) }
                             ) {
                                 toggleSelection(item.id)
                             }
@@ -720,7 +914,7 @@ struct PhotoLibraryImportView: View {
                                         .frame(width: 24, height: 24)
                                         .background(Color.black.opacity(0.72), in: Circle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                                 .offset(x: 6, y: -6)
                             }
                         }
@@ -760,7 +954,7 @@ struct PhotoLibraryImportView: View {
                             .offset(x: -196, y: -88)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .disabled(isImporting)
             }
             .padding(.horizontal, 26)
@@ -802,7 +996,7 @@ struct PhotoLibraryImportView: View {
             .padding(.horizontal, 26)
             .padding(.vertical, 13)
             .background(Theme.hotPink, in: Capsule())
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -838,8 +1032,14 @@ struct PhotoLibraryImportView: View {
             loaded.append(PhotoAssetPreview(id: asset.localIdentifier, asset: asset, thumbnail: nil))
         }
         assets = loaded
+        requestedThumbnailIDs.removeAll()
         isLoadingAssets = false
-        loaded.forEach { requestThumbnail(for: $0.asset, id: $0.id) }
+    }
+
+    private func requestThumbnailIfNeeded(for item: PhotoAssetPreview) {
+        guard item.thumbnail == nil, !requestedThumbnailIDs.contains(item.id) else { return }
+        requestedThumbnailIDs.insert(item.id)
+        requestThumbnail(for: item.asset, id: item.id)
     }
 
     private func requestThumbnail(for asset: PHAsset, id: String) {
@@ -881,9 +1081,13 @@ struct PhotoLibraryImportView: View {
         isImporting = true
         importErrorMessage = nil
         var imported: [Data] = []
+        var failedIDs: [String] = []
         for id in selectedIDs {
             guard let asset = assets.first(where: { $0.id == id })?.asset,
-                  let data = await imageData(for: asset) else { continue }
+                  let data = await imageData(for: asset) else {
+                failedIDs.append(id)
+                continue
+            }
             imported.append(data)
         }
         guard !imported.isEmpty else {
@@ -892,8 +1096,13 @@ struct PhotoLibraryImportView: View {
             return
         }
         onImport(imported)
+        if !failedIDs.isEmpty {
+            selectedIDs = failedIDs
+            importErrorMessage = "已导入 " + String(imported.count) + " 张，" + String(failedIDs.count) + " 张读取失败，请重试。"
+        } else {
+            dismiss()
+        }
         isImporting = false
-        dismiss()
     }
 
     private func imageData(for asset: PHAsset) async -> Data? {
@@ -984,6 +1193,7 @@ struct PhotoLibraryGridCell: View {
     let item: PhotoAssetPreview
     let selectionIndex: Int?
     let isSelectionDisabled: Bool
+    let onAppear: () -> Void
     let onTap: () -> Void
 
     var body: some View {
@@ -1008,8 +1218,9 @@ struct PhotoLibraryGridCell: View {
             }
             .aspectRatio(1, contentMode: .fit)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .disabled(isSelectionDisabled)
+        .onAppear(perform: onAppear)
     }
 
     @ViewBuilder
@@ -1119,7 +1330,7 @@ struct CollectionPickerSheet: View {
                         .frame(width: 38, height: 38)
                         .background(Theme.panelRaised, in: Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)
@@ -1174,7 +1385,7 @@ struct CollectionPickerSheet: View {
                                 .stroke(Theme.hotPink.opacity(0.42), lineWidth: 1)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
@@ -1233,7 +1444,7 @@ struct CollectionPickerOption: View {
                     .stroke(isSelected ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .saturation(isEnded ? 0 : 1)
         .opacity(isEnded ? 0.56 : 1)
     }

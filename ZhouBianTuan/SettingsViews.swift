@@ -18,37 +18,44 @@ struct SettingsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     SettingsGroup {
-                        NavigationLink(destination: AccountSecuritySettingsView()) {
+                        NavigationLink(destination: AccountSecuritySettingsView()
+                            .environment(\.popNavigationRouteEnabled, false)) {
                             SettingsRow(icon: "person.crop.circle", title: "账号与安全")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: GeneralSettingsView()) {
+                        NavigationLink(destination: GeneralSettingsView()
+                            .environment(\.popNavigationRouteEnabled, false)) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: NotificationSettingsView()) {
+                        NavigationLink(destination: NotificationSettingsView()
+                            .environment(\.popNavigationRouteEnabled, false)) {
                             SettingsRow(icon: "bell", title: "通知说明")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: ReportListView(admin: false)) {
+                        NavigationLink(destination: ReportListView(admin: false)
+                            .environment(\.popNavigationRouteEnabled, false)) {
                             SettingsRow(icon: "flag", title: "我的举报")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                         if store.canModerate {
-                            NavigationLink(destination: AdminReportView()) {
+                            NavigationLink(destination: AdminReportView()
+                                .environment(\.popNavigationRouteEnabled, false)) {
                                 SettingsRow(icon: "checkmark.shield", title: "举报处理")
-                            }.buttonStyle(.plain)
-                            NavigationLink(destination: AdminModerationView()) {
+                            }.buttonStyle(.pressFeedback)
+                            NavigationLink(destination: AdminModerationView()
+                                .environment(\.popNavigationRouteEnabled, false)) {
                                 SettingsRow(icon: "text.badge.checkmark", title: "内容审核")
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.pressFeedback)
                         }
-                        NavigationLink(destination: HelpFeedbackView()) {
+                        NavigationLink(destination: HelpFeedbackView()
+                            .environment(\.popNavigationRouteEnabled, false)) {
                             SettingsRow(icon: "questionmark.circle", title: "帮助与反馈")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     SettingsGroup {
@@ -58,7 +65,7 @@ struct SettingsView: View {
                         } label: {
                             SettingsPlainActionRow(title: "退出登录")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
 
                     SettingsLegalLinks()
@@ -70,6 +77,7 @@ struct SettingsView: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -94,12 +102,12 @@ struct AccountSecuritySettingsView: View {
                 NavigationLink(destination: BlockedUsersView()) {
                     SettingsValueRow(title: "已拉黑用户", value: "")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 SettingsSeparator()
                 NavigationLink(destination: AccountDeletionView()) {
                     SettingsValueRow(title: "删除账号", value: "")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
         }
     }
@@ -185,6 +193,7 @@ struct SettingsDetailScaffold<Content: View>: View {
             }
         }
         .background(Theme.background.ignoresSafeArea())
+        .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -342,7 +351,7 @@ struct SimpleTopBar: View {
                     .foregroundStyle(Theme.text)
                     .frame(width: 44, height: 50)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
 
             Spacer()
             Text(title)
@@ -367,7 +376,7 @@ struct SimpleTopBar: View {
                         Capsule().stroke(Theme.subtext, lineWidth: 1)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             } else {
                 Color.clear.frame(width: 78, height: 44)
             }
@@ -393,7 +402,7 @@ struct HelpFeedbackView: View {
                 } label: {
                     SettingsValueRow(title: "联系客服", value: SupportContact.email)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 SettingsSeparator()
                 Button {
                     UIPasteboard.general.string = SupportContact.email
@@ -401,7 +410,7 @@ struct HelpFeedbackView: View {
                 } label: {
                     SettingsValueRow(title: "复制客服邮箱", value: "复制")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
             }
 
             Text("如需帮助、举报申诉或反馈问题，请通过以上邮箱联系我们，我们会尽快回复。")
@@ -450,7 +459,7 @@ struct BlockedUsersView: View {
                                     .padding(.vertical, 7)
                                     .overlay { Capsule().stroke(Theme.hotPink, lineWidth: 1) }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                         .padding(.horizontal, 16)
                         .frame(minHeight: 64)
@@ -520,7 +529,7 @@ struct AccountDeletionView: View {
                     .padding(.vertical, 15)
                     .background(Color.red.opacity(isDeleting ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
             .disabled(isDeleting)
         }
         .alert("确认删除账号？", isPresented: $showsConfirm) {

@@ -23,7 +23,7 @@ struct MarketView: View {
                                 .foregroundStyle(Theme.text)
                                 .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 10)

@@ -12,8 +12,8 @@ export async function loadBootstrap(userId) {
         (SELECT mr.id FROM moderation_reviews mr WHERE mr.target_type = 'post' AND mr.target_id = p.id ORDER BY mr.created_at DESC LIMIT 1) AS review_id
       FROM posts p
       WHERE ${visiblePostSQL("p", "$1", true)}
-      ORDER BY p.created_at DESC
-      LIMIT 200
+      ORDER BY p.created_at DESC,p.id DESC
+      LIMIT 40
     `, [userId]),
     query(`
       SELECT c.*,
@@ -33,7 +33,7 @@ export async function loadBootstrap(userId) {
          FROM comments cm
          WHERE ${visibleCommentSQL("cm", "$1", true)}
          ORDER BY cm.created_at DESC
-         LIMIT 500
+         LIMIT 100
        ) recent_comments
        ORDER BY created_at ASC`,
       [userId]

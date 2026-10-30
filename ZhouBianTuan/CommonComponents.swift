@@ -1,6 +1,206 @@
 import CryptoKit
+import ImageIO
 import SwiftUI
 import UIKit
+
+private struct PopNavigationRouteActionKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+private struct PopNavigationRouteEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+private struct NavigationBackdropKey: EnvironmentKey {
+    static let defaultValue: AnyView? = nil
+}
+
+extension EnvironmentValues {
+    var popNavigationRoute: (() -> Void)? {
+        get { self[PopNavigationRouteActionKey.self] }
+        set { self[PopNavigationRouteActionKey.self] = newValue }
+    }
+
+    var popNavigationRouteEnabled: Bool {
+        get { self[PopNavigationRouteEnabledKey.self] }
+        set { self[PopNavigationRouteEnabledKey.self] = newValue }
+    }
+
+    var navigationBackdrop: AnyView? {
+        get { self[NavigationBackdropKey.self] }
+        set { self[NavigationBackdropKey.self] = newValue }
+    }
+}
+
+/// Gives every primary app action the same immediate pressed-state feedback.
+///
+/// `Button` still owns activation and cancellation: pressing down changes the
+/// visual state right away, releasing inside fires the action, and dragging
+/// outside cancels it. Keeping that behaviour in a ButtonStyle avoids adding
+/// competing drag gestures to individual controls.
+struct PressFeedbackButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.97
+    var pressedOpacity: CGFloat = 0.82
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .opacity(configuration.isPressed ? pressedOpacity : 1)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PressFeedbackButtonStyle {
+    static var pressFeedback: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
+}
+
+/// An edge-only, interactive back gesture for screens that hide the system
+/// navigation bar.  The screen follows the finger from the initial grab
+/// point, resists the last part of the travel, and either settles back or
+/// completes the pop based on the release position and projected travel.
+struct InteractiveBackSwipeModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.popNavigationRoute) private var popNavigationRoute
+    @Environment(\.popNavigationRouteEnabled) private var popNavigationRouteEnabled
+    @Environment(\.navigationBackdrop) private var navigationBackdrop
+    @State private var offset: CGFloat = 0
+    @State private var isTracking = false
+    @State private var isCompleting = false
+    private let backdrop: AnyView?
+    private let onComplete: (() -> Void)?
+
+    private let edgeWidth: CGFloat = 32
+    private let completionDistance: CGFloat = 112
+
+    init<Backdrop: View>(onComplete: (() -> Void)? = nil, @ViewBuilder backdrop: () -> Backdrop) {
+        self.backdrop = AnyView(backdrop())
+        self.onComplete = onComplete
+    }
+
+    init(onComplete: (() -> Void)? = nil) {
+        self.backdrop = nil
+        self.onComplete = onComplete
+    }
+
+    func body(content: Content) -> some View {
+        let width = max(UIScreen.main.bounds.width, 1)
+        ZStack(alignment: .leading) {
+            // A root view can be supplied as the backdrop for its child route.
+            // Clear the inherited backdrop while rendering that root view so a
+            // root that also uses this modifier cannot recursively render itself.
+            (backdrop ?? navigationBackdrop ?? AnyView(Theme.background.ignoresSafeArea()))
+                .environment(\.navigationBackdrop, nil)
+                .environment(\.popNavigationRouteEnabled, false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+
+            content
+                .offset(x: offset)
+                .overlay(alignment: .leading) {
+                    Color.black
+                        .opacity(Double(min(0.18, 0.18 * offset / width)))
+                        .allowsHitTesting(false)
+                }
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8, coordinateSpace: .local)
+                        .onChanged { value in
+                            guard !isCompleting, value.startLocation.x <= edgeWidth else { return }
+                            let horizontal = value.translation.width
+                            let vertical = value.translation.height
+                            if !isTracking {
+                                guard horizontal > 0, abs(horizontal) > abs(vertical) * 1.15 else { return }
+                                isTracking = true
+                            }
+                            guard isTracking else { return }
+                            offset = rubberBand(max(0, horizontal), width: width)
+                        }
+                        .onEnded { value in
+                            guard isTracking, !isCompleting else { return }
+                            isTracking = false
+                            let projected = max(value.translation.width, value.predictedEndTranslation.width)
+                            let shouldComplete = value.translation.width >= completionDistance
+                                || projected >= width * 0.34
+                            if shouldComplete {
+                                isCompleting = true
+                                withAnimation(.easeOut(duration: 0.2), completionCriteria: .removed) {
+                                    offset = width
+                                } completion: {
+                                    // The drag has already animated the screen offscreen.
+                                    // Pop only after it finishes, without a second transition.
+                                    var transaction = Transaction(animation: nil)
+                                    transaction.disablesAnimations = true
+                                    withTransaction(transaction) {
+                                        if let onComplete {
+                                            onComplete()
+                                        } else if popNavigationRouteEnabled, let popNavigationRoute {
+                                            popNavigationRoute()
+                                        } else {
+                                            dismiss()
+                                        }
+                                    }
+                                }
+                            } else {
+                                withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.86)) {
+                                    offset = 0
+                                }
+                            }
+                        }
+                )
+                .background {
+                    NavigationInteractivePopDisabler()
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                }
+        }
+    }
+
+    private func rubberBand(_ distance: CGFloat, width: CGFloat) -> CGFloat {
+        let resistanceStart = width * 0.68
+        guard distance > resistanceStart else { return distance }
+        return resistanceStart + (distance - resistanceStart) * 0.18
+    }
+}
+
+/// SwiftUI's NavigationStack can keep its UIKit edge-pop recognizer enabled
+/// even when the navigation bar is hidden.  Disable that recognizer on screens
+/// with the custom gesture so a completed drag cannot start a second pop.
+private struct NavigationInteractivePopDisabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller {
+        Controller()
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.disableInteractivePop()
+    }
+
+    final class Controller: UIViewController {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            disableInteractivePop()
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+        }
+
+        func disableInteractivePop() {
+            navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+        }
+    }
+}
+
+extension View {
+    func interactiveBackSwipe(onComplete: (() -> Void)? = nil) -> some View {
+        modifier(InteractiveBackSwipeModifier(onComplete: onComplete))
+    }
+
+    func interactiveBackSwipe<Backdrop: View>(onComplete: (() -> Void)? = nil, @ViewBuilder backdrop: @escaping () -> Backdrop) -> some View {
+        modifier(InteractiveBackSwipeModifier(onComplete: onComplete, backdrop: backdrop))
+    }
+}
 
 // Authenticated assets bypass persistent caches so revocation and account changes take effect.
 enum RemoteAssetRequest {
@@ -18,24 +218,54 @@ enum RemoteAssetRequest {
         }
     }()
 
-    static func data(urlString: String, token: String?) async throws -> Data {
+    private static let coordinator = RemoteAssetRequestCoordinator()
+
+    static func canonicalURLString(_ value: String) -> String {
+        guard let incoming = URL(string: value),
+              incoming.host == "img.zhoubiantuanmail.top",
+              let api = URL(string: AliyunBackendClient.currentBaseURLString) else { return value }
+        return api.appendingPathComponent("assets").appendingPathComponent(incoming.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))).absoluteString
+    }
+
+    static func data(urlString: String, token: String?, accountID: String? = nil) async throws -> Data {
         _ = removeLegacyCache
-        guard var url = URL(string: urlString),
+        guard let canonical = URL(string: Self.canonicalURLString(urlString)),
               let api = URL(string: AliyunBackendClient.currentBaseURLString) else { throw URLError(.badURL) }
+        let url = canonical
         // Cached records from older app versions must also use the visibility gateway.
-        if url.host == "img.zhoubiantuanmail.top" {
-            url = api.appendingPathComponent("assets").appendingPathComponent(url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        let cacheAccount = accountID ?? "public"
+        if let cached = await RemoteImageCache.shared.data(for: url.absoluteString, accountID: cacheAccount) {
+            return cached
         }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
-        if url.scheme == api.scheme && url.host == api.host && url.port == api.port &&
-            url.path.hasPrefix(api.path + "/assets/") && token != nil {
-            request.setValue("Bearer \(token!)", forHTTPHeaderField: "Authorization")
+        let requestKey = url.absoluteString + "\n" + cacheAccount
+        let data = try await coordinator.run(key: requestKey) {
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
+            if url.scheme == api.scheme && url.host == api.host && url.port == api.port &&
+                url.path.hasPrefix(api.path + "/assets/") && token != nil {
+                request.setValue("Bearer \(token!)", forHTTPHeaderField: "Authorization")
+            }
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  http.mimeType?.hasPrefix("image/") == true else { throw URLError(.badServerResponse) }
+            return data
         }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              http.mimeType?.hasPrefix("image/") == true else { throw URLError(.badServerResponse) }
         try Task.checkCancellation()
+        await RemoteImageCache.shared.insert(data, for: url.absoluteString, accountID: cacheAccount)
         return data
+    }
+}
+
+private actor RemoteAssetRequestCoordinator {
+    private var tasks: [String: Task<Data, Error>] = [:]
+
+    func run(key: String, operation: @escaping @Sendable () async throws -> Data) async throws -> Data {
+        if let existing = tasks[key] {
+            return try await existing.value
+        }
+        let task = Task { try await operation() }
+        tasks[key] = task
+        defer { tasks[key] = nil }
+        return try await task.value
     }
 }
 
@@ -52,19 +282,30 @@ final class RemoteImageLoader: ObservableObject {
     @Published private(set) var state: State = .idle
     private var generation = UUID()
 
-    func load(urlString: String, token: String?) async {
+    func load(urlString: String, token: String?, accountID: String? = nil) async {
         let requestGeneration = UUID()
         generation = requestGeneration
         state = .loading
         do {
-            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token)
+            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token, accountID: accountID)
             guard !Task.isCancelled, generation == requestGeneration else { return }
-            guard let image = UIImage(data: data) else { state = .failed; return }
+            guard let image = Self.downsampledImage(from: data) else { state = .failed; return }
             state = .loaded(image)
         } catch {
             guard !Task.isCancelled, generation == requestGeneration else { return }
             state = .failed
         }
+    }
+
+    private static func downsampledImage(from data: Data, maxPixelSize: Int = 1600) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage, scale: UIScreen.main.scale, orientation: .up)
     }
 }
 
@@ -128,7 +369,7 @@ struct RemoteImageView: View {
             }
         }
         .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken)
+            await loader.load(urlString: urlString, token: store.backendToken, accountID: store.currentUserID)
         }
     }
 
@@ -169,7 +410,7 @@ struct RemoteImagePreview: View {
             }
         }
         .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken)
+            await loader.load(urlString: urlString, token: store.backendToken, accountID: store.currentUserID)
         }
     }
 
@@ -283,7 +524,7 @@ struct SelectChip: View {
                 .padding(.vertical, 8)
                 .background(isSelected ? Theme.hotPink : Theme.panelRaised, in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -297,7 +538,7 @@ struct TagCloud: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color(red: 0.78, green: 0.86, blue: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressFeedback)
         }
     }
 }
@@ -364,7 +605,7 @@ struct ContactButton: View {
                 .padding(.vertical, 12)
                 .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
         .disabled(!isEnabled)
     }
 }
@@ -386,7 +627,17 @@ struct ActionIconButton: View {
             .foregroundStyle(tint)
             .frame(width: 46)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
+        .accessibilityLabel(accessibilityTitle)
+        .accessibilityValue(title)
+        .accessibilityAddTraits(icon.contains("fill") ? .isSelected : [])
+    }
+
+    private var accessibilityTitle: String {
+        if icon.hasPrefix("heart") { return icon.contains("fill") ? "取消点赞" : "点赞" }
+        if icon.hasPrefix("star") { return icon.contains("fill") ? "取消收藏" : "收藏" }
+        if icon.hasPrefix("bubble") { return "评论" }
+        return title
     }
 }
 
@@ -516,7 +767,7 @@ struct TagEditor: View {
                             .padding(.vertical, 8)
                             .background(selection.contains(tag) ? Theme.hotPink : Theme.panel, in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
                 }
             }
             HStack(spacing: 8) {
@@ -537,7 +788,7 @@ struct TagEditor: View {
                         .frame(width: 44, height: 44)
                         .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
                 .disabled(normalizedCustomTag.isEmpty)
             }
         }
@@ -628,7 +879,7 @@ struct ProfileLinkRow: View {
         NavigationLink(value: route) {
             ProfileRowContent(title: title, subtitle: subtitle, icon: icon, accessory: "chevron.right")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 
@@ -721,7 +972,7 @@ struct AdminActionButton: View {
                 .padding(.vertical, 9)
                 .background(title == "下架" ? Theme.hotPink : Theme.panelRaised, in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressFeedback)
     }
 }
 

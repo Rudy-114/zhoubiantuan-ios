@@ -28,6 +28,21 @@ test('moderation requires an explicitly granted role and verified ownership', as
   assert.equal((await api.request('/moderation/reviews', { token: ordinary.token })).status, 403);
   const moderator = await makeUser({ role: 'moderator' });
   assert.equal((await api.request('/moderation/reviews', { token: moderator.token })).status, 200);
+  const reviewIDs = [id('mr-page-1'), id('mr-page-2'), id('mr-page-3')];
+  await query("DELETE FROM moderation_reviews WHERE id LIKE 'mr-page-%'");
+  await query(`INSERT INTO moderation_reviews(id,target_type,target_id,owner_id,status,created_at)
+    VALUES ($1,'post',$4,$2,'review',now()+interval '3 minutes'),
+           ($3,'post',$4,$2,'review',now()+interval '2 minutes'),
+           ($5,'post',$4,$2,'review',now()+interval '1 minute')`,
+    [reviewIDs[0], moderator.id, reviewIDs[1], id('missing-target'), reviewIDs[2]]);
+  const first = await api.request('/moderation/reviews?limit=2', { token: moderator.token }).then(r => r.json());
+  assert.equal(first.reviews.length, 2);
+  assert.equal(first.hasMore, true);
+  const second = await api.request(`/moderation/reviews?limit=2&cursor=${encodeURIComponent(first.nextCursor)}`, { token: moderator.token }).then(r => r.json());
+  assert.ok(second.reviews.length >= 1);
+  const pageIDs = new Set([...first.reviews, ...second.reviews].map(review => review.id));
+  assert.ok(reviewIDs.every(reviewID => pageIDs.has(reviewID)));
+  await query("DELETE FROM moderation_reviews WHERE id=ANY($1::text[])", [reviewIDs]);
 });
 
 test('wrong email codes commit attempts and lock out even the correct code after five failures', async () => {

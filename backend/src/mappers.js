@@ -30,6 +30,39 @@ export function userToClient(row, counts = {}, viewerUserId = "") {
   };
 }
 
+// Public/guest responses deliberately omit profile attributes that are not
+// needed to render a card. Authenticated self responses continue using the full
+// mapper above; this prevents anonymous Feed/search scraping of region, gender,
+// birthday and contact metadata.
+export function userToPublicClient(row, counts = {}) {
+  return {
+    id: row.id,
+    moderationRole: "user",
+    email: "",
+    nickname: row.nickname,
+    bio: row.bio || "",
+    followingCount: Number(counts.following_count ?? row.following_count ?? 0),
+    followersCount: Number(counts.followers_count ?? row.followers_count ?? 0),
+    postCount: Number(counts.post_count ?? row.post_count ?? 0),
+    isRestricted: Boolean(row.is_restricted),
+    canShowContact: false,
+    avatarSymbol: row.avatar_symbol || "新",
+    avatarTint: row.avatar_tint || "rose",
+    redBookID: "",
+    gender: "未设置",
+    birthday: "选择生日",
+    region: "未设置",
+    backgroundImageName: row.background_image_name || "merch_magazine",
+    avatarURL: publicAssetUrl(row.avatar_object_key),
+    backgroundURL: publicAssetUrl(row.background_object_key),
+    phoneNumber: "",
+    lastNicknameChangedAt: null,
+    moderationStatus: "",
+    moderationReason: "",
+    reviewID: ""
+  };
+}
+
 export function postToClient(row, counts = {}) {
   const imageKeys = row.image_object_keys || [];
   const previewImageKeys = row.preview_image_object_keys || [];

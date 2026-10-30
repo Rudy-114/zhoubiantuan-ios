@@ -22,8 +22,11 @@ import { createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
 import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
+import { pageResult, pageSize, readCursor } from "./pagination.js";
 
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const FEED_EVENT_TYPES = new Set(["impression", "open", "dwell", "complete", "like", "favorite", "comment", "follow", "share", "notInterested", "hideAuthor"]);
+const FEED_MODES = new Set(["forYou", "following", "recent"]);
 
 import { assertReadyUploads, installUploadRoute, issueUploadTicket } from "./uploads.js";
 import { canReadAsset } from "./assets.js";
@@ -295,6 +298,12 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   const contentLimiter = createRateLimiter({ name: "content", store: sharedRateLimitStore,
     windowMs: 10 * 60 * 1000, max: 30, keyGenerator: req => req.user.id,
     message: "内容提交太频繁，请稍后再试" });
+  const feedEventLimiter = createRateLimiter({ name: "feed_event", store: sharedRateLimitStore,
+    windowMs: 60 * 1000, max: 120, keyGenerator: req => req.user.id,
+    message: "信息流操作太频繁，请稍后再试" });
+  const interactionLimiter = createRateLimiter({ name: "interaction", store: sharedRateLimitStore,
+    windowMs: 60 * 1000, max: 300, keyGenerator: req => req.user.id,
+    message: "互动操作太频繁，请稍后再试" });
 
   router.patch("/me", requireAuth, contentLimiter, async (req, res, next) => {
     try {
@@ -397,6 +406,62 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
       next(error);
     }
   });
+
+  router.post("/feed/events", requireAuth, feedEventLimiter, asyncRoute(async (req, res) => {
+    const rawEvents = req.body?.events;
+    // validateContent caps arrays at 64; keep a lower application limit so one
+    // offline flush cannot monopolize the request or rate-limit bucket.
+    if (!Array.isArray(rawEvents) || rawEvents.length < 1 || rawEvents.length > 50) throw badRequest("信息流事件数量无效");
+
+    const normalized = rawEvents.map((event, index) => {
+      if (!event || typeof event !== "object" || Array.isArray(event)) throw badRequest("信息流事件格式无效");
+      const eventType = String(event.eventType || event.type || "");
+      if (!FEED_EVENT_TYPES.has(eventType)) throw badRequest("信息流事件类型无效");
+      const eventID = String(event.eventID || event.id || `${req.requestId}:${index}`).trim();
+      const requestID = String(event.requestID || req.requestId).trim();
+      const postID = event.postID == null ? null : String(event.postID).trim();
+      const feedMode = String(event.feedMode || "forYou");
+      const algorithmVersion = String(event.algorithmVersion || "").trim();
+      const contentRevision = String(event.contentRevision || "").trim();
+      if (!eventID || eventID.length > 200 || requestID.length > 200 || (postID && postID.length > 200)
+        || algorithmVersion.length > 100 || contentRevision.length > 100 || !FEED_MODES.has(feedMode) || !postID) {
+        throw badRequest("信息流事件字段无效");
+      }
+      const position = event.position == null ? null : Number(event.position);
+      const dwellMs = event.dwellMs == null ? null : Number(event.dwellMs);
+      if ((position !== null && (!Number.isSafeInteger(position) || position < 0 || position > 10000))
+        || (dwellMs !== null && (!Number.isSafeInteger(dwellMs) || dwellMs < 0 || dwellMs > 86400000))) {
+        throw badRequest("信息流事件位置或停留时间无效");
+      }
+      const occurredAt = event.occurredAt == null ? new Date() : new Date(event.occurredAt);
+      if (Number.isNaN(occurredAt.getTime()) || occurredAt.getTime() > Date.now() + 5 * 60 * 1000
+        || occurredAt.getTime() < Date.now() - 90 * 24 * 60 * 60 * 1000) throw badRequest("信息流事件时间无效");
+      const metadata = event.metadata == null ? {} : event.metadata;
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata) || JSON.stringify(metadata).length > 4000) throw badRequest("信息流事件附加信息无效");
+      return { eventID, requestID, eventType, postID: postID || null, position, dwellMs, feedMode, algorithmVersion, contentRevision, occurredAt, metadata };
+    });
+
+    const postIDs = [...new Set(normalized.map(event => event.postID).filter(Boolean))];
+    const visiblePostIDs = postIDs.length
+      ? new Set((await query(`SELECT p.id FROM posts p WHERE p.id = ANY($2::text[]) AND ${visiblePostSQL("p", "$1", false)}`, [req.user.id, postIDs])).rows.map(row => row.id))
+      : new Set();
+    const rows = normalized.filter(event => !event.postID || visiblePostIDs.has(event.postID));
+    if (!rows.length) return res.json({ accepted: 0, ignored: normalized.length });
+
+    const values = [];
+    const placeholders = rows.map((event, index) => {
+      const offset = index * 12;
+      values.push(req.user.id, event.eventID, event.requestID, event.eventType, event.postID, event.position, event.dwellMs,
+        event.feedMode, event.algorithmVersion, event.contentRevision, event.occurredAt, JSON.stringify(event.metadata));
+      return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6},$${offset + 7},$${offset + 8},$${offset + 9},$${offset + 10},$${offset + 11},$${offset + 12}::jsonb)`;
+    });
+    const inserted = await query(`INSERT INTO feed_events
+      (user_id,event_id,request_id,event_type,post_id,position,dwell_ms,feed_mode,algorithm_version,content_revision,occurred_at,metadata)
+      VALUES ${placeholders.join(",")}
+      ON CONFLICT (user_id,event_id) DO NOTHING`, values);
+    logger.info("feed.events_ingested", { userID: req.user.id, accepted: inserted.rowCount, ignored: normalized.length - rows.length, duplicate: rows.length - inserted.rowCount });
+    res.status(202).json({ accepted: inserted.rowCount, ignored: normalized.length - rows.length, duplicate: rows.length - inserted.rowCount });
+  }));
 
   router.get("/feed", optionalAuth, asyncRoute(async (req, res) => {
     res.json(await postsPage(req.user?.id || "", req.query));
@@ -698,7 +763,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.post("/posts/:id/like", requireAuth, async (req, res, next) => {
+  router.post("/posts/:id/like", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.liked", enabled: true });
       if (syncEvents.length) {
@@ -711,7 +776,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.delete("/posts/:id/like", requireAuth, async (req, res, next) => {
+  router.delete("/posts/:id/like", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_likes", eventType: "post.unliked", enabled: false });
       if (syncEvents.length) {
@@ -724,7 +789,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.post("/posts/:id/favorite", requireAuth, async (req, res, next) => {
+  router.post("/posts/:id/favorite", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.favorited", enabled: true });
       if (syncEvents.length) {
@@ -737,7 +802,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.delete("/posts/:id/favorite", requireAuth, async (req, res, next) => {
+  router.delete("/posts/:id/favorite", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setPostReaction({ userId: req.user.id, postId: req.params.id, table: "post_favorites", eventType: "post.unfavorited", enabled: false });
       if (syncEvents.length) {
@@ -750,7 +815,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.post("/users/:id/follow", requireAuth, async (req, res, next) => {
+  router.post("/users/:id/follow", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: true });
       if (syncEvents.length) {
@@ -763,7 +828,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     }
   });
 
-  router.delete("/users/:id/follow", requireAuth, async (req, res, next) => {
+  router.delete("/users/:id/follow", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: false });
       if (syncEvents.length) {
@@ -857,7 +922,7 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     res.json(await messageHistoryPage(req.user.id, req.params.threadId, req.query));
   }));
 
-  router.post("/messages/threads/:id/messages", requireAuth, async (req, res, next) => {
+  router.post("/messages/threads/:id/messages", requireAuth, interactionLimiter, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
       const recipientUserID = trimmedString(req.body.recipientUserID);
@@ -1112,21 +1177,22 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   router.get("/moderation/reviews", requireAuth, requireModerationAdmin, async (req, res, next) => {
     try {
       const status = trimmedString(req.query.status, "review");
-      const params = [];
-      let where = "";
-      if (status !== "all") {
-        params.push(status);
-        where = "WHERE mr.status = $1";
-      }
+      if (!new Set(["all", "review", "active", "rejected", "hidden", "removed", "ignored"]).has(status)) throw badRequest("审核状态无效");
+      const limit = pageSize(req.query.limit, 100), cursor = readCursor(req.query.cursor);
+      const params = [], clauses = [];
+      if (status !== "all") { params.push(status); clauses.push(`mr.status = $${params.length}`); }
+      if (cursor) { params.push(cursor.time, cursor.id); clauses.push(`(mr.created_at,mr.id)<($${params.length - 1}::timestamptz,$${params.length})`); }
+      params.push(limit + 1);
       const { rows } = await query(
-        `SELECT mr.*
+        `SELECT mr.*,mr.created_at::text AS page_time
          FROM moderation_reviews mr
-         ${where}
-         ORDER BY mr.created_at DESC
-         LIMIT 200`,
+         ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+         ORDER BY mr.created_at DESC,mr.id DESC
+         LIMIT $${params.length}`,
         params
       );
-      res.json({ reviews: rows.map(moderationReviewToClient) });
+      const page = pageResult(rows, limit, moderationReviewToClient);
+      res.json({ reviews: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor });
     } catch (error) {
       next(error);
     }

@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import ZhouBianTuan
 
 final class MessageConsistencyTests: XCTestCase {
@@ -81,5 +82,58 @@ final class MessageConsistencyTests: XCTestCase {
         XCTAssertEqual(restored.flatMap(\.messages).count, 1)
         XCTAssertEqual(restored[0].messages[0].imageData, image)
         XCTAssertEqual(restored[0].messages[0].deliveryStatus, .failedNetwork)
+    }
+}
+
+final class OfflineFeedCacheTests: XCTestCase {
+    func testSnapshotIsAccountScopedAndWrittenAtomically() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("offline-feed-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = OfflineFeedCache(root: root)
+        let snapshot = OfflineFeedSnapshot(accountID: "account-a", savedAt: Date(), pages: [], users: [], posts: [], collections: [], comments: [])
+        cache.save(snapshot)
+        let newer = OfflineFeedSnapshot(accountID: "account-a", savedAt: Date(), pages: [OfflineFeedPage(key: "/feed?groupType=followGroup", ids: ["p-1"], nextCursor: nil, hasMore: false)], users: [], posts: [], collections: [], comments: [])
+        cache.save(newer)
+        let loadedA = await cache.load(accountID: "account-a")
+        XCTAssertEqual(loadedA?.pages.first?.ids, ["p-1"])
+        let loadedB = await cache.load(accountID: "account-b")
+        XCTAssertNil(loadedB)
+        cache.remove(accountID: "account-a")
+        let removed = await cache.load(accountID: "account-a")
+        XCTAssertNil(removed)
+    }
+
+    func testExpiredSnapshotIsDeletedOnRead() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("offline-feed-expired-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = OfflineFeedCache(root: root)
+        let account = "account-expired"
+        let snapshot = OfflineFeedSnapshot(accountID: account, savedAt: Date(timeIntervalSinceNow: -OfflineFeedCache.retention - 1), pages: [], users: [], posts: [], collections: [], comments: [])
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let digest = SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined()
+        let directory = root.appendingPathComponent(digest, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try encoder.encode(snapshot).write(to: directory.appendingPathComponent("snapshot.json"))
+        let loaded = await cache.load(accountID: account)
+        XCTAssertNil(loaded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("snapshot.json").path))
+    }
+
+    func testRemoteImageCacheRequiresFeedRegistrationAndIsAccountScoped() async {
+        let url = "https://example.test/feed/\(UUID().uuidString).jpg"
+        let data = Data([1, 2, 3])
+        let cache = RemoteImageCache.shared
+        await cache.insert(data, for: url, accountID: "unregistered")
+        let unregistered = await cache.data(for: url, accountID: "unregistered")
+        XCTAssertNil(unregistered)
+        cache.register([url], accountID: "account-a")
+        await cache.insert(data, for: url, accountID: "account-a")
+        let loaded = await cache.data(for: url, accountID: "account-a")
+        XCTAssertEqual(loaded, data)
+        let wrongAccount = await cache.data(for: url, accountID: "account-b")
+        XCTAssertNil(wrongAccount)
+        cache.remove(accountID: "account-a")
+        let removed = await cache.data(for: url, accountID: "account-a")
+        XCTAssertNil(removed)
     }
 }

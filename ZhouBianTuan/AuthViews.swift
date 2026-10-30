@@ -25,7 +25,7 @@ struct GuestAuthView: View {
                                 .frame(width: 44, height: 44)
                                 .background(Color.white.opacity(0.08), in: Circle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
                     }
                     Spacer()
                 }
@@ -52,7 +52,7 @@ struct GuestAuthView: View {
                                 .padding(.horizontal, 20)
                                 .background(Theme.hotPink, in: Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressFeedback)
 
                         Text("支持邮箱注册、密码登录和验证码登录。")
                             .font(.system(size: 14, weight: .semibold))
@@ -76,7 +76,7 @@ struct GuestAuthView: View {
                                         .frame(height: 48)
                                         .background(Color(red: 0.03, green: 0.78, blue: 0.36).opacity(0.82), in: Capsule())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
 
                                 Button {
                                     logIn(provider: "Apple")
@@ -90,7 +90,7 @@ struct GuestAuthView: View {
                                             Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1)
                                         }
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.pressFeedback)
                             }
                         }
                         #endif
@@ -198,23 +198,26 @@ struct AccountAuthView: View {
     @State private var hasAcceptedTerms = false
     @State private var isSendingCode = false
     @State private var codeResendSecondsRemaining = 0
+    @State private var isSubmitting = false
+    @State private var codeCooldownTask: Task<Void, Never>?
     @State private var formError: AuthFieldError?
 
     var canSubmit: Bool {
+        guard !isSubmitting else { return false }
         switch mode {
         case .register:
-            !nickname.trimmed.isEmpty &&
+            return !nickname.trimmed.isEmpty &&
             email.trimmed.contains("@") &&
             password.trimmed.count >= 8 &&
             password == confirmPassword &&
             code.trimmed.count == 6 &&
             hasAcceptedTerms
         case .passwordLogin:
-            email.trimmed.contains("@") &&
+            return email.trimmed.contains("@") &&
             !password.trimmed.isEmpty &&
             hasAcceptedTerms
         case .codeLogin:
-            email.trimmed.contains("@") &&
+            return email.trimmed.contains("@") &&
             code.trimmed.count == 6 &&
             hasAcceptedTerms
         }
@@ -239,7 +242,7 @@ struct AccountAuthView: View {
                         .foregroundStyle(.white)
                         .frame(width: 48, height: 48)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressFeedback)
 
                 Spacer()
 
@@ -278,7 +281,7 @@ struct AccountAuthView: View {
                                     .frame(height: 44)
                                     .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressFeedback)
                         }
                     }
 
@@ -307,7 +310,7 @@ struct AccountAuthView: View {
                                             .frame(width: 104, height: 52)
                                             .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.pressFeedback)
                                     .disabled(!canRequestCode)
                                 }
                                 if let error = errorMessage(for: .code) {
@@ -316,10 +319,10 @@ struct AccountAuthView: View {
                             }
                         }
                         if mode != .codeLogin {
-                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password, error: errorMessage(for: .password))
+                            AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password, textContentType: mode == .register ? .newPassword : .password, error: errorMessage(for: .password))
                         }
                         if mode == .register {
-                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword, error: errorMessage(for: .confirmPassword))
+                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword, textContentType: .newPassword, error: errorMessage(for: .confirmPassword))
                         }
                     }
 
@@ -335,7 +338,9 @@ struct AccountAuthView: View {
                             .frame(height: 54)
                             .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressFeedback)
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.55)
                     if let error = errorMessage(for: .general) {
                         AuthFieldErrorText(error)
                             .padding(.top, -18)
@@ -377,6 +382,10 @@ struct AccountAuthView: View {
         }
         .onChange(of: hasAcceptedTerms) {
             clearAuthError(for: .agreement)
+        }
+        .onDisappear {
+            codeCooldownTask?.cancel()
+            codeCooldownTask = nil
         }
     }
 
@@ -421,9 +430,10 @@ struct AccountAuthView: View {
         clearAuthError()
         guard validateEmailForCodeRequest() else { return }
         isSendingCode = true
+        defer { isSendingCode = false }
         let purpose = mode == .register ? "register" : "login"
         let didSend = await store.requestEmailCode(email: email, purpose: purpose)
-        isSendingCode = false
+        guard !Task.isCancelled else { return }
         if didSend {
             startCodeCooldown()
         } else {
@@ -432,22 +442,23 @@ struct AccountAuthView: View {
     }
 
     private func startCodeCooldown() {
+        codeCooldownTask?.cancel()
         codeResendSecondsRemaining = 60
-        Task {
-            while codeResendSecondsRemaining > 0 {
+        codeCooldownTask = Task { @MainActor in
+            while !Task.isCancelled && codeResendSecondsRemaining > 0 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                await MainActor.run {
-                    if codeResendSecondsRemaining > 0 {
-                        codeResendSecondsRemaining -= 1
-                    }
-                }
+                guard !Task.isCancelled else { return }
+                if codeResendSecondsRemaining > 0 { codeResendSecondsRemaining -= 1 }
             }
         }
     }
 
     private func submit() async {
+        guard !isSubmitting else { return }
         clearAuthError()
         guard validateForSubmit() else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
         switch mode {
         case .register:
             if await store.registerAccount(nickname: nickname, email: email, password: password, code: code) {
@@ -632,6 +643,7 @@ struct AuthSecureField: View {
     let title: String
     let placeholder: String
     @Binding var text: String
+    var textContentType: UITextContentType = .password
     var error: String? = nil
 
     var body: some View {
@@ -639,7 +651,7 @@ struct AuthSecureField: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Color.white.opacity(0.56))
-            SecureTextField(placeholder: placeholder, text: $text)
+            SecureTextField(placeholder: placeholder, text: $text, textContentType: textContentType)
                 .padding(.horizontal, 14)
                 .frame(height: 52)
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -672,6 +684,7 @@ private struct AuthFieldErrorText: View {
 struct SecureTextField: UIViewRepresentable {
     let placeholder: String
     @Binding var text: String
+    var textContentType: UITextContentType = .password
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -695,7 +708,7 @@ struct SecureTextField: UIViewRepresentable {
         textField.smartDashesType = .no
         textField.smartQuotesType = .no
         textField.smartInsertDeleteType = .no
-        textField.textContentType = .oneTimeCode
+        textField.textContentType = textContentType
         textField.passwordRules = nil
         textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
         return textField

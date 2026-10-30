@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { query, withTransaction } from './db.js';
 import { badRequest } from './validators.js';
 import { isModerationAdmin } from './moderation/index.js';
@@ -26,6 +26,11 @@ async function targetSnapshot(executor, type, id, viewer = null, lock = false) {
   const version = type === 'comment' ? "md5(t.body || ':' || t.status)" : type === 'post' ? 't.revision::text' : type === 'message' ? "coalesce(t.revoked_at::text, '') || ':' || t.created_at::text" : 't.updated_at::text';
   const row = (await executor.query(`SELECT t.*, ${version} AS target_version FROM ${table} t WHERE t.id=$1 AND ${visibility} ${lock ? 'FOR UPDATE' : ''}`, params)).rows[0];
   if (!row) return null;
+  return snapshotFromRow(type, id, row);
+}
+
+function snapshotFromRow(type, id, row) {
+  const version = row.target_version || (type === 'comment' ? md5CommentVersion(row) : type === 'post' ? String(row.revision) : type === 'message' ? `${row.revoked_at ? row.revoked_at.toISOString() : ''}:${row.created_at.toISOString()}` : row.updated_at.toISOString());
   const gone = type === 'message' ? Boolean(row.revoked_at) : row.status === 'deleted' || Boolean(row.deleted_at);
   const imageKeys = gone ? [] : type === 'post' ? [...new Set([...row.image_object_keys, ...row.preview_image_object_keys])]
     : type === 'user' ? [row.avatar_object_key, row.background_object_key].filter(Boolean)
@@ -33,7 +38,31 @@ async function targetSnapshot(executor, type, id, viewer = null, lock = false) {
   const body = gone ? '内容已不可用' : type === 'post' ? [row.title, row.description, ...(row.unsold_roles || []).map(r => r.name)].join('\n')
     : type === 'user' ? [row.nickname, row.bio].join('\n') : row.body || '';
   return { row, snapshot: { type, id, ownerID: row.author_id || row.sender_id || row.id, text: body,
-    status: gone ? 'deleted' : row.status || 'active', version: row.target_version, imageKeys } };
+    status: gone ? 'deleted' : row.status || 'active', version, imageKeys } };
+}
+
+function md5CommentVersion(row) { return createHash('md5').update(`${row.body}:${row.status}`).digest('hex'); }
+
+async function loadCurrentSnapshots(reports) {
+  const grouped = new Map();
+  for (const report of reports) {
+    if (!grouped.has(report.target.type)) grouped.set(report.target.type, []);
+    grouped.get(report.target.type).push(report.target.id);
+  }
+  const result = new Map();
+  await Promise.all([...grouped.entries()].map(async ([type, ids]) => {
+    const table = targetTables[type];
+    if (!table) return;
+    // Keep the batch path's evidence version byte-for-byte identical to the
+    // locked targetSnapshot path used when a moderator decides a report.
+    // PostgreSQL text formatting preserves full timestamp precision and avoids
+    // a JS Date round-trip producing a different version.
+    const version = type === 'comment' ? "md5(t.body || ':' || t.status)" : type === 'post' ? 't.revision::text'
+      : type === 'message' ? "coalesce(t.revoked_at::text, '') || ':' || t.created_at::text" : 't.updated_at::text';
+    const rows = (await query(`SELECT t.*, ${version} AS target_version FROM ${table} t WHERE t.id=ANY($1::text[])`, [[...new Set(ids)]])).rows;
+    for (const row of rows) result.set(`${type}:${row.id}`, snapshotFromRow(type, row.id, row));
+  }));
+  return result;
 }
 
 export async function submitReport(user, body) {
@@ -73,10 +102,13 @@ export async function listReports(user, input, admin = false) {
   const rows = (await query(`SELECT *,created_at::text AS page_time FROM reports ${clauses.length ? 'WHERE ' + clauses.join(' AND ') : ''}
     ORDER BY created_at DESC,id DESC LIMIT $${params.length}`, params)).rows;
   const page = pageResult(rows, limit, row => reportToClient(row, admin));
-  if (admin) await Promise.all(page.items.map(async report => {
-    const current = (await targetSnapshot({ query }, report.target.type, report.target.id))?.snapshot;
-    report.currentSnapshot = current ? reportEvidenceToClient(current) : null;
-  }));
+  if (admin) {
+    const snapshots = await loadCurrentSnapshots(page.items);
+    for (const report of page.items) {
+      const current = snapshots.get(`${report.target.type}:${report.target.id}`)?.snapshot;
+      report.currentSnapshot = current ? reportEvidenceToClient(current) : null;
+    }
+  }
   return { reports: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor };
 }
 

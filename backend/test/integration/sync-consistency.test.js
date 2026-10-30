@@ -112,5 +112,8 @@ test('idle sync uses one snapshot query and expired cursors explicitly request a
   await pruneOldSyncEvents();
   const reset = await loadSyncPayload(user.id, { cursor: String(BigInt(old.id) - 1n) });
   assert.equal(reset.resetRequired, true);
-  assert.equal((await loadSyncPayload(user.id, { cursor: '999999999999999999999999999999' })).resetRequired, true);
+  await assert.rejects(
+    () => loadSyncPayload(user.id, { cursor: '999999999999999999999999999999' }),
+    error => error?.status === 400 && /同步游标无效/.test(error.message)
+  );
 });
