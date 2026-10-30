@@ -1,189 +1,207 @@
 # Codex Conversation Handoff
 
-Status: `d31e34d` 最终独立代码质量复核与修复已完成；仍停留在总阶段 4，子任务 5 尚未开始
-Generated: 2026-07-13 16:00 CST
+Status: Ready for a new thread
+Generated: 2026-07-18 21:55 CST
 Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
 
 ## Resume Prompt
 
-请先阅读 `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`，再用当前文件系统、Git 状态和计划文件复核。`d31e34d` 相对 `1fc72b4` 的最终 Standards / Spec 独立复核、TDD 修复和完整后端验证已在 `d8e2a30` 完成。只有收到 Rudy 明确的继续指令后，才从总阶段 4 子任务 5（iOS 内容操作模型、客户端与 Store）开始；不得提前进入总阶段 5。
+请完整阅读本文件，然后以当前文件系统、Git、App Store Connect 和生产只读状态为准复核后继续。先核对分支 `codex/report-safety-system`、HEAD `eec4b68`、仅 `CODEX_HANDOFF.md` 未暂存，以及 TestFlight 1.0 (11) 的真实状态。若 App Store Connect 登录已过期，请让 Rudy 登录后再检查；不要猜测 Build 11 已完成。Build 可测试后，协助 Rudy 在 iPhone TestFlight 安装并完成实机验收；根据结果决定修复并发 Build 12，或开始 App Store 正式上线资料准备。不要 reset/checkout/clean、合并、push、启用 enforce、重建已取消的 shadow canary、处理或输出秘密，也不要未经明确确认提交 App Store 审核。
 
 ## Objective And User Intent
 
-项目是 iOS App「周边团」。当前目标是完整建设举报与安全审核系统：帖子、合集、评论、用户、私信均可举报；合集共享信息问题可以影响合集内帖子，单帖内容问题不连坐；被限制的团长可修改原内容并申请恢复，必须保留原 ID、互动和审核历史。后续管理员使用独立账号，并采用本设备批准新设备的访问方式；审核要高度自动化，但 AI 只提供分析和建议，人工最终控制高风险决定。
+完成周边团举报安全系统的八阶段实现与安全生产部署，让 App 在生产保持可用但默认安全；随后生成包含本轮大改的 TestFlight 构建供 Rudy 在手机上实际测试，测试结束后准备正式提交 App Store。
 
-## Stage Status
+Rudy 已接受最新版 Apple Developer Program License Agreement。当前产品优先级是确认 TestFlight Build 11、完成手机实测，再进入 App Store 上线准备；30 个真实安全案件的 shadow 对比只能在 App 有真实流量后逐步积累，不得伪造。
 
-总计划共有 8 个阶段，当前处于 **总阶段 4 / 8：内容修正与申诉**。
+## Current State
 
-1. WebSocket P0 修复：完成。
-2. 举报与安全案件后端核心：完成。
-3. iOS 五类举报入口：完成。
-4. 内容修正与申诉：进行中。
-5. 独立管理员认证：未开始。
-6. 管理员网页控制台：未开始。
-7. 通义千问影子分析：未开始。
-8. 加固、闸门与最终生产发布：未开始。
+### Git And Worktree
 
-当前总阶段 4 共有 7 个子任务，已完成前 4 个：
-
-1. 修正版本与申诉数据库结构：完成。
-2. 不可变候选版本提交：完成。
-3. 审核并原位发布修正内容：完成。
-4. 团长内容操作、修正提交与申诉 API：完成；最终 Standards / Spec 独立复核无遗留 P1/P2。
-5. iOS 内容操作模型、客户端与 Store：未开始。
-6. iOS 内容修正与申诉界面：未开始。
-7. 保留原 ID 的端到端验证：未开始。
-
-计划复选框以以下文件为准：
-
-- `docs/superpowers/plans/2026-07-10-report-safety-program.md`
-- `docs/superpowers/plans/2026-07-10-04-content-remediation.md`
-
-## Git State And Completed Commits
-
+- Worktree: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
 - Branch: `codex/report-safety-system`
-- Latest implementation/review-fix commit: `d8e2a3046b332db64020768a7b5925d738094ebc`
-- 本交接文件和计划勾选位于包含本文件的检查点提交中。
+- HEAD: `eec4b68fbe55848db2cf13939793e51b1ca25c05` — `Isolate iOS tests from host keychain`
+- `main`: `0e9b02cc2d6ab893236b5174594d3fb1752e0e67`
+- Branch is 92 commits ahead and 0 behind `main`; merge base is `0e9b02c`.
+- Rudy chose to retain this feature branch/worktree. No merge, push, pull request, or cleanup was performed.
+- Current Git state: only `CODEX_HANDOFF.md` is modified and unstaged; no staged or untracked files.
+- `git diff --check` passed immediately before this handoff.
 
-当前总阶段 4 已完成提交：
+### Safety Program
 
-- `e42356fbb04e900b4ff6ddcd72c3380045846974` `Add content revision and appeal schema`
-- `c0ecf5fce637f6a59a31607682bff032a91bbe94` `Add immutable content revision intake`
-- `1fc72b4abdf1430a950c9181bcefb17fc802cc43` `Publish approved revisions in place`
-- `d31e34dc56da5a4f21806d1fcb641c15daa21a4c` `Add owner correction and appeal APIs`
-- `d8e2a3046b332db64020768a7b5925d738094ebc` `Fix owner remediation review findings`
+- Stages 1–6 are complete and deployed: WebSocket P0, safety-case backend, five iOS report flows, owner remediation/appeal, isolated admin authentication, and admin Web console.
+- Stage 7 implementation Tasks 1–8 are complete. Task 9 Steps 1–5 and 7 are complete; Step 6, real shadow comparisons, remains pending. The master Stage 7 checkbox therefore remains intentionally unchecked.
+- Stage 8 Tasks 1–7 are complete, independently reviewed, and locally verified. Task 8 production rollout Steps 1–5 are complete, including rollback drill. Task 8 Step 6 (first 30 real cases) and Step 7 (later enforce activation) remain pending. Task 9 branch-retention steps are complete. The master Stage 8 checkbox remains intentionally unchecked because operational evidence has not matured.
+- There is no documented Stage 9 in the report-safety program. The next separate product stream is TestFlight acceptance and App Store release preparation.
 
-此前举报系统关键提交：
+### Production Safety State
 
-- `54113f585b1f5e2cf9ccc795fae3a9bed9635e37` `Add PostgreSQL safety job worker`
-- `f75b1fae4680bb34357858796f0ce08b58f4bdfe` `Record safety core deployment verification`
-- `8a640c28005208ca1623180abdc0ba5ef30c61d7` `Add iOS safety report contracts`
-- `ace382aba28304515cf1cd3768cd3ec8374e2c60` `Connect iOS safety report APIs`
-- `ab6cba428d218b2b2a47ab79bf523868ad8270cb` `Build shared iOS report form`
-- `e87abb2832271f16e46306f099f5cf5d8ee047f7` `Add five iOS report entry points`
-- `2e02d1d4595e3b6830ed2608eb76618075a762e6` `Add My Reports status view`
-- `c045faf5c0d34547274f0307c33471cbe44152a1` `Fix migrated safety fixture seed`
+- Last deployed reviewed backend release: `04af0c913cb37fb18bf68758cac06626bd150d39`.
+- Migration `018_safety_ai_retry_runs.sql` is applied; migrations are additive.
+- Last verified flags after the canary cancellation: safety cases enabled, `shadow`, automatic actions disabled, monthly AI service budget `0`, admin web enabled, enforcement gate closed.
+- Last verified service after cancel cleanup: `zbt-backend.service` active, public health/feed/privacy/admin returned HTTP 200, unauthenticated admin API returned 401, and no real reports/runs/actions remained. The recorded post-cancel PID was 342409; treat the PID as historical and re-read it before relying on it.
+- Cumulative settled synthetic Qwen validation spend is CNY 0.006918. Prompt-v2 closed-schema validation passed. No synthetic or budget-blocked result counts toward the 30 real comparisons.
+- Rudy previously authorized Qwen calls up to a cumulative CNY 1 ceiling, but the recurring real-shadow canary was later explicitly canceled. Do not recreate the canary or raise the production budget without a new, current instruction. Keep budget at zero by default.
+- The Codex `shadow-canary` heartbeat was deleted and the server `zbt-real-shadow-canary-stop.timer` was stopped/canceled. Current local inspection found no Codex automation definitions. Do not recreate either.
+- Stage 8's normal product maintenance jobs for deadlines/retention are separate from the canceled canary: they enqueue idempotent PostgreSQL jobs at startup/hourly and are part of the deployed backend.
 
-## Current Subtask Result
+### TestFlight Build 11
 
-子任务 4 新增并接入：
+- App version/build: `1.0 (11)`.
+- Bundle identifier: `com.panpanpan.zhoubiantuan`.
+- Minimum iOS: 17.0; production API endpoint is embedded in the Release build.
+- Build-number commit: `7fae5ec` — `Prepare TestFlight build 11`.
+- Test-isolation commit: `eec4b68` — prevents iOS tests from reading the host login keychain.
+- Archive: `/Users/rudy2009/Documents/欧美团app/build/TestFlight/ZhouBianTuan-1.0-11.xcarchive`
+- Upload options: `/Users/rudy2009/Documents/欧美团app/build/TestFlight/ExportOptionsUpload.plist`
+- `xcodebuild -exportArchive ... -allowProvisioningUpdates` reported `Upload succeeded` and `** EXPORT SUCCEEDED **` on 2026-07-16 after the Apple agreement was accepted.
+- App Store Connect initially showed Build 11 as `正在处理` with upload time 2026-07-16 22:51 CST.
+- On 2026-07-18, the open page still displayed `正在处理`, but refreshing redirected to Apple sign-in because the session had expired. Therefore the current server-side Build 11 state is **not verified**; the pre-refresh display may have been stale. The Chrome tab is now at the sign-in page.
 
-- `GET /api/me/content-actions`
-- `POST /api/content-actions/:caseId/revisions`
-- `POST /api/content-actions/:caseId/appeal`
+## Completed Work
 
-主要实现文件：
+### Report And Safety System
 
-- `backend/src/safety/revisionRoutes.js`
-- `backend/src/safety/contentActionMapper.js`
-- `backend/src/safety/appealService.js`
-- `backend/src/safety/reportRoutes.js`
-- `backend/test/safety/revisionRoutes.integration.test.js`
+- Implemented immutable reports/evidence, case aggregation, correction, appeal, action rollback, retention, abuse hardening, independent reporter counting, isolated admin auth, signed device approval, CSRF, audit, AI health, human AI comparisons, budget reservation, strict Qwen schema, deterministic policy, retry/recovery fencing, and a non-bypassable enforcement gate.
+- Added complete local end-to-end harnesses for consumer, worker, admin device, decision, correction, appeal, realtime, and cleanup flows.
+- Added operations runbook and release checklist.
+- Deployed Stage 8 release `04af0c9`, applied migration 018, ran public/authenticated/WebSocket/admin smoke, performed human no-action plus temporary hide/restore rollback drill, and exact-count cleanup.
+- Kept production in shadow with actions disabled and budget zero.
 
-已覆盖团长数据隔离、私有审核字段隐藏、当前状态约束、不可变修正版本、证据归属、七天申诉窗口、每次最终人工决定仅一次申诉、并发重复申诉以及提交后通知失败不回滚已提交事务。
+### iOS/TestFlight
 
-最终独立复核另外发现并修复：
+- Incremented the app to Build 11 without changing marketing version 1.0.
+- Isolated reporting quality tests from host keychain state.
+- Produced and validated the distribution archive, including privacy manifest and dSYM.
+- Uploaded Build 11 successfully to App Store Connect.
+- Direct Xcode installation to the connected physical phone is blocked because the phone's iOS 26.5.2 device support is newer than local Xcode 26.3; TestFlight distribution is unaffected.
 
-- 申诉案与同目标/类别的新开放案触发旧唯一索引冲突；新增 `016_appealed_case_aggregation.sql`，申诉案不再吸收后续新举报。
-- 同一举报人的旧 pending 举报会阻塞申诉期间的新举报；进入申诉后旧 pending 举报会关闭，新举报进入独立案件。
-- 整改提交原本没有滥用上限；新增 IP 日限、账号日限和账号分钟突发限制，稳定错误码为 `content_revision_rate_limited`。
-- `GET /api/me/content-actions` 原本只返回前 100 项；现返回可选 `nextCursor`，用不可变创建时间和 ID 做微秒精度稳定分页。
-- 016 down 若存在旧应用无法安全表示的多案件状态会拒绝回滚，并在事务内保留迁移、索引和案件；无冲突时才恢复旧约束。
+## Files Changed
+
+All source, test, migration, operations, plan, and production-verification changes are committed through `eec4b68`.
+
+Latest commits:
+
+- `eec4b68 Isolate iOS tests from host keychain`
+- `7fae5ec Prepare TestFlight build 11`
+- `dbf8e3d Record retained Stage 8 branch`
+- `bd0029f Record Stage 8 branch audit`
+- `6a38ea9 Record Stage 8 production rollout`
+- `04af0c9 Record Stage 8 Task 7 verification`
+- `30b9775 Fix admin verification edge cases`
+- `fdf8beb Record Stage 8 Task 6 review`
+
+Current uncommitted file:
+
+- `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md` — this handoff only; intentionally unstaged and uncommitted.
+
+External build artifact, not in Git:
+
+- `/Users/rudy2009/Documents/欧美团app/build/TestFlight/ZhouBianTuan-1.0-11.xcarchive`
 
 ## Verification
 
-### Full PostgreSQL Database Suite
+Latest recorded full Stage 8 local verification:
 
-使用正确的 PostgreSQL 16 工具目录执行：
+- `npm --prefix backend test` — 164/164 passed.
+- PostgreSQL 16 regression — 251/251 passed; disposable cluster/process/port cleaned.
+- `swift test` — 27/27 passed.
+- Xcode iPhone 17 Pro Debug simulator build — `BUILD SUCCEEDED`.
+- Real browser admin QA at desktop and 390x844 — passed across login, queue, evidence, decisions, correction, appeal, AI comparison/health, audit, device approval/revocation, errors, keyboard, reduced motion, and overflow.
+- Two-simulator iOS remediation/appeal QA — passed.
+- Final independent Standards and Spec reviews — no P1/P2 findings.
+- Secret/privacy scan — no real secrets or private keys found.
 
-```sh
-cd /Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backend
-PG_BINDIR=/usr/local/opt/postgresql@16/bin ZBT_TEST_PG_PORT=55432 npm run test:db
-```
+Latest Build 11 verification after the final iOS test-isolation commit:
 
-最终结果：`173/173` 通过，退出码 `0`，耗时约 `119.1s`。该结果是在安全 down 闸门最后修改后重新完整执行所得。
+- Swift Package tests — 27/27 passed.
+- Xcode simulator tests — 95/95 passed.
+- Release archive/export validation — passed; production bundle metadata, privacy manifest, dSYM, and absence of debug markers checked.
+- App Store upload — succeeded.
 
-### Backend Focused And Unit Suites
+Not rerun for this handoff because source files did not change:
 
-- 团长修正/申诉路由与迁移聚焦集成测试：`24/24` 通过（路由 `21`、迁移 `3`）。
-- 后端非数据库单元测试：`64/64` 通过。
-- 最新数据库完整测试：`173/173` 通过。
-- `git diff --check` 与修改过的 Node 源文件语法检查通过。
+- Node/PostgreSQL/Swift/Xcode/browser suites. This handoff only changes Markdown.
 
-### Clean iOS XCTest
+Fresh handoff checks on 2026-07-18:
 
-在 iPhone 17 Pro 模拟器 `272C2D53-9725-410F-A712-EADB3677EDA2` 上先执行 shutdown、erase、boot，并使用全新 DerivedData：
+- `git status --short --branch` — only `CODEX_HANDOFF.md` modified.
+- `git diff --check` — passed.
+- No local worktree backend, PostgreSQL, Xcode build/test, Playwright, lifecycle, or canary process found.
+- No relevant listeners found on 60671, 5432, 3000, 3001, 4173, or 8080.
+- App Store Connect refresh required a new login; current Build 11 state was not verified.
 
-```sh
-xcodebuild test \
-  -project ZhouBianTuan.xcodeproj \
-  -scheme ZhouBianTuan \
-  -configuration Debug \
-  -destination 'platform=iOS Simulator,id=272C2D53-9725-410F-A712-EADB3677EDA2' \
-  -derivedDataPath /tmp/zbt-xctest-derived \
-  -resultBundlePath /tmp/zbt-xctest-result.xcresult \
-  CODE_SIGNING_ALLOWED=NO
-```
+## Running Services And Environment
 
-结果：`** TEST SUCCEEDED **`；XCTest 总计 `84`，通过 `84`，失败 `0`，跳过 `0`。结果包位于 `/tmp/zbt-xctest-result.xcresult`。
-
-唯一已知警告是 `ZhouBianTuan/PostDetailViews.swift:1098` 使用已弃用的 `NavigationLink` 初始化器，不影响本次测试结果。
-
-### Environment Cleanup
-
-- 每次验证使用的临时 PostgreSQL 16 集群均由测试 trap 停止并删除。
-- 已复核 PostgreSQL 进程及端口 `55432`，没有本轮临时测试集群仍在运行。
-- XCTest 完成后已关闭测试模拟器。
-- 当前没有为本阶段启动的临时开发服务器。
-- 本检查点没有部署总阶段 4 的修正/申诉实现到生产环境。
+- No local service or test process for this worktree is running.
+- No temporary PostgreSQL cluster or lifecycle listener is running.
+- No active Codex recurring automation was found.
+- Production backend was last verified active after canary cancellation; re-check before any production claim or mutation.
+- Production database backup from the Stage 8 rollout is in the ignored private path `.project-secrets/backups/zbt-before-stage8-20260716-200847.dump`, mode 600, with `pg_restore --list` previously passed. Never add it to Git.
+- Production rollback points recorded in the rollout document:
+  - `/opt/zbt-backend.stage8-task8-backup-20260716-200847`
+  - `/opt/zbt-backend.stage8-task8-replaced-20260716-200847`
+  - `/etc/nginx/zbt-backend.stage8-task8-backup-20260716-200847`
+- Existing production connection material lives under ignored `.project-secrets/`; never print, copy into documentation, stage, or commit it.
 
 ## Key Decisions And Constraints
 
-- 修正内容原位更新，保留帖子/合集原 ID、作者、互动、举报和审核历史。
-- 合集共享字段错误可以影响合集与子帖；单帖内容问题不自动连坐合集。
-- 申诉绑定最近一次仍生效的人工最终动作；每个最终动作最多一次申诉，动作生效时间起七天内（含边界）可提交。
-- 申诉后设置 `manual_hold=true`，AI 不自动裁决申诉，也不直接恢复内容。
-- 团长接口不得暴露举报人、管理员内部备注、AI 原始分析或其他用户隐私。
-- 修正版本发布和自动恢复必须遵守人工动作、其他开放案件与 `manual_hold` 边界。
-- 管理员认证、管理网页和 Qwen 分析分别属于后续总阶段，不在本检查点启动。
-- 不把 API Key、密码、Token、SSH 私钥或管理员凭据写入代码、提交或交接文件。
-
-## Review State And Risks
-
-- 子任务 3 已通过规格与代码质量复核。
-- 子任务 4 已完成最终独立 Standards / Spec 复核。初轮与修复复核发现的问题均按最小 TDD 循环解决；最后两路复核均回复 `no findings`。
-- 申诉窗口仍按最近人工最终动作的 `applied_at` 计算。动作与团长同步事件在同一事务产生，当前数据模型没有独立 `notified_at`；阶段 4 计划也明确使用 decision age。
-- 申诉提交目前只创建团长的同步事件，符合阶段 4 子任务 4 的 owner sync 约定；是否同时变更举报人的公开案件状态应在后续产品规格明确后另行处理。
-- 016 down 是安全闸门：若生产数据已存在旧约束无法表达的多案件组合，应用/迁移不能回滚到不兼容版本，必须先采用兼容代码或显式数据迁移，不能删除或改写案件来强行回滚。
-- iOS 尚无内容操作客户端、修正表单和申诉界面，因此用户端流程尚未完整。
-- 保留原 ID 和互动的完整 iOS 到后端端到端流程尚未验证。
-- 总阶段 4 代码尚未部署到生产环境。
+- Preserve all user changes. Do not use `git reset`, `checkout`, or `clean`.
+- Keep `codex/report-safety-system` and this worktree; do not merge or push without a new explicit instruction.
+- Do not display or record passwords, recovery codes, API keys, cookies, private keys, production secrets, private-message bodies, or raw model responses.
+- Production stays `shadow`, automatic actions false, budget zero, and enforce closed until 30 real current-version human comparisons and every server gate condition pass.
+- Enabling enforce/automatic actions, a new production deployment/restart/migration, a new recurring canary, and App Store review submission are distinct high-impact actions requiring current explicit authorization.
+- Do not repeat the already completed prompt-v2 synthetic validation tuple merely to spend or re-prove it.
+- Do not count synthetic, failed, invalid, or budget-blocked runs as real comparisons.
+- TestFlight acceptance comes before App Store submission. Do not submit the app for review until Rudy finishes phone testing and explicitly approves submission.
 
 ## Unfinished Work
 
-- 总阶段 4 子任务 5：iOS 内容操作模型、客户端与 Store。
-- 总阶段 4 子任务 6：iOS 内容修正、重新发布与申诉 UI。
-- 总阶段 4 子任务 7：原 ID、互动保留、恢复边界的端到端验证及阶段复核。
-- 总阶段 5：独立管理员账号与本设备批准新设备。
-- 总阶段 6：管理员网页控制台。
-- 总阶段 7：通义千问影子分析与自动化策略。
-- 总阶段 8：加固、功能闸门、生产发布与回滚验证。
+1. Re-authenticate App Store Connect and determine the true Build 11 state. The last fresh authenticated server result is unavailable; do not treat the stale `正在处理` row as current truth.
+2. If Build 11 is processed, verify it is available to the intended internal tester/group, then have Rudy install it from TestFlight on the iPhone.
+3. Run a focused phone acceptance pass: authentication, feed/realtime, all five report entry points, optional block, My Reports, owner correction/republication, appeal, notifications, and regression smoke. Record device/iOS/build and outcomes without personal data.
+4. If defects are found, fix test-first, run focused/full verification, increment to Build 12, archive, and request upload authorization if needed. Apple will not accept another upload with build number 11.
+5. After phone acceptance, prepare the App Store release package: screenshots, description, keywords, support/marketing URLs, privacy answers, age rating, review contact/login instructions, release mode, build selection, and final checklist. Do not click final review submission without explicit approval.
+6. Once real users/cases exist, collect the first 30 human AI comparisons under shadow. Keep automatic actions off; any scope-expansion error resets/revises the gate evidence.
+7. Only after all gate metrics pass, present the metrics and reversible action categories for a separate enforce authorization.
 
-## Exact Next Action
+## Risks And Known Issues
 
-收到 Rudy 明确的继续指令后：
+- Build 11 appeared to remain in processing for roughly two days, but the July 18 refresh exposed an expired session, so the visible state may have been stale. If it is genuinely still processing after sign-in, inspect the App Store Connect upload log/status and Apple notices before deciding whether to upload a new build number.
+- The physical phone cannot currently be installed from local Xcode due to device-support mismatch; use TestFlight or update the local Xcode/device-support toolchain separately.
+- The App is not publicly launched, so there is no legitimate source for 30 real-case comparisons yet. Stage 7 Step 6 and Stage 8 Task 8 Step 6 must remain pending.
+- Enforcement is intentionally closed and untested on real user traffic.
+- Production PIDs and external authentication sessions are ephemeral; re-read them rather than trusting this document.
+- `CODEX_HANDOFF.md` is intentionally dirty. Do not accidentally include it in a source commit unless Rudy explicitly requests that.
 
-1. 复核工作区、Git 与两个计划文件，确认本 handoff 未过期。
-2. 在总阶段 4 内开始子任务 5，先为 `SafetyContentAction`、修正草稿与申诉 payload 写失败的 Codable 测试。
-3. iOS 客户端读取 `GET /api/me/content-actions` 时必须持续跟随可选 `nextCursor`，直到游标不存在，不能只取第一页。
-4. 完成子任务 5 的测试与检查点提交后再进入总阶段 4 子任务 6；总阶段 4 完成前不得进入总阶段 5。
+## Next Actions
 
-## Important Paths
+1. Run `git status --short --branch`, confirm HEAD `eec4b68`, and read the two phase plans plus the Stage 8 rollout record.
+2. Ask Rudy to log into App Store Connect if the session is still expired, then perform a read-only status check for TestFlight 1.0 (11).
+3. If Build 11 is ready, confirm internal availability and guide Rudy through TestFlight installation and the phone acceptance checklist.
+4. Route from the phone result: defects -> Build 12; acceptance -> App Store release preparation.
+5. Leave production safety flags and canceled canary unchanged unless Rudy separately authorizes a new production action.
 
-- Worktree: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
-- Handoff: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`
+## Important Commands And Paths
+
+```bash
+cd '/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system'
+git status --short --branch
+git log --oneline -n 20
+git diff --check
+rg -n '^## |^### |^- \[[ xX]\]' \
+  docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md \
+  docs/superpowers/plans/2026-07-10-08-enforcement-deployment.md \
+  docs/superpowers/plans/2026-07-10-report-safety-program.md
+```
+
 - Master plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-report-safety-program.md`
-- Current phase plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-04-content-remediation.md`
-- Backend: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backend`
+- Stage 7 plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md`
+- Stage 8 plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-08-enforcement-deployment.md`
+- Stage 8 local verification: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/operations/verification/2026-07-16-stage8-local-verification.md`
+- Stage 8 production rollout: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/operations/verification/2026-07-16-stage8-production-rollout.md`
+- Safety operations runbook: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/operations/safety-system.md`
+- Release checklist: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/operations/verification/safety-release-checklist.md`
 - iOS project: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/ZhouBianTuan.xcodeproj`
+- Backend: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backend`
+- Build 11 archive: `/Users/rudy2009/Documents/欧美团app/build/TestFlight/ZhouBianTuan-1.0-11.xcarchive`
