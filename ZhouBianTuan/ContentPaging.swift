@@ -59,11 +59,14 @@ struct BackendContentPage: Decodable {
 }
 
 extension AliyunBackendClient {
-    func contentPage(_ query: ContentQuery, cursor: String?, token: String?, refreshSeed: String? = nil) async throws -> BackendContentPage {
+    func contentPage(_ query: ContentQuery, cursor: String?, token: String?, refreshSeed: String? = nil,
+                     manualRefresh: Bool = false) async throws -> BackendContentPage {
         var parameters = query.parameters
         parameters["limit"] = "30"
         if let cursor { parameters["cursor"] = cursor }
         if let refreshSeed, !refreshSeed.isEmpty { parameters["refreshSeed"] = refreshSeed }
+        // F32: only a pull-to-refresh asks the server to rebuild the ranking.
+        if manualRefresh { parameters["refresh"] = "manual" }
         var components = URLComponents()
         components.queryItems = parameters.keys.sorted().map { URLQueryItem(name: $0, value: parameters[$0]) }
         return try await request(query.path + "?" + (components.percentEncodedQuery ?? ""), token: token)
@@ -99,13 +102,17 @@ extension MockAppStore {
         contentPageEpoch = UUID()
     }
 
-    func loadContentPage(_ query: ContentQuery, reset: Bool = false) async {
+    /// `manualRefresh` is the user's pull-to-refresh: the only load that asks
+    /// for a new ranking. Cold start, first load and retries reuse the server's
+    /// recent snapshot (F32).
+    func loadContentPage(_ query: ContentQuery, reset: Bool = false, manualRefresh: Bool = false) async {
         guard isBackendEnabled else { return }
         var state = pageState(query)
         guard reset || (state.requestID == nil && state.hasMore) else { return }
         if reset && state.isResetting { return }
+        let isPersonalizedFeed = query.path == "/feed" && query.parameters["feedMode"] == "forYou"
         let refreshSeed: String?
-        if reset, query.path == "/feed", query.parameters["feedMode"] == "forYou" {
+        if reset, manualRefresh, isPersonalizedFeed {
             refreshSeed = UUID().uuidString.lowercased()
         } else {
             refreshSeed = state.feedRefreshSeed
@@ -122,7 +129,8 @@ extension MockAppStore {
             }
         }
         do {
-            let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken, refreshSeed: refreshSeed)
+            let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken, refreshSeed: refreshSeed,
+                                                           manualRefresh: reset && manualRefresh && isPersonalizedFeed)
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
             mergeContentPage(page)
             let ids: [String]

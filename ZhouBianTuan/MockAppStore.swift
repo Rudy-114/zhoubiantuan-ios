@@ -2827,7 +2827,7 @@ final class MockAppStore: ObservableObject {
     /// Pull-to-refresh. When the list already has content, a failure would
     /// only appear in the footer far below, so surface it with a retry.
     func refreshContentPage(_ query: ContentQuery) async {
-        await loadContentPage(query, reset: true)
+        await loadContentPage(query, reset: true, manualRefresh: true)
         let state = pageState(query)
         guard state.error != nil, !state.ids.isEmpty else { return }
         showToast("刷新失败，请检查网络", style: .error, action: ToastAction(title: "重试") { [weak self] in

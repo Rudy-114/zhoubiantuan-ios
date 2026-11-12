@@ -6,7 +6,13 @@ import { attachPostCounts } from './postCounts.js';
 import { rankFeedCandidates, experimentForUser, FEED_ALGORITHM_VERSION, FEED_SNAPSHOT_TTL_MS } from './feedRanking.js';
 import { logger } from './logger.js';
 
-const CANDIDATE_LIMIT = 1500;
+const CANDIDATE_LIMIT = 600;
+// Snapshots built before F32 held up to 1500 items; their cursors stay valid until they expire.
+const MAX_CURSOR_POSITION = 1500;
+// F32: a first page that is not a manual pull-to-refresh reuses the viewer's
+// latest snapshot for the same feed when it is this recent, instead of
+// recomputing signals, recall and counts and writing up to CANDIDATE_LIMIT rows.
+export const FEED_SNAPSHOT_REUSE_MS = 5 * 60 * 1000;
 export function feedQueryKey(mode, groupType = '', refreshSeed = '') {
   // A refresh starts a new ranking snapshot. Keep the seed in the query key so
   // pagination remains pinned to the same ordering while a later pull can ask
@@ -21,12 +27,19 @@ export function readFeedCursor(value) {
     if (typeof value !== 'string' || value.length > 1000 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error();
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
     if (parsed.kind !== 'feed' || typeof parsed.snapshot !== 'string' || !/^fs-[a-f0-9-]{36}$/.test(parsed.snapshot)
-      || !Number.isSafeInteger(parsed.position) || parsed.position < 0 || parsed.position >= CANDIDATE_LIMIT
+      || !Number.isSafeInteger(parsed.position) || parsed.position < 0 || parsed.position >= MAX_CURSOR_POSITION
       || !Number.isFinite(Number(parsed.score)) || typeof parsed.time !== 'string' || !Number.isFinite(Date.parse(parsed.time))
       || typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 200
       || parsed.version !== FEED_ALGORITHM_VERSION || typeof parsed.query !== 'string' || parsed.query.length > 200) throw new Error();
     return parsed;
   } catch { throw badRequest('信息流游标无效，请刷新列表'); }
+}
+/** The mode/groupType a query key was built for, ignoring the refresh seed. */
+function feedKeyFilter(key) {
+  try {
+    const value = JSON.parse(key);
+    return { mode: value.mode, groupType: value.groupType ?? '' };
+  } catch { return null; }
 }
 function negativeFeedbackSQL() {
   return `NOT EXISTS (SELECT 1 FROM feed_events e WHERE e.user_id=$1 AND e.event_type='notInterested' AND e.post_id=p.id AND e.created_at > now()-interval '90 days')
@@ -63,14 +76,25 @@ export async function personalizedFeed(viewer, input, limit, mode) {
   if (groupType && !['followGroup','splitGoods'].includes(groupType)) throw badRequest('筛选条件无效');
   const refreshSeed = input.refreshSeed === undefined ? '' : String(input.refreshSeed);
   if (refreshSeed.length > 80 || !/^[A-Za-z0-9_-]*$/.test(refreshSeed)) throw badRequest('刷新参数无效');
+  const isManualRefresh = input.refresh === 'manual';
   const queryKey = feedQueryKey(mode, groupType, refreshSeed), cursor = readFeedCursor(input.cursor);
-  if (cursor && cursor.query !== queryKey) throw badRequest('信息流筛选已变化，请刷新列表');
+  // The cursor pins the page to its own snapshot. Only the filter must match:
+  // a reused snapshot may carry another refresh's seed (F32).
+  const cursorFilter = cursor && feedKeyFilter(cursor.query);
+  if (cursor && (!cursorFilter || cursorFilter.mode !== mode || cursorFilter.groupType !== groupType)) throw badRequest('信息流筛选已变化，请刷新列表');
   let snapshot;
   if (cursor) {
     snapshot = (await query(`SELECT * FROM feed_snapshots WHERE id=$1 AND viewer_id=$2 AND query_key=$3 AND algorithm_version=$4 AND expires_at>now()`,
-      [cursor.snapshot,viewer,queryKey,FEED_ALGORITHM_VERSION])).rows[0];
+      [cursor.snapshot,viewer,cursor.query,FEED_ALGORITHM_VERSION])).rows[0];
     if (!snapshot) { const error = badRequest('信息流已更新，请下拉刷新'); error.status=409; error.apiCode='feed_snapshot_expired'; throw error; }
-  } else {
+  } else if (!isManualRefresh) {
+    snapshot = (await query(`SELECT * FROM feed_snapshots WHERE viewer_id=$1 AND feed_mode=$2 AND algorithm_version=$3
+      AND expires_at>now() AND created_at>now()-($4::int*interval '1 millisecond')
+      AND COALESCE(query_key::jsonb->>'groupType','')=$5 ORDER BY created_at DESC LIMIT 1`,
+      [viewer,mode,FEED_ALGORITHM_VERSION,FEED_SNAPSHOT_REUSE_MS,groupType])).rows[0];
+    if (snapshot) logger.info('feed.snapshot_reused', { viewerID:viewer, snapshotID:snapshot.id });
+  }
+  if (!snapshot) {
     const signals = await signalsFor(viewer);
     const tags = Object.entries(signals.tagWeights).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([tag])=>tag);
     // Four bounded recall sources: new content, followed authors, related tags,
@@ -80,10 +104,10 @@ export async function personalizedFeed(viewer, input, limit, mode) {
     const candidates = (await query(`WITH eligible AS MATERIALIZED (
       SELECT p.id,p.author_id,p.created_at,p.category_tags,p.fandom_tags FROM posts p WHERE ${visibility}
       ), recall AS (
-        (SELECT id FROM eligible ORDER BY created_at DESC,id DESC LIMIT 700)
-        UNION (SELECT id FROM eligible WHERE author_id=ANY($4::text[]) ORDER BY created_at DESC,id DESC LIMIT 300)
-        UNION (SELECT id FROM eligible WHERE category_tags && $5::text[] OR fandom_tags && $5::text[] ORDER BY created_at DESC,id DESC LIMIT 300)
-        UNION (SELECT e.id FROM eligible e LEFT JOIN post_favorites f ON f.post_id=e.id GROUP BY e.id,e.created_at ORDER BY count(f.post_id) DESC,e.created_at DESC,e.id DESC LIMIT 200)
+        (SELECT id FROM eligible ORDER BY created_at DESC,id DESC LIMIT 300)
+        UNION (SELECT id FROM eligible WHERE author_id=ANY($4::text[]) ORDER BY created_at DESC,id DESC LIMIT 120)
+        UNION (SELECT id FROM eligible WHERE category_tags && $5::text[] OR fandom_tags && $5::text[] ORDER BY created_at DESC,id DESC LIMIT 120)
+        UNION (SELECT e.id FROM eligible e LEFT JOIN post_favorites f ON f.post_id=e.id GROUP BY e.id,e.created_at ORDER BY count(f.post_id) DESC,e.created_at DESC,e.id DESC LIMIT 80)
       ) SELECT p.*,COALESCE(c.deadline,p.deadline) AS effective_deadline FROM recall r JOIN posts p ON p.id=r.id LEFT JOIN group_collections c ON c.id=p.collection_id`,
       [viewer,groupType,mode,signals.followedAuthorIDs,tags])).rows;
     const counted = await attachPostCounts(candidates);
@@ -113,7 +137,7 @@ export async function personalizedFeed(viewer, input, limit, mode) {
     WHERE i.snapshot_id=$2 AND i.position>$3 AND ${visiblePostSQL('p','$1')} AND ${negativeFeedbackSQL()}
     ORDER BY i.position LIMIT $4`, [viewer,snapshot.id,cursor?.position ?? -1,limit+1])).rows;
   const items=rows.slice(0,limit), hasMore=rows.length>limit, last=items.at(-1);
-  const nextCursor=hasMore ? Buffer.from(JSON.stringify({kind:'feed',snapshot:snapshot.id,position:last.position,score:Number(last.feed_score),time:new Date(last.post_created_at).toISOString(),id:last.id,query:queryKey,version:FEED_ALGORITHM_VERSION})).toString('base64url') : null;
+  const nextCursor=hasMore ? Buffer.from(JSON.stringify({kind:'feed',snapshot:snapshot.id,position:last.position,score:Number(last.feed_score),time:new Date(last.post_created_at).toISOString(),id:last.id,query:snapshot.query_key,version:FEED_ALGORITHM_VERSION})).toString('base64url') : null;
   logger.info('feed.page', { snapshotID:snapshot.id, returned:items.length, hasMore, durationMs:Math.round(performance.now()-started) });
   return { items, hasMore, nextCursor, feed:{mode,algorithmVersion:FEED_ALGORITHM_VERSION,personalized:true,requestID:snapshot.id,snapshotExpiresAt:snapshot.expires_at,experiment:experimentForUser(viewer)} };
 }

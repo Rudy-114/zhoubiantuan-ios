@@ -43,7 +43,7 @@ test("pull refresh creates a new exploratory order while pagination stays on its
     SELECT value,$2,'Refresh candidate',now()+interval '2 days',now(),ARRAY['same'],ARRAY['same']
     FROM unnest($1::text[]) AS value`, [postIDs, author.id]);
 
-  const request = seed => api.request(`/feed?limit=10&refreshSeed=${seed}`, { token: viewer.token });
+  const request = seed => api.request(`/feed?limit=10&refreshSeed=${seed}&refresh=manual`, { token: viewer.token });
   const first = await request("seed-a").then(async response => {
     assert.equal(response.status, 200, await response.clone().text());
     return response.json();
@@ -56,8 +56,54 @@ test("pull refresh creates a new exploratory order while pagination stays on its
 
   const next = await api.request(`/feed?limit=10&refreshSeed=seed-a&cursor=${encodeURIComponent(first.nextCursor)}`, { token: viewer.token });
   assert.equal(next.status, 200, await next.clone().text());
-  const mismatched = await api.request(`/feed?limit=10&refreshSeed=seed-b&cursor=${encodeURIComponent(first.nextCursor)}`, { token: viewer.token });
+  const nextBody = await next.json();
+  assert.equal(nextBody.feed.requestID, first.feed.requestID);
+  // The cursor stays pinned to its own snapshot whatever seed accompanies it.
+  const otherSeed = await api.request(`/feed?limit=10&refreshSeed=seed-b&cursor=${encodeURIComponent(first.nextCursor)}`, { token: viewer.token });
+  assert.equal(otherSeed.status, 200, await otherSeed.clone().text());
+  assert.deepEqual((await otherSeed.json()).posts.map(post => post.id), nextBody.posts.map(post => post.id));
+  // A different filter is still rejected.
+  const mismatched = await api.request(`/feed?limit=10&groupType=splitGoods&cursor=${encodeURIComponent(first.nextCursor)}`, { token: viewer.token });
   assert.equal(mismatched.status, 400, await mismatched.clone().text());
+});
+
+test("first pages reuse a recent snapshot unless the user pulls to refresh", async () => {
+  const viewer = await makeUser();
+  const author = await makeUser();
+  const postIDs = Array.from({ length: 25 }, () => id("p-reuse"));
+  await query(`INSERT INTO posts(id,author_id,title,deadline,created_at)
+    SELECT value,$2,'Reuse candidate',now()+interval '2 days',now() FROM unnest($1::text[]) AS value`, [postIDs, author.id]);
+  const page = async path => {
+    const response = await api.request(path, { token: viewer.token });
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const snapshotCount = async () => Number((await query("SELECT count(*) FROM feed_snapshots WHERE viewer_id=$1", [viewer.id])).rows[0].count);
+
+  const coldStart = await page("/feed?limit=10");
+  const again = await page("/feed?limit=10");
+  assert.equal(again.feed.requestID, coldStart.feed.requestID);
+  assert.deepEqual(again.posts.map(post => post.id), coldStart.posts.map(post => post.id));
+  // A client that kept an older seed still gets the recent snapshot and can page through it.
+  const withSeed = await page("/feed?limit=10&refreshSeed=old-seed");
+  assert.equal(withSeed.feed.requestID, coldStart.feed.requestID);
+  const second = await page(`/feed?limit=10&cursor=${encodeURIComponent(withSeed.nextCursor)}`);
+  assert.equal(second.feed.requestID, coldStart.feed.requestID);
+  assert.equal(await snapshotCount(), 1);
+
+  // Group filters keep separate snapshots.
+  const splitGoods = await page("/feed?limit=10&groupType=splitGoods");
+  assert.notEqual(splitGoods.feed.requestID, coldStart.feed.requestID);
+
+  const manual = await page("/feed?limit=10&refresh=manual&refreshSeed=new-seed");
+  assert.notEqual(manual.feed.requestID, coldStart.feed.requestID);
+  const afterManual = await page("/feed?limit=10");
+  assert.equal(afterManual.feed.requestID, manual.feed.requestID);
+
+  // Older than the reuse window: recompute.
+  await query("UPDATE feed_snapshots SET created_at=now()-interval '6 minutes' WHERE viewer_id=$1", [viewer.id]);
+  const stale = await page("/feed?limit=10");
+  assert.notEqual(stale.feed.requestID, manual.feed.requestID);
 });
 
 test("Feed events accept batches, ignore invisible posts and deduplicate retries", async () => {

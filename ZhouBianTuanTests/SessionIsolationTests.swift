@@ -309,6 +309,27 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertNil(store.collectionIndex("nothing"))
     }
 
+    func testOnlyPullToRefreshAsksForANewFeedRanking() async {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        let query = ContentQuery(parameters: ["groupType": "followGroup", "feedMode": "forYou"])
+        let requests = RequestBag()
+        StubProtocol.handler = { request in
+            requests.add(request)
+            request.reply(["posts": [], "users": [], "collections": [], "hasMore": false])
+        }
+        await store.loadContentPage(query, reset: true)
+        await store.refreshContentPage(query)
+        let feedURLs = requests.all().compactMap(\.request.url).filter { $0.path.hasSuffix("/feed") }
+        XCTAssertEqual(feedURLs.count, 2)
+        let items = feedURLs.map { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems ?? [] }
+        XCTAssertFalse(items[0].contains { $0.name == "refresh" })
+        XCTAssertFalse(items[0].contains { $0.name == "refreshSeed" })
+        XCTAssertTrue(items[1].contains { $0.name == "refresh" && $0.value == "manual" })
+        XCTAssertTrue(items[1].contains { $0.name == "refreshSeed" })
+    }
+
     func testPlainToastAssignmentStaysCompatible() {
         let store = store()
         store.toastMessage = "hello"
@@ -391,9 +412,10 @@ final class SessionIsolationTests: XCTestCase {
             }
         }
 
-        await store.loadContentPage(query, reset: true)
+        // Only a pull-to-refresh creates a seed (F32).
+        await store.loadContentPage(query, reset: true, manualRefresh: true)
         XCTAssertNotNil(expectedSeed)
-        await store.loadContentPage(query, reset: true)
+        await store.loadContentPage(query, reset: true, manualRefresh: true)
         XCTAssertEqual(store.pageState(query).feedRefreshSeed, expectedSeed)
         await store.loadContentPage(query)
         await fulfillment(of: [nextPage], timeout: 3)
