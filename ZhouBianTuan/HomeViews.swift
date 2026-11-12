@@ -246,6 +246,7 @@ struct WaterfallGrid: View {
     }
 
     var body: some View {
+        let columns = self.columns
         HStack(alignment: .top, spacing: 12) {
             LazyVStack(spacing: 14) {
                 ForEach(columns[0]) { post in

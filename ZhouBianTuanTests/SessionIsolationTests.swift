@@ -276,6 +276,39 @@ final class SessionIsolationTests: XCTestCase {
         await fulfillment(of: [liked, synced], timeout: 3, enforceOrder: true)
     }
 
+    func testIDIndexesFollowArrayChanges() throws {
+        let store = store()
+        func post(_ id: String, title: String = "T") throws -> GroupBuyPost {
+            let json: [String: Any] = [
+                "id": id, "title": title, "authorID": "B", "collectionID": "", "imageNames": [], "groupType": "followGroup",
+                "categoryTags": [], "fandomTags": [], "price": "1", "deposit": "", "deadline": "2026-12-01T00:00:00Z",
+                "condition": "", "isFormed": false, "description": "", "wechat": "", "qq": "", "groupInfo": "",
+                "externalLink": "", "createdAt": "2026-09-01T00:00:00Z", "likedCount": 0, "favoriteCount": 0,
+                "commentCount": 0, "reportCount": 0, "status": "active", "imageAspect": 1.0,
+                "pingguAveragePrice": "", "pingguNote": "", "revision": 1, "unsoldRoles": []
+            ]
+            return try JSONDecoder().decode(BackendPost.self, from: JSONSerialization.data(withJSONObject: json)).localPost()
+        }
+        store.posts = [try post("a"), try post("b"), try post("c")]
+        XCTAssertEqual(store.postIndex("b"), 1)
+        store.posts.remove(at: 0)
+        XCTAssertNil(store.postIndex("a"))
+        XCTAssertEqual(store.postIndex("c"), 1)
+        store.mergePosts([try post("d")])
+        XCTAssertEqual(store.postIndex("d"), 0)
+        XCTAssertEqual(store.postIndex("c"), 2)
+        store.posts[2].title = "edited"
+        XCTAssertEqual(store.postIndex("c").map { store.posts[$0].title }, "edited")
+        for id in ["b", "c", "d"] {
+            XCTAssertEqual(store.postIndex(id).map { store.posts[$0].id }, id)
+        }
+        // A duplicated ID resolves to the first element, like `first(where:)`.
+        store.posts.append(try post("b", title: "duplicate"))
+        XCTAssertEqual(store.postIndex("b"), store.posts.firstIndex { $0.id == "b" })
+        XCTAssertNil(store.userIndex("nobody"))
+        XCTAssertNil(store.collectionIndex("nothing"))
+    }
+
     func testPlainToastAssignmentStaysCompatible() {
         let store = store()
         store.toastMessage = "hello"

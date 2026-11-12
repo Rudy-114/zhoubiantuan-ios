@@ -88,7 +88,10 @@ extension MockAppStore {
         }
     }
     func pageUsers(_ query: ContentQuery) -> [User] {
-        pageState(query).ids.compactMap { id in users.first { $0.id == id && canShowContent(from: id) } }
+        pageState(query).ids.compactMap { id in
+            guard canShowContent(from: id), let index = userIndex(id) else { return nil }
+            return users[index]
+        }
     }
     func invalidateContentPages() {
         contentPages.removeAll()

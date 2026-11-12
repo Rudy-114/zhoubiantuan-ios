@@ -156,7 +156,7 @@ struct PostDetailView: View {
             hiddenByBlockBody
         } else {
             VStack(spacing: 16) {
-                if store.postDetailRequests[postID] != nil { ProgressView("正在加载内容…") }
+                if store.loadingPostDetailIDs.contains(postID) { ProgressView("正在加载内容…") }
                 else {
                     ContentUnavailableView("暂时无法显示", systemImage: "exclamationmark.triangle", description: Text(store.postDetailErrors[postID] ?? "这条团购可能已下架或被隐藏。"))
                     Button("重新加载") { Task { await store.loadPostDetail(postID) } }

@@ -4,9 +4,9 @@ import UIKit
 @MainActor
 final class MockAppStore: ObservableObject {
     // MARK: - Published State
-    @Published var users: [User]
-    @Published var posts: [GroupBuyPost]
-    @Published var collections: [GroupCollection]
+    @Published var users: [User] { didSet { userIndexCache = nil } }
+    @Published var posts: [GroupBuyPost] { didSet { postIndexCache = nil } }
+    @Published var collections: [GroupCollection] { didSet { collectionIndexCache = nil } }
     @Published var reviews: [ReviewPost]
     @Published var comments: [Comment]
     @Published var threads: [MessageThread] {
@@ -16,7 +16,15 @@ final class MockAppStore: ObservableObject {
     @Published var contentPages: [String: ContentPageState] = [:]
     @Published var contentPageEpoch = UUID()
     @Published var postDetailErrors: [String: String] = [:]
-    @Published var postDetailRequests: [String: UUID] = [:]
+    /// Not published: request bookkeeping changes twice per detail load.
+    /// Views read `loadingPostDetailIDs`, which only publishes real changes.
+    var postDetailRequests: [String: UUID] = [:] {
+        didSet {
+            let ids = Set(postDetailRequests.keys)
+            if ids != loadingPostDetailIDs { loadingPostDetailIDs = ids }
+        }
+    }
+    @Published private(set) var loadingPostDetailIDs: Set<String> = []
     @Published private var totalUnreadMessageCount: Int?
     private var unreadSnapshotCursor: Int64?
     @Published var reports: [Report]
@@ -399,7 +407,7 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能调整推荐") else { return }
         recordFeedEvent("hideAuthor", postID: postID, metadata: ["authorID": authorID])
         for key in contentPages.keys {
-            contentPages[key]?.ids.removeAll { id in posts.first(where: { $0.id == id })?.authorID == authorID }
+            contentPages[key]?.ids.removeAll { id in postByID(id)?.authorID == authorID }
         }
         showToast("已减少该团长的内容")
     }
@@ -458,7 +466,7 @@ final class MockAppStore: ObservableObject {
     // MARK: - Session and Backend Sync
 
     var currentUser: User {
-        users.first(where: { $0.id == currentUserID }) ?? users.first ?? Self.blankUser
+        userByID(currentUserID) ?? users.first ?? Self.blankUser
     }
 
     func loadBackendIfNeeded() async {
@@ -876,7 +884,8 @@ final class MockAppStore: ObservableObject {
             }
             usersByID[user.id] = user
         }
-        users = order.compactMap { usersByID[$0] }
+        let merged = order.compactMap { usersByID[$0] }
+        if merged != users { users = merged }
     }
 
     func mergePosts(_ backendPosts: [GroupBuyPost]) {
@@ -891,7 +900,8 @@ final class MockAppStore: ObservableObject {
             }
             postsByID[post.id] = post
         }
-        posts = order.compactMap { postsByID[$0] }
+        let merged = order.compactMap { postsByID[$0] }
+        if merged != posts { posts = merged }
     }
 
     func mergeCollections(_ backendCollections: [GroupCollection]) {
@@ -906,7 +916,8 @@ final class MockAppStore: ObservableObject {
             }
             collectionsByID[collection.id] = collection
         }
-        collections = order.compactMap { collectionsByID[$0] }
+        let merged = order.compactMap { collectionsByID[$0] }
+        if merged != collections { collections = merged }
     }
 
     func mergeComments(_ backendComments: [Comment]) {
@@ -919,7 +930,8 @@ final class MockAppStore: ObservableObject {
             }
             commentsByID[comment.id] = comment
         }
-        comments = order.compactMap { commentsByID[$0] }
+        let merged = order.compactMap { commentsByID[$0] }
+        if merged != comments { comments = merged }
     }
 
     func mergeChangedMessageThreads(from backendThreads: [MessageThread]) {
@@ -1058,29 +1070,63 @@ final class MockAppStore: ObservableObject {
         thread.publisherUserID == currentUserID ? thread.buyerUserID : thread.publisherUserID
     }
 
+    // MARK: - ID indexes (F06)
+    // Rebuilt lazily after the array changes. The first element wins for a
+    // duplicated ID, matching the `first(where:)` lookups they replace.
+
+    private var postIndexCache: [String: Int]?
+    private var userIndexCache: [String: Int]?
+    private var collectionIndexCache: [String: Int]?
+
+    private static func indexByID<T: Identifiable>(_ items: [T]) -> [String: Int] where T.ID == String {
+        var index: [String: Int] = [:]
+        index.reserveCapacity(items.count)
+        for (offset, item) in items.enumerated() where index[item.id] == nil { index[item.id] = offset }
+        return index
+    }
+
+    func postIndex(_ id: String) -> Int? {
+        if postIndexCache == nil { postIndexCache = Self.indexByID(posts) }
+        return postIndexCache?[id]
+    }
+
+    func userIndex(_ id: String) -> Int? {
+        if userIndexCache == nil { userIndexCache = Self.indexByID(users) }
+        return userIndexCache?[id]
+    }
+
+    func collectionIndex(_ id: String) -> Int? {
+        if collectionIndexCache == nil { collectionIndexCache = Self.indexByID(collections) }
+        return collectionIndexCache?[id]
+    }
+
+    func postByID(_ id: String) -> GroupBuyPost? { postIndex(id).map { posts[$0] } }
+    func userByID(_ id: String) -> User? { userIndex(id).map { users[$0] } }
+    func collectionByID(_ id: String) -> GroupCollection? { collectionIndex(id).map { collections[$0] } }
+
     func user(id: String) -> User {
-        users.first(where: { $0.id == id }) ?? User(id: id, nickname: "用户资料暂不可用", bio: "", followingCount: 0,
+        userByID(id) ?? User(id: id, nickname: "用户资料暂不可用", bio: "", followingCount: 0,
             followersCount: 0, postCount: 0, isRestricted: false, canShowContact: false, avatarSymbol: "?", avatarTint: .rose)
     }
 
     func post(id: String) -> GroupBuyPost? {
-        guard let post = posts.first(where: { $0.id == id }),
+        guard let post = postByID(id),
               post.status != .deleted,
               post.status == .active || post.authorID == currentUserID,
               canShowContent(from: post.authorID) else { return nil }
-        if let collectionID = post.collectionID, let collection = collections.first(where: { $0.id == collectionID }),
+        if let collectionID = post.collectionID, let collection = collectionByID(collectionID),
            collection.status != .active && collection.ownerID != currentUserID { return nil }
         return post
     }
 
     func isPostHiddenByBlock(id: String) -> Bool {
-        guard let post = posts.first(where: { $0.id == id }) else { return false }
+        guard let post = postByID(id) else { return false }
         return post.status == .active && !canShowContent(from: post.authorID)
     }
 
     func collection(id: String?) -> GroupCollection? {
         guard let id else { return nil }
-        return collections.first(where: { $0.id == id })
+        return collectionByID(id)
     }
 
     func registrationID(for userID: String) -> String {
@@ -1280,14 +1326,14 @@ final class MockAppStore: ObservableObject {
 
     func toggleLike(postID: String) {
         guard requireLogin(prompt: "登录后才能点赞") else { return }
-        guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
+        guard let index = postIndex(postID) else { return }
         let wasLiked = likedPostIDs.contains(postID)
         if wasLiked {
             likedPostIDs.remove(postID)
             posts[index].likedCount = max(0, posts[index].likedCount - 1)
             recordFeedEvent("like", postID: postID, metadata: ["enabled": "false"])
             runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
-                guard let self, !self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                guard let self, !self.likedPostIDs.contains(postID), let index = self.postIndex(postID) else { return }
                 self.likedPostIDs.insert(postID); self.posts[index].likedCount += 1
             }, retry: { [weak self] in self?.toggleLike(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
@@ -1298,7 +1344,7 @@ final class MockAppStore: ObservableObject {
             posts[index].likedCount += 1
             recordFeedEvent("like", postID: postID, metadata: ["enabled": "true"])
             runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
-                guard let self, self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                guard let self, self.likedPostIDs.contains(postID), let index = self.postIndex(postID) else { return }
                 self.likedPostIDs.remove(postID); self.posts[index].likedCount = max(0, self.posts[index].likedCount - 1)
             }, retry: { [weak self] in self?.toggleLike(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
@@ -1309,7 +1355,7 @@ final class MockAppStore: ObservableObject {
 
     func toggleFavorite(postID: String) {
         guard requireLogin(prompt: "登录后才能收藏") else { return }
-        guard let index = posts.firstIndex(where: { $0.id == postID }) else { return }
+        guard let index = postIndex(postID) else { return }
         let wasFavorite = favoritePostIDs.contains(postID)
         if wasFavorite {
             favoritePostIDs.remove(postID)
@@ -1317,7 +1363,7 @@ final class MockAppStore: ObservableObject {
             showToast("已取消收藏")
             recordFeedEvent("favorite", postID: postID, metadata: ["enabled": "false"])
             runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
-                guard let self, !self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                guard let self, !self.favoritePostIDs.contains(postID), let index = self.postIndex(postID) else { return }
                 self.favoritePostIDs.insert(postID); self.posts[index].favoriteCount += 1
             }, retry: { [weak self] in self?.toggleFavorite(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
@@ -1329,7 +1375,7 @@ final class MockAppStore: ObservableObject {
             showToast("已收藏，可在收藏中查看截团日期")
             recordFeedEvent("favorite", postID: postID, metadata: ["enabled": "true"])
             runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
-                guard let self, self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
+                guard let self, self.favoritePostIDs.contains(postID), let index = self.postIndex(postID) else { return }
                 self.favoritePostIDs.remove(postID); self.posts[index].favoriteCount = max(0, self.posts[index].favoriteCount - 1)
             }, retry: { [weak self] in self?.toggleFavorite(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
@@ -1342,8 +1388,8 @@ final class MockAppStore: ObservableObject {
         guard requireLogin(prompt: "登录后才能关注") else { return }
         guard userID != currentUserID else { return }
         let wasFollowing = followedUserIDs.contains(userID)
-        let targetIndex = users.firstIndex(where: { $0.id == userID })
-        let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
+        let targetIndex = userIndex(userID)
+        let currentIndex = userIndex(currentUserID)
         if wasFollowing {
             followedUserIDs.remove(userID)
             followingIDsByUserID[currentUserID] = followedUserIDs
@@ -1406,10 +1452,10 @@ final class MockAppStore: ObservableObject {
         guard followedUserIDs.contains(userID) else { return }
         followedUserIDs.remove(userID)
         followingIDsByUserID[currentUserID] = followedUserIDs
-        if let currentIndex = users.firstIndex(where: { $0.id == currentUserID }) {
+        if let currentIndex = userIndex(currentUserID) {
             users[currentIndex].followingCount = followedUserIDs.count
         }
-        if let targetIndex = users.firstIndex(where: { $0.id == userID }) {
+        if let targetIndex = userIndex(userID) {
             users[targetIndex].followersCount = max(0, users[targetIndex].followersCount - 1)
         }
     }
@@ -1419,8 +1465,8 @@ final class MockAppStore: ObservableObject {
             guard !followedUserIDs.contains(userID) else { return }
             followedUserIDs.insert(userID)
             followingIDsByUserID[currentUserID] = followedUserIDs
-            if let currentIndex = users.firstIndex(where: { $0.id == currentUserID }) { users[currentIndex].followingCount = followedUserIDs.count }
-            if let targetIndex = users.firstIndex(where: { $0.id == userID }) { users[targetIndex].followersCount += 1 }
+            if let currentIndex = userIndex(currentUserID) { users[currentIndex].followingCount = followedUserIDs.count }
+            if let targetIndex = userIndex(userID) { users[targetIndex].followersCount += 1 }
         } else {
             revertLocalFollow(userID: userID)
         }
@@ -1441,7 +1487,7 @@ final class MockAppStore: ObservableObject {
                     let localComment = response.comment.localComment()
                     let alreadyHadComment = comments.contains { $0.id == localComment.id }
                     mergeComments([localComment])
-                    if !alreadyHadComment, localComment.status == .active, let index = posts.firstIndex(where: { $0.id == postID }) {
+                    if !alreadyHadComment, localComment.status == .active, let index = postIndex(postID) {
                         posts[index].commentCount += 1
                     }
                     recordFeedEvent("comment", postID: postID)
@@ -1460,7 +1506,7 @@ final class MockAppStore: ObservableObject {
             return
         }
         comments.append(Comment(id: "c-\(UUID().uuidString)", body: trimmed, authorID: currentUserID, postID: postID, replyToID: replyToID, createdAt: Date(), status: .active))
-        if let index = posts.firstIndex(where: { $0.id == postID }) {
+        if let index = postIndex(postID) {
             posts[index].commentCount += 1
         }
         recordFeedEvent("comment", postID: postID)
@@ -1482,7 +1528,7 @@ final class MockAppStore: ObservableObject {
             return
         }
         comments[commentIndex].status = .deleted
-        if let postIndex = posts.firstIndex(where: { $0.id == comment.postID }) {
+        if let postIndex = postIndex(comment.postID) {
             posts[postIndex].commentCount = max(0, posts[postIndex].commentCount - 1)
         }
         showToast("评论已删除")
@@ -1562,7 +1608,7 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func saveCurrentBio(_ bio: String) async -> Bool {
-        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return false }
+        guard let index = userIndex(currentUserID) else { return false }
         var updatedUser = users[index]
         updatedUser.bio = bio.trimmed.isEmpty ? "点击这里，填写简介" : bio.trimmed
         if isBackendEnabled {
@@ -1571,7 +1617,7 @@ final class MockAppStore: ObservableObject {
             do {
                 let response = try await backendClient.updateProfile(token: backendToken, user: updatedUser)
                 guard isCurrentSession(session) else { return false }
-                if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) { users[userIndex] = response.user.localUser() }
+                if let userIndex = userIndex(response.user.id) { users[userIndex] = response.user.localUser() }
                 await refreshFromBackend(silent: true)
                 guard isCurrentSession(session) else { return false }
                 showToast(response.moderation?.userMessage ?? "简介已保存")
@@ -1593,7 +1639,7 @@ final class MockAppStore: ObservableObject {
 
     @discardableResult
     func saveCurrentProfile(nickname: String, redBookID: String, bio: String, gender: String, birthday: String, region: String, avatarSymbol: String, avatarTint: ColorToken, backgroundImageName: String, avatarImageData: Data?, backgroundImageData: Data?) async -> Bool {
-        guard let index = users.firstIndex(where: { $0.id == currentUserID }) else { return false }
+        guard let index = userIndex(currentUserID) else { return false }
         var rejectedNicknameChange = false
         let trimmedNickname = nickname.trimmed
         var proposedUser = users[index]
@@ -1637,7 +1683,7 @@ final class MockAppStore: ObservableObject {
                         backgroundObjectKey: backgroundObjectKey
                     )
                     guard isCurrentSession(session) else { return false }
-                    if let userIndex = users.firstIndex(where: { $0.id == response.user.id }) {
+                    if let userIndex = userIndex(response.user.id) {
                         users[userIndex] = response.user.localUser()
                     }
                     await refreshFromBackend(silent: true)
@@ -1746,8 +1792,8 @@ final class MockAppStore: ObservableObject {
     }
 
     private func applyLocalBlock(_ userID: String) {
-        let currentIndex = users.firstIndex(where: { $0.id == currentUserID })
-        let targetIndex = users.firstIndex(where: { $0.id == userID })
+        let currentIndex = userIndex(currentUserID)
+        let targetIndex = userIndex(userID)
         let removedCurrentFollow = followedUserIDs.remove(userID) != nil
         let hadTargetFollowingIDs = followingIDsByUserID[userID] != nil
         var targetFollowingIDs = followingIDsByUserID[userID] ?? []
@@ -2125,7 +2171,7 @@ final class MockAppStore: ObservableObject {
 
     func shareProfileToThread(userID: String, threadID: String) {
         guard requireLogin(prompt: "登录后才能私信分享") else { return }
-        guard let user = users.first(where: { $0.id == userID }),
+        guard let user = userByID(userID),
               let index = threads.firstIndex(where: { $0.id == threadID && isCurrentUserThread($0) }) else { return }
         let message = DirectMessage(
             id: "m-\(UUID().uuidString)",
@@ -2636,7 +2682,7 @@ final class MockAppStore: ObservableObject {
     }
 
     func deleteOwnPost(postID: String) {
-        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
+        guard let postIndex = postIndex(postID),
               posts[postIndex].authorID == currentUserID else { return }
         markOwnPostDeleted(postID)
         showToast("帖子已删除")
@@ -2647,7 +2693,7 @@ final class MockAppStore: ObservableObject {
     }
 
     private func markOwnPostDeleted(_ postID: String) {
-        guard let postIndex = posts.firstIndex(where: { $0.id == postID }),
+        guard let postIndex = postIndex(postID),
               posts[postIndex].authorID == currentUserID else { return }
         posts[postIndex].status = .deleted
         likedPostIDs.remove(postID)
@@ -2726,7 +2772,7 @@ final class MockAppStore: ObservableObject {
                 let localPost = response.post.localPost()
                 mergePosts([localPost])
                 if let collectionID = localPost.collectionID,
-                   let index = collections.firstIndex(where: { $0.id == collectionID }),
+                   let index = collectionIndex(collectionID),
                    !collections[index].postIDs.contains(localPost.id) {
                     collections[index].postIDs.insert(localPost.id, at: 0)
                 }
@@ -2743,7 +2789,7 @@ final class MockAppStore: ObservableObject {
             }
         }
         posts.insert(post, at: 0)
-        if let index = collections.firstIndex(where: { $0.id == inherited.id }) {
+        if let index = collectionIndex(inherited.id) {
             collections[index].postIDs.insert(postID, at: 0)
         }
         if let replacingPostID {
