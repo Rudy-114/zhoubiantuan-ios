@@ -231,6 +231,15 @@ struct ChatView: View {
                 }
 
                 VStack(spacing: 0) {
+                    if thread.messages.last(where: { $0.senderID == store.currentUserID })?.deliveryStatus == .failedUnrepliedLimit {
+                        Label("对方回复或关注你之前，最多发送 3 条消息。对方回复后可继续发送。", systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.subtext)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Theme.panelRaised)
+                    }
                     HStack(spacing: 12) {
                         EmojiMessageTextField(
                             text: $draft,
@@ -652,6 +661,7 @@ struct ChatBubble: View {
         case .failedBlockedByPeer: return "你已被对方拉黑，无法发送消息"
         case .failedBlockedPeer: return "你已拉黑对方，解除拉黑后才能发送"
         case .failedNetwork: return "发送失败，请稍后重试"
+        case .failedUnrepliedLimit: return "对方回复或关注你之前，最多发送 3 条消息"
         case .sent, .sending: return nil
         }
     }

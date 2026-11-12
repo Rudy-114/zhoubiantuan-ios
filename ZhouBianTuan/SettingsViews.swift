@@ -80,6 +80,9 @@ struct SettingsView: View {
 struct AccountSecuritySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
+    @State private var showsLogoutAllConfirm = false
+    @State private var isLoggingOutAll = false
+    @State private var logoutAllError: String?
 
     var body: some View {
         SettingsDetailScaffold(title: "账号与安全", dismiss: dismiss) {
@@ -89,6 +92,24 @@ struct AccountSecuritySettingsView: View {
                 SettingsValueRow(title: "密码登录", value: "已启用")
                 SettingsSeparator()
                 SettingsValueRow(title: "邮箱验证码", value: "可用")
+            }
+
+            SettingsDetailGroup {
+                NavigationLink(destination: ChangePasswordView()) {
+                    SettingsValueRow(title: "修改密码", value: "")
+                }
+                .buttonStyle(.pressFeedback)
+                SettingsSeparator()
+                Button {
+                    showsLogoutAllConfirm = true
+                } label: {
+                    SettingsValueRow(title: "退出所有设备", value: isLoggingOutAll ? "正在退出…" : "")
+                }
+                .buttonStyle(.pressFeedback)
+                .disabled(isLoggingOutAll)
+            }
+            if let logoutAllError {
+                SettingsInlineError(message: logoutAllError)
             }
 
             SettingsDetailGroup {
@@ -103,6 +124,123 @@ struct AccountSecuritySettingsView: View {
                 .buttonStyle(.pressFeedback)
             }
         }
+        .alert("退出所有设备？", isPresented: $showsLogoutAllConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("全部退出", role: .destructive) {
+                Task {
+                    guard !isLoggingOutAll else { return }
+                    isLoggingOutAll = true
+                    logoutAllError = await store.logOutAllDevices()
+                    isLoggingOutAll = false
+                }
+            }
+        } message: {
+            Text("所有设备（包括本机）的登录状态都会失效，需要重新登录。")
+        }
+    }
+}
+
+struct ChangePasswordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    private var validationMessage: String? {
+        if newPassword.isEmpty { return nil }
+        if newPassword.count < 8 { return "新密码至少 8 位" }
+        if !confirmPassword.isEmpty && confirmPassword != newPassword { return "两次输入的新密码不一致" }
+        return nil
+    }
+
+    private var canSubmit: Bool {
+        !isSubmitting && !currentPassword.isEmpty && newPassword.count >= 8 && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        SettingsDetailScaffold(title: "修改密码", dismiss: dismiss) {
+            VStack(spacing: 14) {
+                SettingsSecureField(title: "当前密码", text: $currentPassword, contentType: .password)
+                SettingsSecureField(title: "新密码", text: $newPassword, contentType: .newPassword)
+                SettingsSecureField(title: "确认新密码", text: $confirmPassword, contentType: .newPassword)
+            }
+            if let message = errorMessage ?? validationMessage {
+                SettingsInlineError(message: message)
+            }
+            Text("修改后，其他设备上的登录会失效；本机保持登录。忘记当前密码可退出登录后使用「忘记密码」。")
+                .font(.footnote)
+                .foregroundStyle(Theme.subtext)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            SettingsPrimaryButton(title: isSubmitting ? "正在提交…" : "确认修改", isEnabled: canSubmit) {
+                Task {
+                    guard canSubmit else { return }
+                    isSubmitting = true
+                    errorMessage = nil
+                    let error = await store.changePassword(currentPassword: currentPassword, newPassword: newPassword)
+                    isSubmitting = false
+                    if let error { errorMessage = error } else { dismiss() }
+                }
+            }
+        }
+        .onChange(of: currentPassword) { errorMessage = nil }
+        .onChange(of: newPassword) { errorMessage = nil }
+    }
+}
+
+struct SettingsSecureField: View {
+    let title: String
+    @Binding var text: String
+    var contentType: UITextContentType = .password
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Theme.subtext)
+            SecureField(title, text: $text)
+                .textContentType(contentType)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .foregroundStyle(Theme.text)
+                .padding(13)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1) }
+        }
+    }
+}
+
+struct SettingsInlineError: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.circle.fill")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Theme.hotPink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+    }
+}
+
+struct SettingsPrimaryButton: View {
+    let title: String
+    var isEnabled = true
+    var tint: Color = Theme.hotPink
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(tint.opacity(isEnabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.pressFeedback)
+        .disabled(!isEnabled)
     }
 }
 
@@ -136,8 +274,6 @@ struct GeneralSettingsView: View {
                             store.removeBrowsingHistory(postIDs: Set(store.browsingHistoryIDs))
                         }
                     }
-                SettingsSeparator()
-                SettingsToggleRow(title: "未关注前最多两条私信", subtitle: "开启后，对方关注你之前，你最多只能发送两条消息", isOn: $store.limitsUnrepliedMessages)
             }
         }
     }
@@ -488,10 +624,31 @@ struct BlockedUsersView: View {
 }
 
 struct AccountDeletionView: View {
+    enum VerificationMethod: String, CaseIterable, Identifiable {
+        case password = "账号密码"
+        case code = "邮箱验证码"
+        var id: String { rawValue }
+    }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     @State private var showsConfirm = false
     @State private var isDeleting = false
+    @State private var showsVerification = false
+    @State private var method: VerificationMethod = .password
+    @State private var password = ""
+    @State private var code = ""
+    @State private var isSendingCode = false
+    @State private var codeSent = false
+    @State private var errorMessage: String?
+
+    private var canDelete: Bool {
+        guard !isDeleting else { return false }
+        switch method {
+        case .password: return !password.isEmpty
+        case .code: return code.trimmed.count == 6
+        }
+    }
 
     var body: some View {
         SettingsDetailScaffold(title: "删除账号", dismiss: dismiss) {
@@ -512,32 +669,97 @@ struct AccountDeletionView: View {
             .padding(16)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-            Button {
-                showsConfirm = true
-            } label: {
-                Text(isDeleting ? "正在删除…" : "删除账号")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 15)
-                    .background(Color.red.opacity(isDeleting ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            if showsVerification {
+                verificationSection
+            } else {
+                SettingsPrimaryButton(title: "删除账号", tint: .red) {
+                    showsConfirm = true
+                }
             }
-            .buttonStyle(.pressFeedback)
-            .disabled(isDeleting)
         }
         .alert("确认删除账号？", isPresented: $showsConfirm) {
             Button("取消", role: .cancel) {}
-            Button("删除", role: .destructive) {
-                Task {
-                    isDeleting = true
-                    let ok = await store.deleteAccount()
-                    isDeleting = false
-                    if ok { dismiss() }
-                }
+            Button("继续", role: .destructive) {
+                withAnimation(.easeOut(duration: 0.2)) { showsVerification = true }
             }
         } message: {
-            Text("删除后将无法恢复，确定要继续吗？")
+            Text("删除后将无法恢复。下一步需要验证你的身份。")
         }
+        .onChange(of: method) { errorMessage = nil }
+    }
+
+    @ViewBuilder
+    private var verificationSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("验证身份")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Theme.text)
+            Picker("验证方式", selection: $method) {
+                ForEach(VerificationMethod.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            switch method {
+            case .password:
+                SettingsSecureField(title: "账号密码", text: $password)
+                Text("通过验证码注册、未设置密码的账号请选择邮箱验证码。")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.subtext)
+            case .code:
+                HStack(alignment: .bottom, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("验证码")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Theme.subtext)
+                        TextField("6 位数字", text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                            .characterLimit(6, text: $code)
+                            .foregroundStyle(Theme.text)
+                            .padding(13)
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    Button {
+                        Task {
+                            guard !isSendingCode else { return }
+                            isSendingCode = true
+                            errorMessage = await store.requestAccountDeletionCode()
+                            codeSent = errorMessage == nil
+                            isSendingCode = false
+                        }
+                    } label: {
+                        Text(isSendingCode ? "发送中" : (codeSent ? "重新发送" : "发送验证码"))
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 104, height: 48)
+                            .background(Theme.hotPink.opacity(isSendingCode ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.pressFeedback)
+                    .disabled(isSendingCode)
+                }
+                if codeSent {
+                    Text("验证码已发送到当前账号邮箱。")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.subtext)
+                }
+            }
+            if let errorMessage {
+                SettingsInlineError(message: errorMessage)
+            }
+            SettingsPrimaryButton(title: isDeleting ? "正在删除…" : "确认删除账号", isEnabled: canDelete, tint: .red) {
+                Task {
+                    guard canDelete else { return }
+                    isDeleting = true
+                    errorMessage = nil
+                    let error = await store.deleteAccount(password: method == .password ? password : nil,
+                                                          code: method == .code ? code.trimmed : nil)
+                    isDeleting = false
+                    if let error { errorMessage = error } else { dismiss() }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func bullet(_ text: String) -> some View {

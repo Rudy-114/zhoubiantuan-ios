@@ -81,8 +81,8 @@ export async function loadBootstrap(userId) {
 
   return {
     users: usersResult.rows.map((row) => userToClient(row, row, userId)),
-    posts: posts.map((row) => postToClient(row, row)),
-    collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids)),
+    posts: posts.map((row) => postToClient(row, row, { viewer: userId })),
+    collections: collectionsResult.rows.map((row) => collectionToClient(row, row.post_ids, { viewer: userId })),
     comments: commentsResult.rows.map(commentToClient),
     messageThreads: messagePage.messageThreads,
     nextThreadsCursor: messagePage.nextCursor,

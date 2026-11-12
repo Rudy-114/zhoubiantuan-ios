@@ -288,6 +288,8 @@ enum MessageDeliveryStatus: String, Hashable, Codable {
     case failedNetwork
     case failedBlockedPeer
     case failedBlockedByPeer
+    /// Server rule (F26): at most 3 messages until the peer replies or follows.
+    case failedUnrepliedLimit
 
     var isFailed: Bool { self != .sent && self != .sending }
     var isOutbox: Bool { self != .sent }

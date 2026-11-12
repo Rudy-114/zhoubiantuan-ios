@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startTestApp, makeUser, query, pool, withTransaction, id } from './helpers.js';
+import { startTestApp, makeUser, makeCode, query, pool, withTransaction, id } from './helpers.js';
 import { createSyncEvent, getCurrentSyncCursor, loadSyncPayload, pruneOldSyncEvents } from '../../src/sync.js';
 
 let api;
@@ -90,7 +90,8 @@ test('collection hiding invalidates child visibility; nonempty collection deleti
 test('account deletion publishes a user tombstone and removes authored content from readers', async () => {
   const author = await makeUser(), reader = await makeUser();
   const post = await makePost(author), cursor = await getCurrentSyncCursor();
-  assert.equal((await api.request('/me', { method: 'DELETE', token: author.token })).status, 204);
+  await makeCode(author, { purpose: 'delete' });
+  assert.equal((await api.request('/me', { method: 'DELETE', token: author.token, body: { code: '123456' } })).status, 204);
   const payload = await loadSyncPayload(reader.id, { cursor });
   assert.ok(payload.removedUserIDs.includes(author.id));
   assert.equal((await api.request(`/posts/${post}`, { token: reader.token })).status, 404);

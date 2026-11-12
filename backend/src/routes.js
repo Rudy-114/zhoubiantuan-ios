@@ -18,10 +18,10 @@ import { assertOwnedObjectKeys, createModerationReview, isModerationAdmin, revie
 import { moderationText, postModerationSnapshot, publicContentModerationText } from "./moderation/text.js";
 import { objectStorage as defaultObjectStorage } from "./oss.js";
 import { attachPostCounts } from "./postCounts.js";
-import { createRateLimiter } from "./rateLimit.js";
+import { consumeRateLimitEvent, createRateLimiter } from "./rateLimit.js";
 import { notifySyncEvents } from "./realtime.js";
 import { createSyncEventsForUsers, createThreadSyncEvents, getCurrentSyncCursor, loadSyncPayload } from "./sync.js";
-import { arrayOfStrings, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, badRequest, normalizeEmail, trimmedString } from "./validators.js";
+import { arrayOfStrings, assertDeadlineInRange, assertEmail, assertEmailCode, assertEmailCodePurpose, assertPassword, assertPostTextFields, badRequest, boundedString, clampImageAspect, MESSAGE_ID_PATTERN, normalizeEmail, THREAD_ID_PATTERN, trimmedString } from "./validators.js";
 import { pageResult, pageSize, readCursor } from "./pagination.js";
 
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -41,7 +41,8 @@ import { createAssetAccessCache, ASSET_ACCESS_CACHE_MS } from "./assets.js";
 import { validateContent } from "./contentValidation.js";
 import { visiblePostSQL, visibleCommentSQL, visibleCollectionSQL, unblockedSQL } from "./visibility.js";
 
-export function createRouter({ objectStorage = defaultObjectStorage, assetAccessCacheMs = ASSET_ACCESS_CACHE_MS } = {}) {
+export function createRouter({ objectStorage = defaultObjectStorage, assetAccessCacheMs = ASSET_ACCESS_CACHE_MS,
+  emailSender = sendEmailCode } = {}) {
   const router = express.Router();
   installUploadRoute(router, objectStorage);
   router.use(validateContent);
@@ -61,6 +62,26 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     max: 3,
     message: "验证码发送太频繁，请稍后再试",
     keyGenerator: (req) => `${req.ip}:${normalizeEmail(req.body?.email)}:${req.body?.purpose || ""}`
+  });
+  // F25: the per-(IP, email, purpose) limiter above is bypassed by rotating
+  // emails or IPs. Also cap each IP and each address on its own.
+  const emailCodeMessage = "验证码发送太频繁，请稍后再试";
+  const emailCodeIPLimiter = createRateLimiter({
+    name: "email_code_ip", store: sharedRateLimitStore, windowMs: 60 * 60 * 1000, max: 10,
+    message: emailCodeMessage, keyGenerator: (req) => req.ip
+  });
+  const emailCodeAddressHourlyLimiter = createRateLimiter({
+    name: "email_code_address_hour", store: sharedRateLimitStore, windowMs: 60 * 60 * 1000, max: 5,
+    message: emailCodeMessage, keyGenerator: (req) => normalizeEmail(req.body?.email)
+  });
+  const emailCodeAddressDailyLimiter = createRateLimiter({
+    name: "email_code_address_day", store: sharedRateLimitStore, windowMs: 24 * 60 * 60 * 1000, max: 10,
+    message: emailCodeMessage, keyGenerator: (req) => normalizeEmail(req.body?.email)
+  });
+  // F31: credential stuffing from many IPs against one account.
+  const loginAddressLimiter = createRateLimiter({
+    name: "auth_address", store: sharedRateLimitStore, windowMs: 15 * 60 * 1000, max: 20,
+    message: "登录尝试太频繁，请稍后再试", keyGenerator: (req) => normalizeEmail(req.body?.email)
   });
   // High-frequency, low-risk traffic counts in process memory (per instance);
   // see rateLimit.js. Signed-in users are keyed by account so a shared NAT
@@ -123,7 +144,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/auth/email/send-code", emailCodeLimiter, async (req, res, next) => {
+  router.post("/auth/email/send-code", emailCodeLimiter, emailCodeIPLimiter, emailCodeAddressHourlyLimiter, emailCodeAddressDailyLimiter, optionalAuth, async (req, res, next) => {
     try {
       const email = assertEmail(req.body.email);
       const purpose = assertEmailCodePurpose(req.body.purpose);
@@ -137,7 +158,21 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         return res.json({ ok: true, message: "如果邮箱已注册，验证码会发送到邮箱" });
       }
 
-      await issueEmailCode({ email, purpose });
+      if (purpose === "delete") {
+        // Only the signed-in owner can request a deletion code for their address.
+        if (!req.user) return res.status(401).json({ error: "需要登录" });
+        if (normalizeEmail(req.user.email) !== email) throw badRequest("邮箱与当前账号不一致");
+      }
+
+      if (purpose === "reset") {
+        // Identical response whether or not the account exists.
+        const message = "如果邮箱已注册，验证码会发送到邮箱";
+        if (!existingUser) return res.json({ ok: true, message });
+        await issueEmailCode({ email, purpose, send: emailSender });
+        return res.json({ ok: true, message });
+      }
+
+      await issueEmailCode({ email, purpose, send: emailSender });
       res.json({ ok: true, message: "验证码已发送" });
     } catch (error) {
       next(error);
@@ -149,7 +184,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
       const email = assertEmail(req.body.email);
       const code = assertEmailCode(req.body.code);
       const password = assertPassword(req.body.password);
-      const nickname = trimmedString(req.body.nickname);
+      const nickname = boundedString(req.body.nickname, { max: 20, field: "昵称" });
       if (!nickname) throw badRequest("请填写昵称");
       const nicknameModeration = await reviewRegistrationText(nickname);
       if (nicknameModeration.status === "rejected") throw badRequest(nicknameModeration.reason);
@@ -171,7 +206,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/auth/email/login", authLimiter, async (req, res, next) => {
+  router.post("/auth/email/login", authLimiter, loginAddressLimiter, async (req, res, next) => {
     try {
       const email = assertEmail(req.body.email);
       const code = String(req.body.code || "").trim();
@@ -197,11 +232,34 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
+  // F11: reset a forgotten password with an emailed code. Revokes every
+  // existing token (token_version + 1) and signs the caller in.
+  router.post("/auth/password/reset", authLimiter, loginAddressLimiter, asyncRoute(async (req, res) => {
+    const email = assertEmail(req.body.email);
+    const code = assertEmailCode(req.body.code);
+    const passwordHash = await hashPassword(assertPassword(req.body.newPassword));
+    const user = await withTransaction(async (client) => {
+      const current = (await client.query("SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL AND status = 'active' FOR UPDATE", [email])).rows[0];
+      if (!current) throw badRequest("验证码无效或已过期");
+      const codeError = await consumeEmailCode(client, { email, purpose: "reset", code });
+      if (codeError) return { codeError };
+      const { rows } = await client.query(
+        `UPDATE users SET password_hash = $2, token_version = token_version + 1, updated_at = now()
+         WHERE id = $1 RETURNING *`, [current.id, passwordHash]);
+      // Receiving the code proves ownership of the address.
+      await client.query("UPDATE auth_identities SET email_verified = true, updated_at = now() WHERE user_id = $1 AND provider = 'email' AND email = $2", [current.id, email]);
+      return { ...rows[0], email_verified: true };
+    });
+    if (user.codeError) throw user.codeError;
+    logger.info("auth.password_reset", { userID: user.id });
+    res.json(await authPayload(user));
+  }));
+
   router.post("/auth/register", (_req, res) => {
     res.status(410).json({ error: "请使用邮箱验证码注册", code: "email_verification_required" });
   });
 
-  router.post("/auth/login", authLimiter, async (req, res, next) => {
+  router.post("/auth/login", authLimiter, loginAddressLimiter, async (req, res, next) => {
     try {
       const email = assertEmail(req.body.email);
       const password = String(req.body.password || "");
@@ -236,10 +294,48 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
   // of personal data; the email is released so it can be registered again, and
   // all authored content is hidden. Existing tokens stop working immediately
   // because userForToken() filters on deleted_at IS NULL AND status = 'active'.
-  router.delete("/me", requireAuth, async (req, res, next) => {
+  // F11: change password while signed in. Other devices are signed out; the
+  // caller receives a fresh token.
+  router.post("/me/password", requireAuth, authLimiter, asyncRoute(async (req, res) => {
+    const currentPassword = String(req.body.currentPassword || "");
+    const newPassword = assertPassword(req.body.newPassword);
+    if (!req.user.password_hash) throw badRequest("当前账号未设置密码，请通过「忘记密码」设置", "password_not_set");
+    if (!(await verifyPassword(currentPassword, req.user.password_hash))) throw unauthorized("当前密码不正确");
+    const passwordHash = await hashPassword(newPassword);
+    const { rows } = await query(
+      `UPDATE users SET password_hash = $2, token_version = token_version + 1, updated_at = now()
+       WHERE id = $1 RETURNING *`, [req.user.id, passwordHash]);
+    logger.info("auth.password_changed", { userID: req.user.id });
+    res.json({ token: signToken(rows[0]) });
+  }));
+
+  // F27: revoke every token of this account, including the caller's.
+  router.post("/auth/logout-all", requireAuth, asyncRoute(async (req, res) => {
+    await query("UPDATE users SET token_version = token_version + 1, updated_at = now() WHERE id = $1", [req.user.id]);
+    logger.info("auth.logout_all", { userID: req.user.id });
+    res.status(204).end();
+  }));
+
+  // F28: deleting the account needs the password or an emailed "delete" code
+  // on top of the session token. Accounts without a password use the code.
+  router.delete("/me", requireAuth, authLimiter, async (req, res, next) => {
     try {
       const userId = req.user.id;
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const code = String(req.body?.code ?? "").trim();
+      if (!password && !code) throw badRequest("请输入密码或邮箱验证码", "deletion_credentials_required");
+      if (!code) {
+        if (!req.user.password_hash || !(await verifyPassword(password, req.user.password_hash))) {
+          throw unauthorized("密码不正确");
+        }
+      } else if (!/^\d{6}$/.test(code)) {
+        throw unauthorized("验证码无效或已过期");
+      }
       const { objectKeys, syncEvents } = await withTransaction(async (client) => {
+        if (code) {
+          const codeError = await consumeEmailCode(client, { email: normalizeEmail(req.user.email), purpose: "delete", code });
+          if (codeError) throw unauthorized(codeError.message);
+        }
         // Collect this user's OSS object keys before scrubbing, for cleanup.
         const ownImages = await client.query(
           "SELECT avatar_object_key, background_object_key FROM users WHERE id = $1",
@@ -264,7 +360,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
                nickname = '已注销用户', bio = '', red_book_id = '',
                gender = '未设置', birthday = '选择生日', region = '未设置',
                avatar_object_key = NULL, background_object_key = NULL,
-               updated_at = now()
+               token_version = token_version + 1, updated_at = now()
            WHERE id = $1`,
           [userId]
         );
@@ -334,12 +430,12 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
 
   router.patch("/me", requireAuth, contentLimiter, async (req, res, next) => {
     try {
-      const nickname = trimmedString(req.body.nickname, req.user.nickname);
-      const bio = trimmedString(req.body.bio, "点击这里，填写简介");
-      const redBookID = trimmedString(req.body.redBookID);
-      const gender = trimmedString(req.body.gender, "未设置");
-      const birthday = trimmedString(req.body.birthday, "选择生日");
-      const region = trimmedString(req.body.region, "未设置");
+      const nickname = boundedString(req.body.nickname, { max: 20, field: "昵称", fallback: req.user.nickname });
+      const bio = boundedString(req.body.bio, { max: 200, field: "简介", fallback: "点击这里，填写简介" });
+      const redBookID = boundedString(req.body.redBookID, { max: 40, field: "小红书号" });
+      const gender = boundedString(req.body.gender, { max: 20, field: "性别", fallback: "未设置" });
+      const birthday = boundedString(req.body.birthday, { max: 20, field: "生日", fallback: "选择生日" });
+      const region = boundedString(req.body.region, { max: 20, field: "地区", fallback: "未设置" });
       const avatarSymbol = trimmedString(req.body.avatarSymbol, req.user.avatar_symbol).slice(0, 2);
       const avatarTint = trimmedString(req.body.avatarTint, req.user.avatar_tint);
       const backgroundImageName = trimmedString(req.body.backgroundImageName, req.user.background_image_name);
@@ -490,19 +586,27 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     res.status(202).json({ accepted: inserted.rowCount, ignored: normalized.length - rows.length, duplicate: rows.length - inserted.rowCount });
   }));
 
-  router.get("/feed", optionalAuth, asyncRoute(async (req, res) => {
+  // F24: anonymous public reads share one per-IP budget (memory store, per
+  // instance). Signed-in readers are not limited here.
+  const anonymousReadLimiter = createRateLimiter({
+    name: "anonymous_read", store: "memory", windowMs: 60 * 1000, max: 120,
+    message: "请求太频繁，请稍后再试", keyGenerator: (req) => `ip:${req.ip}`
+  });
+  const guestReadLimiter = (req, res, next) => (req.user ? next() : anonymousReadLimiter(req, res, next));
+
+  router.get("/feed", optionalAuth, guestReadLimiter, asyncRoute(async (req, res) => {
     res.json(await postsPage(req.user?.id || "", req.query));
   }));
-  router.get("/collections", optionalAuth, asyncRoute(async (req, res) => {
+  router.get("/collections", optionalAuth, guestReadLimiter, asyncRoute(async (req, res) => {
     res.json(await collectionsPage(req.user?.id || "", req.query));
   }));
-  router.get("/users", optionalAuth, asyncRoute(async (req, res) => {
+  router.get("/users", optionalAuth, guestReadLimiter, asyncRoute(async (req, res) => {
     res.json(await usersPage(req.user?.id || "", req.query));
   }));
-  router.get("/posts/:id/comments", optionalAuth, asyncRoute(async (req, res) => {
+  router.get("/posts/:id/comments", optionalAuth, guestReadLimiter, asyncRoute(async (req, res) => {
     res.json(await commentsPage(req.params.id, req.user?.id || "", req.query));
   }));
-  router.get("/posts/:id", optionalAuth, asyncRoute(async (req, res) => {
+  router.get("/posts/:id", optionalAuth, guestReadLimiter, asyncRoute(async (req, res) => {
     res.json(await postDetail(req.params.id, req.user?.id || ""));
   }));
 
@@ -550,8 +654,10 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
 
   router.post("/posts", requireAuth, contentLimiter, async (req, res, next) => {
     try {
-      const title = trimmedString(req.body.title);
+      const fields = assertPostTextFields(req.body);
+      const title = fields.title;
       if (!title) throw badRequest("请填写标题");
+      const requestedDeadline = assertDeadlineInRange(parseDate(req.body.deadline));
       const requestedId = trimmedString(req.body.id);
       if (requestedId && !/^p-[A-Za-z0-9_-]{1,120}$/.test(requestedId)) throw badRequest("发布编号无效");
       const postId = requestedId || `p-${randomUUID()}`;
@@ -559,7 +665,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
       const existing = (await query("SELECT * FROM posts WHERE id=$1", [postId])).rows[0];
       if (existing) {
         assertPostReplay(existing, req.user.id, submissionHash);
-        return res.status(200).json({ post: postToClient(existing), moderation: { status: existing.status }, replayed: true });
+        return res.status(200).json({ post: postToClient(existing, {}, { viewer: req.user.id }), moderation: { status: existing.status }, replayed: true });
       }
       const replacingPostId = trimmedString(req.body.replacingPostID);
       const collectionId = trimmedString(req.body.collectionID);
@@ -568,7 +674,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         : null;
       if (!collection) throw badRequest("请选择自己已通过审核的合集");
       const roles = validateRoles(req.body.unsoldRoles ?? []);
-      const deadline = collection?.deadline || parseDate(req.body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
+      const deadline = collection?.deadline || requestedDeadline || new Date(Date.now() + 7 * 86400 * 1000);
       const imageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.imageObjectKeys), ["post"]);
       const previewImageObjectKeys = assertOwnedObjectKeys(req.user.id, arrayOfStrings(req.body.previewImageObjectKeys), ["post"]);
       if (imageObjectKeys.length < 1 || imageObjectKeys.length > 16) throw badRequest("请选择 1 至 16 张产品图片");
@@ -615,23 +721,23 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
             imageObjectKeys,
             previewImageObjectKeys,
             req.body.groupType === "splitGoods" || req.body.groupType === "拼谷" ? "splitGoods" : "followGroup",
-            arrayOfStrings(req.body.categoryTags),
-            arrayOfStrings(req.body.fandomTags),
-            trimmedString(req.body.price),
-            trimmedString(req.body.deposit),
+            fields.categoryTags,
+            fields.fandomTags,
+            fields.price,
+            fields.deposit,
             deadline,
-            trimmedString(req.body.condition),
+            fields.condition,
             Boolean(req.body.isFormed),
-            trimmedString(req.body.description),
-            trimmedString(req.body.wechat, collection?.contact_wechat || ""),
-            trimmedString(req.body.qq, collection?.contact_qq || ""),
-            trimmedString(req.body.groupNumber, collection?.contact_group_number || ""),
-            trimmedString(req.body.groupInfo, collection?.group_info || ""),
-            trimmedString(req.body.externalLink),
+            fields.description,
+            fields.wechat || collection?.contact_wechat || "",
+            fields.qq || collection?.contact_qq || "",
+            fields.groupNumber || collection?.contact_group_number || "",
+            fields.groupInfo || collection?.group_info || "",
+            fields.externalLink,
             moderation.status,
-            Number(req.body.imageAspect || 1.08),
-            trimmedString(req.body.pingguAveragePrice),
-            trimmedString(req.body.pingguNote),
+            clampImageAspect(req.body.imageAspect),
+            fields.pingguAveragePrice,
+            fields.pingguNote,
             JSON.stringify(roles),
             submissionHash
           ]
@@ -663,7 +769,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         logger.info("post.created", { postID: postId, status: moderation.status, events: syncEvents.length });
         notifySyncEvents(syncEvents);
       }
-      res.status(replayed ? 200 : 201).json({ post: postToClient(post), moderation: replayed ? { status: post.status } : moderation, replayed });
+      res.status(replayed ? 200 : 201).json({ post: postToClient(post, {}, { viewer: req.user.id }), moderation: replayed ? { status: post.status } : moderation, replayed });
     } catch (error) {
       next(error);
     }
@@ -704,7 +810,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
 
   router.post("/posts/:id/comments", requireAuth, contentLimiter, async (req, res, next) => {
     try {
-      const body = trimmedString(req.body.body);
+      const body = boundedString(req.body.body, { max: 500, field: "评论" });
       const replyToID = trimmedString(req.body.replyToID);
       if (!body) throw badRequest("评论不能为空");
       const post = await query(`SELECT p.id, p.author_id FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2")}`, [req.params.id, req.user.id]);
@@ -949,20 +1055,24 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     res.json(await messageHistoryPage(req.user.id, req.params.threadId, req.query));
   }));
 
-  router.post("/messages/threads/:id/messages", requireAuth, interactionLimiter, async (req, res, next) => {
+  // F26: anti-harassment limits enforced on the server (previously a client toggle).
+  const directMessageLimiter = createRateLimiter({ name: "dm_send", store: sharedRateLimitStore,
+    windowMs: 60 * 1000, max: 30, keyGenerator: req => req.user.id, message: "消息发送太频繁，请稍后再试" });
+
+  router.post("/messages/threads/:id/messages", requireAuth, directMessageLimiter, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
       const recipientUserID = trimmedString(req.body.recipientUserID);
       const relatedPostID = trimmedString(req.body.relatedPostID) || null;
       const imageObjectKey = assertOwnedObjectKeys(req.user.id, [trimmedString(req.body.imageObjectKey)], ["message"])[0] || "";
       if (imageObjectKey) await assertReadyUploads(req.user.id, [imageObjectKey]);
-      const body = trimmedString(req.body.body, imageObjectKey ? "[图片]" : "");
+      const body = boundedString(req.body.body, { max: 2000, field: "消息", fallback: imageObjectKey ? "[图片]" : "" });
       const sharedPostID = trimmedString(req.body.sharedPostID) || null;
       const sharedProfileUserID = trimmedString(req.body.sharedProfileUserID) || null;
       const requestedMessageID = trimmedString(req.body.messageID);
-      const messageId = requestedMessageID.startsWith("m-") ? requestedMessageID : `m-${randomUUID()}`;
+      const messageId = MESSAGE_ID_PATTERN.test(requestedMessageID) ? requestedMessageID : `m-${randomUUID()}`;
 
-      if (!threadId.startsWith("t-")) throw badRequest("会话无效");
+      if (!THREAD_ID_PATTERN.test(threadId)) throw badRequest("会话无效");
       if (!body && !imageObjectKey && !sharedPostID && !sharedProfileUserID) throw badRequest("消息不能为空");
       if (!recipientUserID || recipientUserID === req.user.id) throw badRequest("收信人无效");
 
@@ -1026,6 +1136,12 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
 
         const existingActual = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [actualThreadId]);
         if (!existingActual.rows[0]) {
+          const allowed = await consumeRateLimitEvent(client, { name: "dm_new_thread", key: req.user.id,
+            windowMs: 24 * 60 * 60 * 1000, max: 30 });
+          if (!allowed) {
+            const error = new Error("今天新建的会话太多，请明天再试");
+            error.status = 429; error.apiCode = "dm_new_thread_limit"; throw error;
+          }
           await client.query(
             `INSERT INTO message_threads (id, buyer_user_id, publisher_user_id, related_post_id)
              VALUES ($1, $2, $3, $4)`,
@@ -1033,6 +1149,22 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
           );
         } else if (!existingActual.rows[0].related_post_id && relatedPostID) {
           await client.query("UPDATE message_threads SET related_post_id = $2 WHERE id = $1", [actualThreadId, relatedPostID]);
+        }
+
+        // Until the recipient replies in this conversation or follows the
+        // sender, the sender may send at most 3 messages here (revoked ones
+        // count). Checked under the thread row lock; retries of an already
+        // stored message id are idempotent and skip the check.
+        const isRetry = (await client.query("SELECT 1 FROM direct_messages WHERE id = $1", [messageId])).rowCount > 0;
+        if (!isRetry) {
+          const { rows: [gate] } = await client.query(
+            `SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = $2 AND following_id = $1) AS followed,
+                    EXISTS (SELECT 1 FROM direct_messages WHERE thread_id = $3 AND sender_id = $2) AS replied,
+                    (SELECT count(*)::int FROM direct_messages WHERE thread_id = $3 AND sender_id = $1) AS sent`,
+            [req.user.id, recipientUserID, actualThreadId]);
+          if (!gate.followed && !gate.replied && gate.sent >= 3) {
+            throw badRequest("对方回复或关注你之前，最多发送 3 条消息", "dm_limit_unreplied");
+          }
         }
 
         const insertedMessage = await client.query(
@@ -1309,7 +1441,7 @@ async function createEmailUser(client, { email, passwordHash, nickname, emailVer
   return inserted.rows[0];
 }
 
-async function issueEmailCode({ email, purpose }) {
+async function issueEmailCode({ email, purpose, send = sendEmailCode }) {
   const id = `evc-${randomUUID()}`;
   const code = String(randomInt(0, 1000000)).padStart(6, "0");
   const codeHash = hashEmailCode({ email, purpose, code });
@@ -1330,7 +1462,7 @@ async function issueEmailCode({ email, purpose }) {
   });
 
   try {
-    await sendEmailCode({ email, purpose, code });
+    await send({ email, purpose, code });
   } catch (error) {
     await query("DELETE FROM email_verification_codes WHERE id = $1", [id]).catch(() => {});
     throw error;
@@ -1531,7 +1663,7 @@ function safeImageContentType(rawContentType) {
 
 
 async function createCollection(userId, body) {
-  const name = trimmedString(body.name);
+  const name = boundedString(body.name, { max: 30, field: "合集名称" });
   if (!name) throw badRequest("请填写合集名称");
   const collectionId = trimmedString(body.id) || `col-${randomUUID()}`;
   if (!/^col-[A-Za-z0-9_-]{1,120}$/.test(collectionId)) throw badRequest("合集编号无效");
@@ -1540,12 +1672,12 @@ async function createCollection(userId, body) {
     if (row.owner_id !== userId || row.submission_hash !== submissionHash || row.status === 'deleted') {
       const error = badRequest('提交编号已使用，请重新加载合集'); error.status = 409; throw error;
     }
-    return { collection: collectionToClient(row, []), syncEvents: [] };
+    return { collection: collectionToClient(row, [], { viewer: userId }), syncEvents: [] };
   };
   const existing = (await query('SELECT * FROM group_collections WHERE id=$1', [collectionId])).rows[0];
   if (existing) return assertReplay(existing);
   await assertCollectionNameAvailable({ ownerId: userId, name });
-  const deadline = parseDate(body.deadline) || new Date(Date.now() + 7 * 86400 * 1000);
+  const deadline = assertDeadlineInRange(parseDate(body.deadline)) || new Date(Date.now() + 7 * 86400 * 1000);
   const snapshot = collectionSnapshot(body, { name });
   const moderation = await reviewSubmission({
     targetType: "collection",
@@ -1587,7 +1719,7 @@ async function createCollection(userId, body) {
     });
   }
   const syncEvents = await createSyncEventsForUsers(client, { userIds: [userId, ...(moderation.status === "active" ? [null] : [])], eventType: "collection.created", entityType: "collection", entityId: collectionId });
-  return { collection: collectionToClient(rows[0], []), syncEvents };
+  return { collection: collectionToClient(rows[0], [], { viewer: userId }), syncEvents };
   });
 }
 
@@ -1599,10 +1731,10 @@ async function updateCollection(userId, collectionId, body) {
     throw error;
   }
   assertRevision(current, body.revision);
-  const name = trimmedString(body.name, current.name);
+  const name = boundedString(body.name, { max: 30, field: "合集名称", fallback: current.name });
   if (!name) throw badRequest("请填写合集名称");
   await assertCollectionNameAvailable({ ownerId: userId, name, excludingId: collectionId });
-  const deadline = parseDate(body.deadline) || current.deadline || new Date(Date.now() + 7 * 86400 * 1000);
+  const deadline = assertDeadlineInRange(parseDate(body.deadline)) || current.deadline || new Date(Date.now() + 7 * 86400 * 1000);
   const snapshot = collectionSnapshot(body, {
     name,
     wechat: current.contact_wechat,
@@ -1665,7 +1797,7 @@ async function updateCollection(userId, collectionId, body) {
       entityType: "collection",
       entityId: collectionId
     });
-    return { collection: collectionToClient(rows[0], postIds), syncEvents };
+    return { collection: collectionToClient(rows[0], postIds, { viewer: userId }), syncEvents };
   });
 }
 
@@ -1690,15 +1822,16 @@ async function assertCollectionNameAvailable({ ownerId, name, excludingId = "", 
 }
 
 function collectionSnapshot(body, fallback = {}) {
-  const field = (key, fallbackValue = "") =>
-    Object.prototype.hasOwnProperty.call(body, key) ? trimmedString(body[key]) : trimmedString(fallbackValue);
+  // Submitted values are length-checked; stored fallbacks are kept as-is.
+  const field = (key, fallbackValue = "", limit = {}) =>
+    Object.prototype.hasOwnProperty.call(body, key) ? boundedString(body[key], limit) : trimmedString(fallbackValue);
   const snapshot = {
-    name: field("name", fallback.name || ""),
-    wechat: field("wechat", fallback.wechat || ""),
-    qq: field("qq", fallback.qq || ""),
-    groupNumber: field("groupNumber", fallback.groupNumber || ""),
-    groupInfo: field("groupInfo", fallback.groupInfo || ""),
-    defaultNote: field("defaultNote", fallback.defaultNote || "该合集内帖子共享联系方式、截团时间和默认说明。")
+    name: field("name", fallback.name || "", { max: 30, field: "合集名称" }),
+    wechat: field("wechat", fallback.wechat || "", { max: 40, field: "微信" }),
+    qq: field("qq", fallback.qq || "", { max: 40, field: "QQ" }),
+    groupNumber: field("groupNumber", fallback.groupNumber || "", { max: 40, field: "群号" }),
+    groupInfo: field("groupInfo", fallback.groupInfo || "", { max: 500, field: "群信息" }),
+    defaultNote: field("defaultNote", fallback.defaultNote || "该合集内帖子共享联系方式、截团时间和默认说明。", { max: 500, field: "默认说明" })
   };
   if (!snapshot.wechat && !snapshot.qq && !snapshot.groupNumber) {
     throw badRequest("微信、QQ、QQ群号至少填写一个");

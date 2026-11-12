@@ -56,9 +56,9 @@ export async function postBundle(rows, viewer = '') {
     usersForIDs(posts.map(p=>p.author_id),viewer),
     collectionIDs.length ? query(`SELECT c.*, ARRAY(SELECT p.id FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL('p','$2',true)} ORDER BY p.created_at DESC,p.id DESC LIMIT 50) AS post_ids,
       (SELECT count(*) FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL('p','$2',true)}) AS post_count
-      FROM group_collections c WHERE c.id=ANY($1::text[]) AND ${visibleCollectionSQL('c','$2',true)}`, [collectionIDs,viewer]).then(r=>r.rows.map(row=>collectionToClient(row,row.post_ids))) : []
+      FROM group_collections c WHERE c.id=ANY($1::text[]) AND ${visibleCollectionSQL('c','$2',true)}`, [collectionIDs,viewer]).then(r=>r.rows.map(row=>collectionToClient(row,row.post_ids,{viewer}))) : []
   ]);
-  return { posts: posts.map(row=>postToClient(row,row)), users, collections };
+  return { posts: posts.map(row=>postToClient(row,row,{viewer})), users, collections };
 }
 
 export async function postsPage(viewer = '', input = {}) {
@@ -107,7 +107,7 @@ export async function collectionsPage(viewer='',input={}) {
     ARRAY(SELECT p.id FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL('p','$1',true)} ORDER BY p.created_at DESC,p.id DESC LIMIT 50) AS post_ids,
     (SELECT count(*) FROM posts p WHERE p.collection_id=c.id AND ${visiblePostSQL('p','$1',true)}) AS post_count
     FROM group_collections c WHERE ${where.join(' AND ')} ORDER BY c.created_at DESC,c.id DESC LIMIT $${params.length}`,params)).rows;
-  const page=pageResult(rows,limit,row=>({...collectionToClient(row,row.post_ids),postCount:Number(row.post_count)}));
+  const page=pageResult(rows,limit,row=>({...collectionToClient(row,row.post_ids,{viewer}),postCount:Number(row.post_count)}));
   return {collections:page.items,users:await usersForIDs(page.items.map(c=>c.ownerID),viewer),hasMore:page.hasMore,nextCursor:page.nextCursor};
 }
 

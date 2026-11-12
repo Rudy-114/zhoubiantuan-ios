@@ -54,11 +54,6 @@ final class MockAppStore: ObservableObject {
             UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
         }
     }
-    @Published var limitsUnrepliedMessages: Bool {
-        didSet {
-            UserDefaults.standard.set(limitsUnrepliedMessages, forKey: Self.messageLimitDefaultsKey)
-        }
-    }
     @Published var isBackendEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isBackendEnabled, forKey: Self.backendEnabledDefaultsKey)
@@ -70,9 +65,12 @@ final class MockAppStore: ObservableObject {
     static let demoUserID = "u-me"
     private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
     private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
-    private static let messageLimitDefaultsKey = "zhoubiantuan.limitsUnrepliedMessages"
-    private static let legacyMessageLimitDefaultDisabledMigrationKey = "zhoubiantuan.limitsUnrepliedMessages.defaultDisabled.v1"
-    private static let messageLimitDefaultRestoredMigrationKey = "zhoubiantuan.limitsUnrepliedMessages.defaultRestored.v1"
+    /// The unreplied-DM limit used to be a local toggle; the server enforces it now (F26).
+    private static let retiredMessageLimitDefaultsKeys = [
+        "zhoubiantuan.limitsUnrepliedMessages",
+        "zhoubiantuan.limitsUnrepliedMessages.defaultDisabled.v1",
+        "zhoubiantuan.limitsUnrepliedMessages.defaultRestored.v1"
+    ]
     private static let backendEnabledDefaultsKey = "zhoubiantuan.isBackendEnabled"
     private static let backendTokenDefaultsKey = "zhoubiantuan.backendToken"
     private static let backendTokenFallbackDefaultsKey = "zhoubiantuan.backendToken.fallback"
@@ -176,13 +174,8 @@ final class MockAppStore: ObservableObject {
         defaults.removeObject(forKey: backendTokenFallbackDefaultsKey)
     }
 
-    private static func restoreMessageLimitDefaultIfDisabledByTemporaryMigration() {
-        let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: legacyMessageLimitDefaultDisabledMigrationKey),
-              !defaults.bool(forKey: messageLimitDefaultRestoredMigrationKey)
-        else { return }
-        defaults.set(true, forKey: messageLimitDefaultsKey)
-        defaults.set(true, forKey: messageLimitDefaultRestoredMigrationKey)
+    private static func removeRetiredMessageLimitDefaults() {
+        retiredMessageLimitDefaultsKeys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
     }
 
     private static func browsingHistoryDefaultsKey(for userID: String) -> String {
@@ -410,13 +403,12 @@ final class MockAppStore: ObservableObject {
         if persistsData {
             Self.resetLocalDataForEmptyBetaIfNeeded()
             Self.migrateBackendTokenToKeychain()
-            Self.restoreMessageLimitDefaultIfDisabledByTemporaryMigration()
+            Self.removeRetiredMessageLimitDefaults()
             cachedBackendToken = KeychainStore.string(forKey: Self.backendTokenDefaultsKey)
         }
         let startsLoggedIn = persistsData && (UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false)
         isLoggedIn = startsLoggedIn
         isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
-        limitsUnrepliedMessages = UserDefaults.standard.object(forKey: Self.messageLimitDefaultsKey) as? Bool ?? true
         UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
         isBackendEnabled = true
         let blankUser = Self.blankUser
@@ -1781,22 +1773,86 @@ final class MockAppStore: ObservableObject {
     }
 
     @discardableResult
-    func deleteAccount() async -> Bool {
+    // MARK: - Account security (F11/F27/F28)
+    // Each returns nil on success or a message for the screen to show inline.
+
+    /// Deletion needs the password or a code sent by `requestAccountDeletionCode()`.
+    func deleteAccount(password: String?, code: String?) async -> String? {
         let session = authSessionVersion
-        guard isBackendEnabled, let token = backendToken else {
-            showToast("请先登录后再操作")
-            return false
-        }
+        guard isBackendEnabled, let token = backendToken else { return "请先登录后再操作" }
         do {
-            try await backendClient.deleteAccount(token: token)
-            guard isCurrentSession(session) else { return false }
+            try await backendClient.deleteAccount(token: token, password: password, code: code)
+            guard isCurrentSession(session) else { return nil }
             logOut()
             showToast("账号已删除")
-            return true
+            return nil
         } catch {
-            guard isCurrentSession(session) else { return false }
-            showToast(error.localizedDescription)
-            return false
+            guard isCurrentSession(session) else { return nil }
+            return error.localizedDescription
+        }
+    }
+
+    func requestAccountDeletionCode() async -> String? {
+        guard isBackendEnabled, let token = backendToken else { return "请先登录后再操作" }
+        let email = currentUser.email.trimmed
+        guard !email.isEmpty else { return "当前账号未绑定邮箱" }
+        do {
+            try await backendClient.sendAccountDeletionCode(token: token, email: email)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Forgotten password: on success the user is signed in with the new session.
+    func resetPassword(email: String, code: String, newPassword: String) async -> String? {
+        let session = authSessionVersion
+        let attempt = UUID()
+        authenticationAttempt = attempt
+        guard isBackendEnabled else { return "本地模式不支持重置密码" }
+        do {
+            let payload = try await backendClient.resetPassword(email: email.trimmed, code: code.trimmed, newPassword: newPassword)
+            guard isCurrentSession(session), authenticationAttempt == attempt else { return "操作已取消" }
+            applyBackendPayload(payload)
+            showToast("密码已重置，已为你登录")
+            return nil
+        } catch {
+            guard isCurrentSession(session), authenticationAttempt == attempt else { return "操作已取消" }
+            return error.localizedDescription
+        }
+    }
+
+    /// Other devices are signed out; this device keeps working with the new token.
+    func changePassword(currentPassword: String, newPassword: String) async -> String? {
+        let session = authSessionVersion
+        guard isBackendEnabled, let token = backendToken else { return "请先登录后再操作" }
+        do {
+            let newToken = try await backendClient.changePassword(token: token, currentPassword: currentPassword, newPassword: newPassword)
+            guard isCurrentSession(session) else { return nil }
+            backendToken = newToken
+            // The realtime socket still holds the revoked token; reconnect.
+            stopBackendAutoRefresh()
+            startBackendAutoRefresh()
+            showToast("密码已修改，其他设备需要重新登录")
+            return nil
+        } catch {
+            guard isCurrentSession(session) else { return nil }
+            return error.localizedDescription
+        }
+    }
+
+    func logOutAllDevices() async -> String? {
+        let session = authSessionVersion
+        guard isBackendEnabled, let token = backendToken else { return "请先登录后再操作" }
+        do {
+            try await backendClient.logOutAllDevices(token: token)
+            guard isCurrentSession(session) else { return nil }
+            logOut()
+            showToast("已退出所有设备")
+            return nil
+        } catch {
+            guard isCurrentSession(session) else { return nil }
+            return error.localizedDescription
         }
     }
 
@@ -2152,10 +2208,6 @@ final class MockAppStore: ObservableObject {
             )
             return true
         }
-        guard canSendMessage(in: threads[index]) else {
-            showToast("对方未关注你前最多发送两条消息")
-            return false
-        }
         guard canAttemptCloudMessage() else { return false }
         let message = DirectMessage(id: "m-\(UUID().uuidString)", senderID: currentUserID, body: trimmed, createdAt: Date())
         threads[index].messages.append(message)
@@ -2176,10 +2228,6 @@ final class MockAppStore: ObservableObject {
                 toThreadAt: index
             )
             return true
-        }
-        guard canSendMessage(in: threads[index]) else {
-            showToast("对方未关注你前最多发送两条消息")
-            return false
         }
         guard canAttemptCloudMessage() else { return false }
         let message = DirectMessage(
@@ -2215,10 +2263,6 @@ final class MockAppStore: ObservableObject {
             }
             return
         }
-        guard canSendMessage(in: threads[threadIndex]) else {
-            showToast("对方未关注你前最多发送两条消息")
-            return
-        }
         guard canAttemptCloudMessage() else { return }
         var message = threads[threadIndex].messages.remove(at: messageIndex)
         message.deliveryStatus = .sending
@@ -2242,6 +2286,7 @@ final class MockAppStore: ObservableObject {
         switch nsError.userInfo[AliyunBackendClient.errorCodeUserInfoKey] as? String {
         case "blocked_by_recipient": return .failedBlockedByPeer
         case "blocked_recipient": return .failedBlockedPeer
+        case "dm_limit_unreplied": return .failedUnrepliedLimit
         default: break
         }
         // 旧版后端无 code 字段时按文案兜底，方向靠本地拉黑状态推断。
@@ -2335,17 +2380,6 @@ final class MockAppStore: ObservableObject {
             }
         }
         return nil
-    }
-
-    private func canSendMessage(in thread: MessageThread) -> Bool {
-        guard limitsUnrepliedMessages else { return true }
-        let peerFollowsCurrentUser = followingIDs(for: peerUserID(for: thread)).contains(currentUserID)
-        guard !peerFollowsCurrentUser else { return true }
-        let ownSentMessagesBeforeFollow = thread.messages
-            .filter { !$0.deliveryStatus.isFailed }
-            .filter { $0.senderID == currentUserID }
-            .count
-        return ownSentMessagesBeforeFollow < 2
     }
 
     func markThreadRead(threadID: String) {

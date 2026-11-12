@@ -551,11 +551,61 @@ struct RequiredLabel: View {
     }
 }
 
+/// Character limits mirror the server (backend/src/validators.js), which counts
+/// Unicode scalars (`Array.from` in JavaScript), not grapheme clusters.
+enum InputLimit {
+    static let nickname = 20
+    static let bio = 200
+    static let postTitle = 60
+    static let postDescription = 3000
+    static let comment = 500
+    static let collectionName = 30
+    static let contact = 40
+    static let groupInfo = 500
+    static let pingguNote = 100
+    static let shortField = 40
+
+    static func count(_ text: String) -> Int { text.unicodeScalars.count }
+
+    static func clamp(_ text: String, to limit: Int) -> String {
+        guard count(text) > limit else { return text }
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: text.unicodeScalars.prefix(limit))
+        return String(scalars)
+    }
+}
+
+extension View {
+    /// Drops input beyond `limit` characters. `nil` leaves the field unlimited.
+    func characterLimit(_ limit: Int?, text: Binding<String>) -> some View {
+        onChange(of: text.wrappedValue) { _, newValue in
+            guard let limit else { return }
+            let clamped = InputLimit.clamp(newValue, to: limit)
+            if clamped != newValue { text.wrappedValue = clamped }
+        }
+    }
+}
+
+struct CharacterCountLabel: View {
+    let text: String
+    let limit: Int
+
+    var body: some View {
+        let count = InputLimit.count(text)
+        Text("\(count)/\(limit)")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(count >= limit ? Theme.hotPink : Theme.muted)
+            .accessibilityLabel("已输入 \(count) 字，上限 \(limit) 字")
+    }
+}
+
 struct PrototypeTextField: View {
     let title: String
     let placeholder: String
     @Binding var text: String
     let required: Bool
+    /// Server-side character limit; input beyond it is dropped and a counter shown.
+    var limit: Int? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -568,8 +618,13 @@ struct PrototypeTextField: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Theme.hotPink)
                 }
+                if let limit {
+                    Spacer(minLength: 0)
+                    CharacterCountLabel(text: text, limit: limit)
+                }
             }
             TextField(placeholder, text: $text)
+                .characterLimit(limit, text: $text)
                 .foregroundStyle(Theme.text)
                 .padding(13)
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
@@ -586,6 +641,7 @@ struct PrototypeTextEditor: View {
     let placeholder: String
     @Binding var text: String
     let required: Bool
+    var limit: Int? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -598,6 +654,10 @@ struct PrototypeTextEditor: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Theme.hotPink)
                 }
+                if let limit {
+                    Spacer(minLength: 0)
+                    CharacterCountLabel(text: text, limit: limit)
+                }
             }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
@@ -607,6 +667,7 @@ struct PrototypeTextEditor: View {
                         .padding(.vertical, 16)
                 }
                 TextEditor(text: $text)
+                    .characterLimit(limit, text: $text)
                     .frame(minHeight: 96)
                     .foregroundStyle(Theme.text)
                     .scrollContentBackground(.hidden)

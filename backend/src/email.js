@@ -29,7 +29,7 @@ function getTransporter() {
 
 export async function sendEmailCode({ email, code, purpose }) {
   if (config.nodeEnv === "test") throw new Error("Real email delivery is disabled during tests");
-  const title = purpose === "login" ? "登录验证码" : "注册验证码";
+  const title = { login: "登录验证码", reset: "重置密码验证码", delete: "注销账号验证码" }[purpose] || "注册验证码";
   const subject = `周边团${title}`;
   const text = [
     `你的周边团${title}是：${code}`,

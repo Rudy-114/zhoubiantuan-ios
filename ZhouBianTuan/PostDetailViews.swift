@@ -1080,6 +1080,19 @@ struct ContactCard: View {
                 .lineSpacing(3)
                 .foregroundStyle(Theme.subtext)
 
+            if !store.isLoggedIn {
+                // F24: guests receive no contact fields from the server.
+                Button {
+                    _ = store.requireLogin(prompt: "登录后查看联系方式")
+                } label: {
+                    Label("登录后查看联系方式", systemImage: "lock.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.pressFeedback)
+            } else {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !wechat.trimmed.isEmpty) {
@@ -1104,6 +1117,7 @@ struct ContactCard: View {
                     .lineSpacing(3)
                     .foregroundStyle(Theme.subtext)
                     .padding(.top, 2)
+            }
             }
         }
         .padding(16)
@@ -1420,6 +1434,7 @@ struct DetailActionBar: View {
                         Image(systemName: "pencil")
                             .foregroundStyle(Theme.muted)
                         TextField(replyAuthor == nil ? "发评论" : "回复 \(replyAuthor?.nickname ?? "")", text: $commentDraft)
+                            .characterLimit(InputLimit.comment, text: $commentDraft)
                             .foregroundStyle(Theme.text)
                             .submitLabel(.send)
                             .onSubmit {

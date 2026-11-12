@@ -233,7 +233,7 @@ struct CreatePostView: View {
                 .padding(.horizontal, 16)
 
                 VStack(spacing: 12) {
-                    PrototypeTextField(title: "标题", placeholder: "例如：巡演限定小卡套组二开", text: $title, required: true)
+                    PrototypeTextField(title: "标题", placeholder: "例如：巡演限定小卡套组二开", text: $title, required: true, limit: InputLimit.postTitle)
                     TagEditor(tags: allTags, selection: $selectedTags)
                     VStack(alignment: .leading, spacing: 10) {
                         RequiredLabel("商品价格范围")
@@ -252,16 +252,16 @@ struct CreatePostView: View {
                                 depositPercent = sanitized
                             }
                         }
-                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true)
-                    PrototypeTextEditor(title: "团购说明", placeholder: "写清商品内容、规格、余量、表单和周期", text: $description, required: true)
+                    PrototypeTextField(title: "成团条件", placeholder: "满 60 套开团，未成团退定", text: $condition, required: true, limit: InputLimit.shortField)
+                    PrototypeTextEditor(title: "团购说明", placeholder: "写清商品内容、规格、余量、表单和周期", text: $description, required: true, limit: InputLimit.postDescription)
                 }
                 .padding(.horizontal, 16)
 
                 if isSplitGoods {
                     VStack(alignment: .leading, spacing: 12) {
                         RequiredLabel("拼谷展示信息")
-                        PrototypeTextField(title: "当前谷子均价", placeholder: "例如：均价35元/吧唧", text: $pingguAveragePrice, required: true)
-                        PrototypeTextEditor(title: "团长自定义描述", placeholder: "例如：目前还缺主角团角色位", text: $pingguNote, required: true)
+                        PrototypeTextField(title: "当前谷子均价", placeholder: "例如：均价35元/吧唧", text: $pingguAveragePrice, required: true, limit: InputLimit.shortField)
+                        PrototypeTextEditor(title: "团长自定义描述", placeholder: "例如：目前还缺主角团角色位", text: $pingguNote, required: true, limit: InputLimit.pingguNote)
                         VStack(alignment: .leading, spacing: 10) {
                             RequiredLabel("未被购买角色")
                             if roleDrafts.isEmpty {

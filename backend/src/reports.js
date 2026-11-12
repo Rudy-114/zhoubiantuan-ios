@@ -70,7 +70,8 @@ export async function submitReport(user, body) {
   if (typeof type !== 'string' || !Object.hasOwn(targetTables, type) || typeof id !== 'string' || !id || id.length > 200) throw badRequest('举报目标无效');
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   const detail = typeof body.detail === 'string' ? body.detail.trim() : '';
-  if (!reason || reason.length > 100 || detail.length > 2000) throw badRequest('请选择举报原因，说明最多 2000 字');
+  if (!reason || reason.length > 100) throw badRequest('请选择举报原因');
+  if (Array.from(detail).length > 500) throw badRequest('举报说明最多 500 字');
   return withTransaction(async client => {
     const target = await targetSnapshot(client, type, id, user.id);
     if (!target) throw httpError(404, '举报的内容不存在或无权查看');

@@ -41,7 +41,7 @@ export async function editPost(userId, postId, body) {
   if (!collection) throw badRequest('请选择自己已通过审核的合集');
   const names = rows => JSON.stringify(rows.map(role => [role.id, role.name]));
   const needsReview = names(roles) !== names(current.unsold_roles);
-  const snapshot = postModerationSnapshot({ ...postToClient(current), unsoldRoles: roles }, collection, current.title);
+  const snapshot = postModerationSnapshot({ ...postToClient(current, {}, { viewer: userId }), unsoldRoles: roles }, collection, current.title);
   const text = publicContentModerationText(snapshot);
   // Numeric stock changes never make a hidden/rejected post public. Text edits are reviewed again.
   const moderation = needsReview ? await reviewSubmission({ targetType: 'post', targetId: postId, ownerId: userId, text }) : { status: 'active' };
@@ -67,6 +67,6 @@ export async function editPost(userId, postId, body) {
         syncEvents.push(...await createSyncEventsForUsers(client, { userIds: [userId, null], eventType: 'collection.updated', entityType: 'collection', entityId: id }));
       }
     }
-    return { post: postToClient(post), moderation, syncEvents };
+    return { post: postToClient(post, {}, { viewer: userId }), moderation, syncEvents };
   });
 }

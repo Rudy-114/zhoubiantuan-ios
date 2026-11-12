@@ -1065,19 +1065,19 @@ struct CreateCollectionSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
                     HeaderTitle(title: isEditing ? "编辑拼团信息" : "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
-                    PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true)
+                    PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true, limit: InputLimit.collectionName)
                     HStack(spacing: 10) {
-                        PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
-                        PrototypeTextField(title: "QQ", placeholder: "QQ 号", text: $qq, required: wechat.trimmed.isEmpty && groupNumber.trimmed.isEmpty)
+                        PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty, limit: InputLimit.contact)
+                        PrototypeTextField(title: "QQ", placeholder: "QQ 号", text: $qq, required: wechat.trimmed.isEmpty && groupNumber.trimmed.isEmpty, limit: InputLimit.contact)
                     }
-                    PrototypeTextField(title: "QQ群号", placeholder: "至少填微信、QQ、QQ群号之一", text: $groupNumber, required: wechat.trimmed.isEmpty && qq.trimmed.isEmpty)
-                    PrototypeTextField(title: "拉群说明", placeholder: "例如：复制群号后备注昵称 / 拍下后私信拉群", text: $groupInfo, required: false)
+                    PrototypeTextField(title: "QQ群号", placeholder: "至少填微信、QQ、QQ群号之一", text: $groupNumber, required: wechat.trimmed.isEmpty && qq.trimmed.isEmpty, limit: InputLimit.contact)
+                    PrototypeTextField(title: "拉群说明", placeholder: "例如：复制群号后备注昵称 / 拍下后私信拉群", text: $groupInfo, required: false, limit: InputLimit.groupInfo)
                     DatePicker("截团时间", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.compact)
                         .foregroundStyle(Theme.text)
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                    PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true)
+                    PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true, limit: InputLimit.groupInfo)
                     Button {
                         let session = store.authSessionVersion
                         isSaving = true
@@ -1830,7 +1830,7 @@ struct EditProfileView: View {
                     }
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary, isEditable: canEditNickname)
+                        ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary, isEditable: canEditNickname, limit: InputLimit.nickname)
                         Text(nicknameHint)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Theme.subtext)
@@ -1882,15 +1882,15 @@ struct EditProfileView: View {
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "简介", placeholder: "介绍一下自己", text: $bio, textColor: Theme.subtext)
+                        ProfileEditField(title: "简介", placeholder: "介绍一下自己", text: $bio, textColor: Theme.subtext, limit: InputLimit.bio)
                     }
                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "性别", placeholder: "编辑性别", text: $gender, textColor: Theme.subtext)
-                        ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Theme.subtext)
-                        ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Theme.subtext)
+                        ProfileEditField(title: "性别", placeholder: "编辑性别", text: $gender, textColor: Theme.subtext, limit: 20)
+                        ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Theme.subtext, limit: 20)
+                        ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Theme.subtext, limit: 20)
                     }
                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
@@ -2032,6 +2032,7 @@ struct ProfileEditField: View {
     @Binding var text: String
     let textColor: Color
     var isEditable = true
+    var limit: Int? = nil
 
     var body: some View {
         HStack(spacing: 18) {
@@ -2040,11 +2041,15 @@ struct ProfileEditField: View {
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 112, alignment: .leading)
             TextField(placeholder, text: $text)
+                .characterLimit(limit, text: $text)
                 .font(.system(size: 21, weight: .semibold))
                 .foregroundStyle(text.isEmpty ? Theme.muted : Theme.text)
                 .tint(Theme.hotPink)
                 .disabled(!isEditable)
                 .opacity(isEditable ? 1 : 0.52)
+            if let limit, InputLimit.count(text) * 5 >= limit * 4 {
+                CharacterCountLabel(text: text, limit: limit)
+            }
             Image(systemName: "chevron.right")
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Theme.muted)

@@ -1,5 +1,10 @@
 import { publicAssetUrl } from "./oss.js";
 
+/**
+ * F30: other people's profiles are minimized. Only the owner receives
+ * birthday, gender, region, nickname-change time and moderation state.
+ * redBookID stays public because search results display it.
+ */
 export function userToClient(row, counts = {}, viewerUserId = "") {
   const isSelf = Boolean(viewerUserId && viewerUserId === row.id);
   return {
@@ -16,17 +21,17 @@ export function userToClient(row, counts = {}, viewerUserId = "") {
     avatarSymbol: row.avatar_symbol || "新",
     avatarTint: row.avatar_tint || "rose",
     redBookID: row.red_book_id || "",
-    gender: row.gender || "未设置",
-    birthday: row.birthday || "选择生日",
-    region: row.region || "未设置",
+    gender: isSelf ? row.gender || "未设置" : "未设置",
+    birthday: isSelf ? row.birthday || "选择生日" : "选择生日",
+    region: isSelf ? row.region || "未设置" : "未设置",
     backgroundImageName: row.background_image_name || "merch_magazine",
     avatarURL: publicAssetUrl(row.avatar_object_key),
     backgroundURL: publicAssetUrl(row.background_object_key),
     phoneNumber: isSelf ? row.phone_number || "" : "",
-    lastNicknameChangedAt: row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null,
-    moderationStatus: row.moderation_status || "",
-    moderationReason: row.moderation_reason || "",
-    reviewID: row.review_id || ""
+    lastNicknameChangedAt: isSelf && row.last_nickname_changed_at ? row.last_nickname_changed_at.toISOString() : null,
+    moderationStatus: isSelf ? row.moderation_status || "" : "",
+    moderationReason: isSelf ? row.moderation_reason || "" : "",
+    reviewID: isSelf ? row.review_id || "" : ""
   };
 }
 
@@ -63,7 +68,13 @@ export function userToPublicClient(row, counts = {}) {
   };
 }
 
-export function postToClient(row, counts = {}) {
+/**
+ * F24: contact fields (WeChat, QQ, group number/info, external link) are only
+ * returned to signed-in viewers. Pass `{ viewer }` (the viewer's user id) on
+ * every call; an empty viewer means a guest and yields `contactHidden: true`.
+ */
+export function postToClient(row, counts = {}, { viewer = "" } = {}) {
+  const showContact = Boolean(viewer);
   const imageKeys = row.image_object_keys || [];
   const previewImageKeys = row.preview_image_object_keys || [];
   return {
@@ -86,11 +97,12 @@ export function postToClient(row, counts = {}) {
     condition: row.condition || "",
     isFormed: Boolean(row.is_formed),
     description: row.description || "",
-    wechat: row.wechat || "",
-    qq: row.qq || "",
-    groupNumber: row.group_number || "",
-    groupInfo: row.group_info || "",
-    externalLink: row.external_link || "",
+    wechat: showContact ? row.wechat || "" : "",
+    qq: showContact ? row.qq || "" : "",
+    groupNumber: showContact ? row.group_number || "" : "",
+    groupInfo: showContact ? row.group_info || "" : "",
+    externalLink: showContact ? row.external_link || "" : "",
+    contactHidden: !showContact,
     createdAt: row.created_at.toISOString(),
     likedCount: Number(counts.liked_count ?? row.liked_count ?? 0),
     favoriteCount: Number(counts.favorite_count ?? row.favorite_count ?? 0),
@@ -106,16 +118,18 @@ export function postToClient(row, counts = {}) {
   };
 }
 
-export function collectionToClient(row, postIDs = []) {
+export function collectionToClient(row, postIDs = [], { viewer = "" } = {}) {
+  const showContact = Boolean(viewer);
   return {
     id: row.id,
     revision: row.revision,
     ownerID: row.owner_id,
     name: row.name,
-    contactWechat: row.contact_wechat || "",
-    contactQQ: row.contact_qq || "",
-    contactGroupNumber: row.contact_group_number || "",
-    groupInfo: row.group_info || "",
+    contactWechat: showContact ? row.contact_wechat || "" : "",
+    contactQQ: showContact ? row.contact_qq || "" : "",
+    contactGroupNumber: showContact ? row.contact_group_number || "" : "",
+    groupInfo: showContact ? row.group_info || "" : "",
+    contactHidden: !showContact,
     deadline: row.deadline.toISOString(),
     defaultNote: row.default_note || "",
     postIDs,

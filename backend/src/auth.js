@@ -11,8 +11,13 @@ export async function verifyPassword(password, hash) {
   return bcrypt.compare(password, hash);
 }
 
+/**
+ * `tv` is the account's token_version. Bumping the column (password change,
+ * reset, "log out all devices", account deletion) revokes every older token.
+ * The email is intentionally not embedded in the token.
+ */
 export function signToken(user) {
-  return jwt.sign({ sub: user.id, email: user.email }, config.jwtSecret, {
+  return jwt.sign({ sub: user.id, tv: Number(user.token_version ?? 0) }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn
   });
 }
@@ -24,7 +29,12 @@ export async function userForToken(token) {
     SELECT 1 FROM auth_identities i WHERE i.user_id = u.id AND i.provider = 'email'
       AND i.email = u.email AND i.email_verified
   ) AS email_verified FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL AND u.status = 'active'`, [payload.sub]);
-  return rows[0] || null;
+  const user = rows[0];
+  if (!user) return null;
+  // Tokens issued before token_version existed carry no `tv`; treat them as 0
+  // so the upgrade does not sign anybody out.
+  if (Number(payload.tv ?? 0) !== Number(user.token_version ?? 0)) return null;
+  return user;
 }
 
 export async function requireAuth(req, res, next) {

@@ -163,7 +163,7 @@ async function loadPostsForSync(userId, postIds) {
     [userId, ids]
   );
   const posts = await attachPostCounts(rows);
-  return posts.map((row) => postToClient(row, row));
+  return posts.map((row) => postToClient(row, row, { viewer: userId }));
 }
 
 async function loadCollectionsForSync(userId, collectionIds) {
@@ -179,7 +179,7 @@ async function loadCollectionsForSync(userId, collectionIds) {
       ORDER BY c.created_at DESC`,
     [userId, ids]
   );
-  return rows.map((row) => collectionToClient(row, row.post_ids));
+  return rows.map((row) => collectionToClient(row, row.post_ids, { viewer: userId }));
 }
 
 async function loadCommentsForSync(userId, commentIds) {

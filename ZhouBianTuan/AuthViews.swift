@@ -201,6 +201,7 @@ struct AccountAuthView: View {
     @State private var isSubmitting = false
     @State private var codeCooldownTask: Task<Void, Never>?
     @State private var formError: AuthFieldError?
+    @State private var isPasswordResetPresented = false
 
     var canSubmit: Bool {
         guard !isSubmitting else { return false }
@@ -321,6 +322,13 @@ struct AccountAuthView: View {
                         if mode != .codeLogin {
                             AuthSecureField(title: "密码", placeholder: mode == .register ? "至少 8 位" : "输入密码", text: $password, textContentType: mode == .register ? .newPassword : .password, error: errorMessage(for: .password))
                         }
+                        if mode == .passwordLogin {
+                            Button("忘记密码？") { isPasswordResetPresented = true }
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Color.white.opacity(0.72))
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
+                                .buttonStyle(.pressFeedback)
+                        }
                         if mode == .register {
                             AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $confirmPassword, textContentType: .newPassword, error: errorMessage(for: .confirmPassword))
                         }
@@ -386,6 +394,14 @@ struct AccountAuthView: View {
         .onDisappear {
             codeCooldownTask?.cancel()
             codeCooldownTask = nil
+        }
+        .sheet(isPresented: $isPasswordResetPresented) {
+            PasswordResetView(initialEmail: email) {
+                isPasswordResetPresented = false
+                dismiss()
+            }
+            .environmentObject(store)
+            .preferredColorScheme(.dark)
         }
     }
 
@@ -730,5 +746,140 @@ struct SecureTextField: UIViewRepresentable {
         @objc func textDidChange(_ sender: UITextField) {
             text = sender.text ?? ""
         }
+    }
+}
+
+
+/// F11: email -> code -> new password; success signs the user in.
+struct PasswordResetView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MockAppStore
+    @State private var email: String
+    @State private var code = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var isSendingCode = false
+    @State private var resendSeconds = 0
+    @State private var cooldownTask: Task<Void, Never>?
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+    @State private var notice: String?
+    let onSignedIn: () -> Void
+
+    init(initialEmail: String, onSignedIn: @escaping () -> Void) {
+        _email = State(initialValue: initialEmail.trimmed)
+        self.onSignedIn = onSignedIn
+    }
+
+    private var canSubmit: Bool {
+        !isSubmitting && email.trimmed.contains("@") && code.trimmed.count == 6
+            && newPassword.count >= 8 && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.pressFeedback)
+                .accessibilityLabel("关闭")
+                Spacer()
+                Text("重置密码")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Color.clear.frame(width: 44, height: 44)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("验证邮箱后设置新密码。重置后，所有设备上的旧登录都会失效。")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.56))
+                    AuthTextField(title: "邮箱", placeholder: "输入注册邮箱", text: $email,
+                                  keyboardType: .emailAddress, textContentType: .emailAddress)
+                    HStack(alignment: .bottom, spacing: 10) {
+                        AuthTextField(title: "验证码", placeholder: "6 位数字", text: $code,
+                                      keyboardType: .numberPad, textContentType: .oneTimeCode)
+                        Button { Task { await sendCode() } } label: {
+                            Text(isSendingCode ? "发送中" : (resendSeconds > 0 ? "\(resendSeconds)s后重发" : "发送验证码"))
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 104, height: 52)
+                                .background(canSendCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.pressFeedback)
+                        .disabled(!canSendCode)
+                    }
+                    if let notice {
+                        Text(notice)
+                            .font(.footnote)
+                            .foregroundStyle(Color.white.opacity(0.62))
+                    }
+                    AuthSecureField(title: "新密码", placeholder: "至少 8 位", text: $newPassword, textContentType: .newPassword,
+                                    error: !newPassword.isEmpty && newPassword.count < 8 ? "密码至少 8 位" : nil)
+                    AuthSecureField(title: "确认新密码", placeholder: "再次输入新密码", text: $confirmPassword, textContentType: .newPassword,
+                                    error: !confirmPassword.isEmpty && confirmPassword != newPassword ? "两次输入的密码不一致" : nil)
+                    Button { Task { await submit() } } label: {
+                        Text(isSubmitting ? "正在提交…" : "重置并登录")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.pressFeedback)
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.55)
+                    if let errorMessage {
+                        AuthFieldErrorText(errorMessage)
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 20)
+            }
+        }
+        .background(Color(red: 0.015, green: 0.016, blue: 0.022).ignoresSafeArea())
+        .onChange(of: code) { errorMessage = nil }
+        .onChange(of: newPassword) { errorMessage = nil }
+        .onDisappear { cooldownTask?.cancel() }
+    }
+
+    private var canSendCode: Bool { !isSendingCode && resendSeconds == 0 && email.trimmed.contains("@") }
+
+    private func sendCode() async {
+        guard canSendCode else { return }
+        isSendingCode = true
+        errorMessage = nil
+        defer { isSendingCode = false }
+        do {
+            try await store.backendClient.sendEmailCode(email: email.trimmed, purpose: "reset")
+            notice = "如果该邮箱已注册，验证码会发送到邮箱。"
+            resendSeconds = 60
+            cooldownTask?.cancel()
+            cooldownTask = Task { @MainActor in
+                while !Task.isCancelled && resendSeconds > 0 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if resendSeconds > 0 { resendSeconds -= 1 }
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func submit() async {
+        guard canSubmit else { return }
+        isSubmitting = true
+        errorMessage = nil
+        let error = await store.resetPassword(email: email, code: code, newPassword: newPassword)
+        isSubmitting = false
+        if let error { errorMessage = error } else { onSignedIn() }
     }
 }

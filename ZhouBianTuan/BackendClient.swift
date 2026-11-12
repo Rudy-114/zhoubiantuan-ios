@@ -197,6 +197,8 @@ struct BackendPost: Decodable {
     let pingguNote: String
     let unsoldRoles: [BackendRole]
     let revision: Int?
+    /// True for guest responses: contact fields are blank until sign-in (F24).
+    let contactHidden: Bool?
 
     func localPost() -> GroupBuyPost {
         GroupBuyPost(
@@ -255,6 +257,7 @@ struct BackendCollection: Decodable {
     let status: String?
     let revision: Int?
     let postCount: Int?
+    let contactHidden: Bool?
 
     func localCollection() -> GroupCollection {
         GroupCollection(
@@ -733,8 +736,37 @@ final class AliyunBackendClient {
             body: ["action": action, "reason": reason, "targetVersion": report.currentSnapshot?.version ?? ""])
     }
 
-    func deleteAccount(token: String) async throws {
-        try await emptyRequest("/me", method: "DELETE", token: token)
+    /// F28: deletion needs the account password or an emailed "delete" code.
+    func deleteAccount(token: String, password: String?, code: String?) async throws {
+        var body: [String: Any] = [:]
+        if let password, !password.isEmpty { body["password"] = password }
+        if let code, !code.isEmpty { body["code"] = code }
+        let _: EmptyResponse = try await request("/me", method: "DELETE", token: token, body: body)
+    }
+
+    func sendAccountDeletionCode(token: String, email: String) async throws {
+        let _: EmptyResponse = try await request("/auth/email/send-code", method: "POST", token: token, body: [
+            "email": email, "purpose": "delete"
+        ])
+    }
+
+    /// F11: forgotten password. Returns a fresh session (old tokens are revoked).
+    func resetPassword(email: String, code: String, newPassword: String) async throws -> BackendPayload {
+        try await request("/auth/password/reset", method: "POST", body: [
+            "email": email, "code": code, "newPassword": newPassword
+        ])
+    }
+
+    func changePassword(token: String, currentPassword: String, newPassword: String) async throws -> String {
+        let response: BackendTokenResponse = try await request("/me/password", method: "POST", token: token, body: [
+            "currentPassword": currentPassword, "newPassword": newPassword
+        ])
+        return response.token
+    }
+
+    /// F27: revokes every token of the account, including this device's.
+    func logOutAllDevices(token: String) async throws {
+        let _: EmptyResponse = try await request("/auth/logout-all", method: "POST", token: token)
     }
 
     func blockUser(token: String, userID: String) async throws {
@@ -868,6 +900,10 @@ struct BackendDateParserString {
 }
 
 struct EmptyResponse: Decodable {}
+
+struct BackendTokenResponse: Decodable {
+    let token: String
+}
 
 @MainActor
 final class RealtimeConnection {

@@ -94,6 +94,25 @@ function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name 
   };
 }
 
+/**
+ * Counts one event inside an existing transaction (rolled back with it).
+ * Used where the limit applies to a business action discovered mid-request,
+ * e.g. "this message creates a new conversation". Returns false when full.
+ */
+export async function consumeRateLimitEvent(client, { name, key, windowMs, max }) {
+  const keyHash = createHash("sha256").update(String(key || "")).digest("hex");
+  const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`rate:${name}:${keyHash}`]);
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS count FROM rate_limit_events
+     WHERE scope = $1 AND key_hash = $2 AND expires_at > clock_timestamp()`, [name, keyHash]);
+  if (rows[0].count >= max) return false;
+  await client.query(
+    `INSERT INTO rate_limit_events (scope, key_hash, created_at, expires_at)
+     VALUES ($1, $2, clock_timestamp(), clock_timestamp() + ($3::int * interval '1 second'))`, [name, keyHash, windowSeconds]);
+  return true;
+}
+
 export async function pruneOldRateLimitEvents() {
   const { rowCount } = await query("DELETE FROM rate_limit_events WHERE expires_at <= clock_timestamp()");
   return rowCount;

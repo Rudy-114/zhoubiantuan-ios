@@ -18,7 +18,10 @@ test("validates email verification codes", () => {
   assert.throws(() => assertEmailCode("12345"), /6 位验证码/);
   assert.equal(assertEmailCodePurpose("register"), "register");
   assert.equal(assertEmailCodePurpose("login"), "login");
-  assert.throws(() => assertEmailCodePurpose("reset"), /验证码用途不正确/);
+  // F11/F28 add password reset and account deletion codes.
+  assert.equal(assertEmailCodePurpose("reset"), "reset");
+  assert.equal(assertEmailCodePurpose("delete"), "delete");
+  assert.throws(() => assertEmailCodePurpose("admin"), /验证码用途不正确/);
 });
 
 test("requires stronger passwords", () => {
