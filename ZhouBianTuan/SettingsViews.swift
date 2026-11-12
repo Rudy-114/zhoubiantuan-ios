@@ -258,7 +258,7 @@ struct GeneralSettingsView: View {
                 .padding(.horizontal, 14)
 
             SettingsDetailGroup {
-                SettingsToggleRow(title: "深色模式", isOn: $store.isDarkModeEnabled)
+                SettingsAppearanceRow(mode: $store.appearanceMode)
             }
 
             Text("功能")
@@ -403,6 +403,28 @@ struct SettingsToggleRow: View {
         }
         .padding(.horizontal, 16)
         .frame(minHeight: subtitle == nil ? 72 : 96)
+    }
+}
+
+struct SettingsAppearanceRow: View {
+    @Binding var mode: AppearanceMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("外观")
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Theme.text.opacity(0.92))
+            Picker("外观", selection: $mode) {
+                ForEach(AppearanceMode.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+        .frame(minHeight: 96)
     }
 }
 

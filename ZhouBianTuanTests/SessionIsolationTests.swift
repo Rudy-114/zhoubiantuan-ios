@@ -233,6 +233,58 @@ final class SessionIsolationTests: XCTestCase {
         XCTAssertEqual(store.toastMessage, "Version conflict")
     }
 
+    func testFailedLikeRollsBackAndToastRetryReplaysIt() async throws {
+        let store = store()
+        defer { store.logOut() }
+        await login("A", store: store)
+        let post: [String: Any] = [
+            "id": "p-like", "title": "Like", "authorID": "B", "collectionID": "col-like",
+            "imageNames": [], "groupType": "followGroup", "categoryTags": [], "fandomTags": [],
+            "price": "10", "deposit": "", "deadline": "2026-12-01T00:00:00Z", "condition": "",
+            "isFormed": false, "description": "", "wechat": "", "qq": "", "groupInfo": "",
+            "externalLink": "", "createdAt": "2026-09-01T00:00:00Z", "likedCount": 5,
+            "favoriteCount": 0, "commentCount": 0, "reportCount": 0, "status": "active",
+            "imageAspect": 1.0, "pingguAveragePrice": "", "pingguNote": "", "revision": 1, "unsoldRoles": []
+        ]
+        store.posts = [try JSONDecoder().decode(BackendPost.self, from: JSONSerialization.data(withJSONObject: post)).localPost()]
+
+        StubProtocol.handler = { $0.reply(["error": "offline"], status: 503) }
+        store.toggleLike(postID: "p-like")
+        XCTAssertEqual(store.posts.first?.likedCount, 6)
+        for _ in 0..<100 where store.pendingReactionKeys.contains("like:p-like") { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertFalse(store.likedPostIDs.contains("p-like"))
+        XCTAssertEqual(store.posts.first?.likedCount, 5)
+        XCTAssertEqual(store.toast?.style, .error)
+        XCTAssertEqual(store.toast?.action?.title, "重试")
+
+        let liked = expectation(description: "Retry sends the like again")
+        let synced = expectation(description: "Success starts a sync")
+        synced.assertForOverFulfill = false
+        StubProtocol.handler = { request in
+            if request.request.httpMethod == "POST", request.request.url?.path.hasSuffix("/posts/p-like/like") == true {
+                liked.fulfill()
+                request.reply([:])
+            } else {
+                // Leave the follow-up sync unanswered so nothing chains into the next test.
+                synced.fulfill()
+            }
+        }
+        store.performToastAction()
+        XCTAssertNil(store.toast)
+        XCTAssertTrue(store.likedPostIDs.contains("p-like"))
+        XCTAssertEqual(store.posts.first?.likedCount, 6)
+        await fulfillment(of: [liked, synced], timeout: 3, enforceOrder: true)
+    }
+
+    func testPlainToastAssignmentStaysCompatible() {
+        let store = store()
+        store.toastMessage = "hello"
+        XCTAssertEqual(store.toast?.style, .normal)
+        XCTAssertNil(store.toast?.action)
+        store.toastMessage = nil
+        XCTAssertNil(store.toast)
+    }
+
     func testReportSubmissionWaitsForConfirmationAndNeverAddsAFailedReport() async {
         let store = store()
         defer { store.logOut() }

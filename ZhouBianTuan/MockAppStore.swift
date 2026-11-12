@@ -36,7 +36,13 @@ final class MockAppStore: ObservableObject {
             UserDefaults.standard.set(searchHistory, forKey: Self.searchHistoryDefaultsKey)
         }
     }
-    @Published var toastMessage: String?
+    /// F14: the toast carries a style and an optional single action.
+    @Published private(set) var toast: ToastItem?
+    /// Old call sites read and assign plain text; that maps to a normal toast.
+    var toastMessage: String? {
+        get { toast?.message }
+        set { toast = newValue.map { ToastItem(message: $0) } }
+    }
     @Published var isAuthPromptPresented = false
     @Published var isLoggedIn: Bool {
         didSet {
@@ -49,9 +55,12 @@ final class MockAppStore: ObservableObject {
     @Published var isShowingOfflineFeed = false
     @Published private(set) var pendingReactionKeys: Set<String> = []
     @Published var reactionErrors: [String: String] = [:]
-    @Published var isDarkModeEnabled: Bool {
+    /// F13: success / error haptics for flows that may dismiss their screen.
+    /// Observed once at the root so the feedback still plays after dismissal.
+    @Published private(set) var resultHaptic: HapticEvent?
+    @Published var appearanceMode: AppearanceMode {
         didSet {
-            UserDefaults.standard.set(isDarkModeEnabled, forKey: Self.darkModeDefaultsKey)
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: Self.appearanceModeDefaultsKey)
         }
     }
     @Published var isBackendEnabled: Bool {
@@ -64,7 +73,9 @@ final class MockAppStore: ObservableObject {
 
     static let demoUserID = "u-me"
     private static let loginDefaultsKey = "zhoubiantuan.isLoggedIn"
-    private static let darkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
+    /// Pre-F12 boolean. Read once to migrate existing users, never written.
+    private static let legacyDarkModeDefaultsKey = "zhoubiantuan.isDarkModeEnabled"
+    private static let appearanceModeDefaultsKey = "zhoubiantuan.appearanceMode"
     /// The unreplied-DM limit used to be a local toggle; the server enforces it now (F26).
     private static let retiredMessageLimitDefaultsKeys = [
         "zhoubiantuan.limitsUnrepliedMessages",
@@ -408,7 +419,12 @@ final class MockAppStore: ObservableObject {
         }
         let startsLoggedIn = persistsData && (UserDefaults.standard.object(forKey: Self.loginDefaultsKey) as? Bool ?? false)
         isLoggedIn = startsLoggedIn
-        isDarkModeEnabled = UserDefaults.standard.object(forKey: Self.darkModeDefaultsKey) as? Bool ?? true
+        appearanceMode = AppearanceMode.resolve(
+            stored: UserDefaults.standard.string(forKey: Self.appearanceModeDefaultsKey),
+            legacyDarkMode: UserDefaults.standard.object(forKey: Self.legacyDarkModeDefaultsKey) as? Bool,
+            // Every earlier build wrote this key on launch, so it marks an upgrade
+            // from a version whose default was dark (read before it is rewritten below).
+            isExistingInstall: UserDefaults.standard.object(forKey: Self.backendEnabledDefaultsKey) != nil)
         UserDefaults.standard.set(true, forKey: Self.backendEnabledDefaultsKey)
         isBackendEnabled = true
         let blankUser = Self.blankUser
@@ -935,7 +951,8 @@ final class MockAppStore: ObservableObject {
         }
     }
 
-    private func runOptimisticReaction(key: String, rollback: @escaping () -> Void,
+    /// `retry` replays the same user intent after the rollback restored the old state.
+    private func runOptimisticReaction(key: String, rollback: @escaping () -> Void, retry: (() -> Void)? = nil,
                                        _ operation: @escaping (String, UUID) async throws -> Void) {
         guard isBackendEnabled else { return }
         guard let token = backendToken else {
@@ -956,7 +973,7 @@ final class MockAppStore: ObservableObject {
                 rollback()
                 pendingReactionKeys.remove(key)
                 reactionErrors[key] = error.localizedDescription
-                showToast("操作未成功，可稍后重试")
+                showToast("操作未成功", style: .error, action: retry.map { retry in ToastAction(title: "重试", handler: retry) })
             }
         }
     }
@@ -1272,7 +1289,7 @@ final class MockAppStore: ObservableObject {
             runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
                 guard let self, !self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
                 self.likedPostIDs.insert(postID); self.posts[index].likedCount += 1
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleLike(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: false)
                 guard isCurrentSession(session) else { return }
             }
@@ -1283,7 +1300,7 @@ final class MockAppStore: ObservableObject {
             runOptimisticReaction(key: "like:\(postID)", rollback: { [weak self] in
                 guard let self, self.likedPostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
                 self.likedPostIDs.remove(postID); self.posts[index].likedCount = max(0, self.posts[index].likedCount - 1)
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleLike(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "like", enabled: true)
                 guard isCurrentSession(session) else { return }
             }
@@ -1302,7 +1319,7 @@ final class MockAppStore: ObservableObject {
             runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
                 guard let self, !self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
                 self.favoritePostIDs.insert(postID); self.posts[index].favoriteCount += 1
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleFavorite(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: false)
                 guard isCurrentSession(session) else { return }
             }
@@ -1314,7 +1331,7 @@ final class MockAppStore: ObservableObject {
             runOptimisticReaction(key: "favorite:\(postID)", rollback: { [weak self] in
                 guard let self, self.favoritePostIDs.contains(postID), let index = self.posts.firstIndex(where: { $0.id == postID }) else { return }
                 self.favoritePostIDs.remove(postID); self.posts[index].favoriteCount = max(0, self.posts[index].favoriteCount - 1)
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleFavorite(postID: postID) }) { [self] token, session in
                 try await self.backendClient.setPostFlag(token: token, postID: postID, flag: "favorite", enabled: true)
                 guard isCurrentSession(session) else { return }
             }
@@ -1339,7 +1356,7 @@ final class MockAppStore: ObservableObject {
             showToast("已取消关注")
             runOptimisticReaction(key: "follow:\(userID)", rollback: { [weak self] in
                 self?.restoreFollowState(userID: userID, wasFollowing: true)
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleFollow(userID: userID) }) { [self] token, session in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: false)
                 guard isCurrentSession(session) else { return }
             }
@@ -1363,7 +1380,7 @@ final class MockAppStore: ObservableObject {
             showToast("已关注团长")
             runOptimisticReaction(key: "follow:\(userID)", rollback: { [weak self] in
                 self?.restoreFollowState(userID: userID, wasFollowing: false)
-            }) { [self] token, session in
+            }, retry: { [weak self] in self?.toggleFollow(userID: userID) }) { [self] token, session in
                 try await self.backendClient.setFollow(token: token, userID: userID, enabled: true)
                 guard isCurrentSession(session) else { return }
             }
@@ -1433,7 +1450,11 @@ final class MockAppStore: ObservableObject {
                     showToast(response.moderation?.userMessage ?? "评论已发布")
                 } catch {
                     guard isCurrentSession(session) else { return }
-                    showToast(error.localizedDescription)
+                    // The input was already cleared, so the retry keeps the text.
+                    showToast("评论发送失败：\(error.localizedDescription)", style: .error,
+                              action: ToastAction(title: "重试") { [weak self] in
+                                  self?.addComment(postID: postID, body: trimmed, replyToID: replyToID)
+                              })
                 }
             }
             return
@@ -2196,6 +2217,10 @@ final class MockAppStore: ObservableObject {
         return "t-dm-\(pair)"
     }
 
+    func playResultHaptic(_ event: HapticEvent) {
+        resultHaptic = event
+    }
+
     func sendMessage(threadID: String, body: String) -> Bool {
         guard requireLogin(prompt: "登录后才能发私信") else { return false }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2731,12 +2756,37 @@ final class MockAppStore: ObservableObject {
     // MARK: - Toasts
 
     func showToast(_ message: String) {
-        toastMessage = message
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            if self?.toastMessage == message {
-                self?.toastMessage = nil
+        showToast(message, style: .normal)
+    }
+
+    /// Error toasts stay 4 s so an attached action (usually "重试") can be reached.
+    func showToast(_ message: String, style: ToastStyle, action: ToastAction? = nil) {
+        let item = ToastItem(message: message, style: style, action: action)
+        toast = item
+        let duration: TimeInterval = style == .error ? 4 : 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            if self?.toast?.id == item.id {
+                self?.toast = nil
             }
         }
+    }
+
+    /// Runs the toast's action and dismisses it.
+    func performToastAction() {
+        guard let action = toast?.action else { return }
+        toast = nil
+        action.handler()
+    }
+
+    /// Pull-to-refresh. When the list already has content, a failure would
+    /// only appear in the footer far below, so surface it with a retry.
+    func refreshContentPage(_ query: ContentQuery) async {
+        await loadContentPage(query, reset: true)
+        let state = pageState(query)
+        guard state.error != nil, !state.ids.isEmpty else { return }
+        showToast("刷新失败，请检查网络", style: .error, action: ToastAction(title: "重试") { [weak self] in
+            Task { await self?.refreshContentPage(query) }
+        })
     }
 
     private static func date(days: Int, hour: Int) -> Date {

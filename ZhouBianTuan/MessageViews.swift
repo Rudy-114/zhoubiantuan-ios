@@ -57,7 +57,7 @@ struct MessagesView: View {
                     ContentPageFooter(query: .threads)
                 }
                 .background(Theme.background.ignoresSafeArea())
-                .refreshable { await store.loadContentPage(.threads, reset: true) }
+                .refreshable { await store.refreshContentPage(.threads) }
                 .onAppear {
                     store.ensureMutualFriendThreads()
                 }
@@ -154,6 +154,11 @@ struct ChatView: View {
     @State private var isCameraPresented = false
     let threadID: String
 
+    private var failedOwnMessageCount: Int {
+        store.messageThread(id: threadID)?.messages
+            .filter { $0.senderID == store.currentUserID && $0.deliveryStatus.isFailed }.count ?? 0
+    }
+
     var body: some View {
         if let thread = store.messageThread(id: threadID) {
             let peer = store.user(id: store.peerUserID(for: thread))
@@ -210,6 +215,8 @@ struct ChatView: View {
                         .padding(.bottom, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
+                    // F13: buzz when one of my messages newly fails to send.
+                    .sensoryFeedback(.error, trigger: failedOwnMessageCount) { old, new in new > old }
                     .onChange(of: visibleMessages.last?.id) {
                         if let last = visibleMessages.last {
                             proxy.scrollTo(last.id, anchor: .bottom)

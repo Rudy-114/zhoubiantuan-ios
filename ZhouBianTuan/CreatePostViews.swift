@@ -372,6 +372,7 @@ struct CreatePostView: View {
                             let success = await store.createPost(title: title, groupType: selectedGroupType, collectionID: selectedCollection.id, imageNames: ["merch_photocards"], uploadedImageData: uploadedImageData, tags: selectedTags.sorted(), price: priceRangeText, deposit: depositText, deadline: deadline, condition: condition, wechat: wechat, qq: qq, groupInfo: groupInfo, description: description, pingguAveragePrice: pingguAveragePrice, pingguNote: pingguNote, unsoldRoles: roleDrafts, replacingPostID: republishingPostID, submissionID: submissionID)
                             guard publishRequestID == requestID else { return }
                             isPublishing = false
+                            store.playResultHaptic(success ? .success : .error)
                             if success {
                                 PostDraftStore.shared.remove(id: draftID, ownerID: store.currentUserID)
                                 lastSubmission = nil

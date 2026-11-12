@@ -34,7 +34,8 @@ struct ZhouBianTuanApp: App {
             RootView()
                 .environmentObject(store)
                 .tint(Theme.hotPink)
-                .preferredColorScheme(store.isDarkModeEnabled ? .dark : .light)
+                .preferredColorScheme(store.appearanceMode.colorScheme)
+                .hapticEvent(store.resultHaptic)
         }
     }
 }
@@ -217,7 +218,7 @@ struct RootView: View {
             }
 
             if showsLaunchSplash {
-                LaunchSplashView(isDarkMode: store.isDarkModeEnabled)
+                LaunchSplashView()
                     .transition(.opacity)
                     .zIndex(10)
                     .task {
@@ -259,12 +260,11 @@ extension Route {
 }
 
 struct LaunchSplashView: View {
-    let isDarkMode: Bool
     @State private var isPresented = false
 
     var body: some View {
         ZStack {
-            (isDarkMode ? Color.black : Color.white)
+            Theme.background
                 .ignoresSafeArea()
 
             Text("周边团")

@@ -403,6 +403,7 @@ struct DetailTopBar: View {
                     }
             }
             .buttonStyle(.pressFeedback)
+            .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(author.id))
 
             Button {
                 if store.requireLogin(prompt: "登录后才能分享") {
@@ -1467,13 +1468,13 @@ struct DetailActionBar: View {
                     .buttonStyle(.pressFeedback)
                 }
 
-                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text) {
+                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text, feedback: .impact(weight: .light)) {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
                         store.toggleLike(postID: post.id)
                     }
                 }
                 .disabled(store.pendingReactionKeys.contains("like:\(post.id)"))
-                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text) {
+                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text, feedback: .selection) {
                     store.toggleFavorite(postID: post.id)
                 }
                 .disabled(store.pendingReactionKeys.contains("favorite:\(post.id)"))

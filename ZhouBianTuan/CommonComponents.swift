@@ -501,14 +501,38 @@ struct ContactButton: View {
     }
 }
 
+/// F13: a one-shot result haptic (success / error) raised from an async flow.
+/// Each event is distinct, so two failures in a row both play.
+struct HapticEvent: Equatable {
+    let id = UUID()
+    let feedback: SensoryFeedback
+
+    static var success: HapticEvent { HapticEvent(feedback: .success) }
+    static var error: HapticEvent { HapticEvent(feedback: .error) }
+
+    static func == (lhs: HapticEvent, rhs: HapticEvent) -> Bool { lhs.id == rhs.id }
+}
+
+extension View {
+    func hapticEvent(_ event: HapticEvent?) -> some View {
+        sensoryFeedback(trigger: event) { _, newValue in newValue?.feedback }
+    }
+}
+
 struct ActionIconButton: View {
     let icon: String
     let title: String
     let tint: Color
+    /// Played on the user's tap only (not when sync or a rollback changes the icon).
+    var feedback: SensoryFeedback? = nil
     let action: () -> Void
+    @State private var tapCount = 0
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            tapCount += 1
+            action()
+        } label: {
             VStack(spacing: 2) {
                 Image(systemName: icon)
                     .font(.system(size: 24, weight: .semibold))
@@ -519,6 +543,7 @@ struct ActionIconButton: View {
             .frame(width: 46)
         }
         .buttonStyle(.pressFeedback)
+        .sensoryFeedback(trigger: tapCount) { _, _ in feedback }
         .accessibilityLabel(accessibilityTitle)
         .accessibilityValue(title)
         .accessibilityAddTraits(icon.contains("fill") ? .isSelected : [])
@@ -932,16 +957,35 @@ struct ToastHost: View {
     @EnvironmentObject private var store: MockAppStore
 
     var body: some View {
-        if let message = store.toastMessage {
-            Text(message)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
+        // The animation sits on the container so both insertion and removal animate.
+        ZStack {
+            if let toast = store.toast {
+                HStack(spacing: 10) {
+                    if toast.style == .error {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(Theme.hotPink)
+                            .accessibilityHidden(true)
+                    }
+                    Text(toast.message)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    if let action = toast.action {
+                        Button(action.title) { store.performToastAction() }
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundStyle(Theme.hotPink)
+                            .padding(.leading, 2)
+                    }
+                }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.82), in: Capsule())
+                .padding(.horizontal, 16)
                 .padding(.top, 10)
+                .id(toast.id)
                 .transition(.move(edge: .top).combined(with: .opacity))
-                .animation(.spring(response: 0.28, dampingFraction: 0.86), value: message)
+            }
         }
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: store.toast?.id)
     }
 }

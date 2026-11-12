@@ -3,8 +3,47 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var feed: HomeFeed = .followGroup
-    @State private var feedDragOffset: CGFloat = 0
-    @State private var isFeedDragging = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HomeHeader(feed: $feed, onSelect: selectFeed)
+            if store.isShowingOfflineFeed {
+                HStack(spacing: 7) {
+                    Image(systemName: "wifi.slash")
+                    Text("离线内容 · 最近同步的帖子和评论")
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.subtext)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Theme.panelRaised)
+            }
+            // Each feed is a real page with its own ScrollView, so the
+            // neighbour follows the finger and both keep their scroll position.
+            TabView(selection: $feed) {
+                HomeFeedPage(feed: .followGroup).tag(HomeFeed.followGroup)
+                HomeFeedPage(feed: .splitGoods).tag(HomeFeed.splitGoods)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .sensoryFeedback(.selection, trigger: feed)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(true)
+    }
+
+    private func selectFeed(_ nextFeed: HomeFeed) {
+        guard feed != nextFeed else { return }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            feed = nextFeed
+        }
+    }
+}
+
+struct HomeFeedPage: View {
+    @EnvironmentObject private var store: MockAppStore
+    let feed: HomeFeed
 
     var pageQuery: ContentQuery {
         .init(parameters: [
@@ -24,22 +63,8 @@ struct HomeView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HomeHeader(feed: $feed, onSelect: selectFeed)
-            if store.isShowingOfflineFeed {
-                HStack(spacing: 7) {
-                    Image(systemName: "wifi.slash")
-                    Text("离线内容 · 最近同步的帖子和评论")
-                    Spacer()
-                }
-                .font(.caption)
-                .foregroundStyle(Theme.subtext)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Theme.panelRaised)
-            }
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
                 if posts.isEmpty && (store.isLoadingInitialFeed || store.pageState(pageQuery).requestID != nil) {
                     HomeFeedSkeletonGrid()
                         .padding(.horizontal, 12)
@@ -63,102 +88,17 @@ struct HomeView: View {
                         .padding(.bottom, 28)
                 }
                 ContentPageFooter(query: pageQuery)
-                }
             }
-            .refreshable { await store.loadContentPage(pageQuery, reset: true) }
-            .transition(.opacity.combined(with: .move(edge: feed == .splitGoods ? .trailing : .leading)))
-            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: feed)
         }
-        .offset(x: feedDragOffset)
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 8, coordinateSpace: .local)
-                .onChanged(handleFeedDragChanged)
-                .onEnded(handleFeedDragEnded)
-        )
-        .background(Theme.background.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarHidden(true)
+        .refreshable { await store.refreshContentPage(pageQuery) }
         .task(id: "\(store.authSessionVersion)-\(store.contentPageEpoch)-\(pageQuery.key)") {
             // Only load a feed that has never been loaded. Returning from a
-            // detail page or switching tabs must keep the current list, order
+            // detail page or switching pages must keep the current list, order
             // and scroll position; pull-to-refresh and retry start a new page.
             let state = store.pageState(pageQuery)
             guard !state.isLoaded, state.requestID == nil else { return }
             await store.loadContentPage(pageQuery, reset: true)
         }
-    }
-
-    private func selectFeed(_ nextFeed: HomeFeed) {
-        guard feed != nextFeed else { return }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-            feed = nextFeed
-        }
-    }
-
-    private func handleFeedDragChanged(_ value: DragGesture.Value) {
-        // Only the header owns the feed switch. This keeps a horizontal drift
-        // inside the vertical waterfall from hijacking scrolling.
-        guard value.startLocation.y < 110 else { return }
-        let horizontal = value.translation.width
-        let vertical = value.translation.height
-        if !isFeedDragging {
-            guard abs(horizontal) > 2, abs(horizontal) > abs(vertical) * 1.15 else { return }
-            isFeedDragging = true
-        }
-        guard isFeedDragging else { return }
-
-        let width = max(UIScreen.main.bounds.width, 1)
-        let atLeadingBoundary = feed == .followGroup && horizontal > 0
-        let atTrailingBoundary = feed == .splitGoods && horizontal < 0
-        feedDragOffset = (atLeadingBoundary || atTrailingBoundary)
-            ? rubberBandFeedOffset(horizontal, width: width)
-            : horizontal
-    }
-
-    private func handleFeedDragEnded(_ value: DragGesture.Value) {
-        guard isFeedDragging else { return }
-        isFeedDragging = false
-
-        let width = max(UIScreen.main.bounds.width, 1)
-        let translation = value.translation.width
-        let projected = value.predictedEndTranslation.width
-        let movingForward = translation < 0 || projected < 0
-        let movingBackward = translation > 0 || projected > 0
-        let canMoveForward = feed == .followGroup && movingForward
-        let canMoveBackward = feed == .splitGoods && movingBackward
-        let shouldSwitch = canMoveForward || canMoveBackward
-            ? abs(translation) >= width * 0.24 || abs(projected) >= width * 0.34
-            : false
-
-        guard shouldSwitch else {
-            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.86)) {
-                feedDragOffset = 0
-            }
-            return
-        }
-
-        let destinationOffset: CGFloat = canMoveForward ? -width : width
-        withAnimation(.easeOut(duration: 0.2)) {
-            feedDragOffset = destinationOffset
-        }
-        let nextFeed: HomeFeed = canMoveForward ? .splitGoods : .followGroup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                feed = nextFeed
-                feedDragOffset = 0
-            }
-        }
-    }
-
-    private func rubberBandFeedOffset(_ distance: CGFloat, width: CGFloat) -> CGFloat {
-        let sign: CGFloat = distance < 0 ? -1 : 1
-        let magnitude = abs(distance)
-        let resistanceStart = width * 0.68
-        guard magnitude > resistanceStart else { return distance }
-        return sign * (resistanceStart + (magnitude - resistanceStart) * 0.18)
     }
 }
 
@@ -444,6 +384,10 @@ struct PostCard: View {
                             .scaledToFill()
                             .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
                             .clipped()
+                        if isEnded {
+                            // F22: dim only the image; the text below stays readable.
+                            Color.black.opacity(0.35)
+                        }
                     }
                     .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
                     .overlay(alignment: .topLeading) {
@@ -458,7 +402,7 @@ struct PostCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(livePost.title)
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(isEnded ? Theme.subtext : Theme.text)
                             .lineLimit(2)
                             .lineSpacing(-1.5)
                             .minimumScaleFactor(0.88)
@@ -518,8 +462,6 @@ struct PostCard: View {
                 .frame(width: cardWidth)
             }
             .buttonStyle(.pressFeedback)
-            .saturation(isEnded ? 0 : 1)
-            .opacity(isEnded ? 0.58 : 1)
             .contextMenu {
                 Button {
                     store.markFeedPostNotInterested(livePost.id)
@@ -579,6 +521,9 @@ struct PostCardDeadlineBadge: View {
 struct PostLikeCountButton: View {
     @EnvironmentObject private var store: MockAppStore
     let postID: String
+    /// Haptics follow the user's tap, not the like state, so a sync update or
+    /// a failed-request rollback does not buzz.
+    @State private var tapCount = 0
 
     private var post: GroupBuyPost? {
         store.post(id: postID)
@@ -590,6 +535,7 @@ struct PostLikeCountButton: View {
 
     var body: some View {
         Button {
+            tapCount += 1
             withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
                 store.toggleLike(postID: postID)
             }
@@ -609,6 +555,7 @@ struct PostLikeCountButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.pressFeedback)
+        .sensoryFeedback(.impact(weight: .light), trigger: tapCount)
         .accessibilityLabel(isLiked ? "取消点赞" : "点赞")
         .accessibilityValue((post?.likedCount ?? 0).formattedCount)
     }

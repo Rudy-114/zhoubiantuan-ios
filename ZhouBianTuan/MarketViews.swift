@@ -38,7 +38,7 @@ struct MarketView: View {
                             ContentPageFooter(query: .following)
                         }
                     }
-                    .refreshable { await store.loadContentPage(.following, reset: true) }
+                    .refreshable { await store.refreshContentPage(.following) }
                 }
                 .background(Theme.background.ignoresSafeArea())
             } else {

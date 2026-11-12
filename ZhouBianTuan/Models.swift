@@ -524,3 +524,50 @@ extension ReportStatus {
         }
     }
 }
+
+/// F12: appearance follows the system unless the user picked one explicitly.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: "跟随系统"
+        case .light: "浅色"
+        case .dark: "深色"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    /// New key wins; otherwise an upgrading user keeps what they saw before
+    /// (their old toggle, or the old dark default); a fresh install follows the system.
+    static func resolve(stored: String?, legacyDarkMode: Bool?, isExistingInstall: Bool) -> AppearanceMode {
+        if let stored, let mode = AppearanceMode(rawValue: stored) { return mode }
+        if let legacyDarkMode { return legacyDarkMode ? .dark : .light }
+        return isExistingInstall ? .dark : .system
+    }
+}
+
+enum ToastStyle: Equatable {
+    case normal, error
+}
+
+struct ToastAction {
+    let title: String
+    let handler: () -> Void
+}
+
+struct ToastItem: Identifiable {
+    let id = UUID()
+    let message: String
+    var style: ToastStyle = .normal
+    var action: ToastAction? = nil
+}

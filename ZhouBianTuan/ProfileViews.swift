@@ -467,6 +467,7 @@ struct UserRelationRow: View {
                         .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
                 }
                 .buttonStyle(.pressFeedback)
+                .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(user.id))
             }
         }
         .padding(14)
@@ -1185,7 +1186,7 @@ struct CollectionDetailView: View {
                 .padding(.bottom, 28)
                 ContentPageFooter(query: .collection(collectionID))
             }
-            .refreshable { await store.loadContentPage(.collection(collectionID), reset: true) }
+            .refreshable { await store.refreshContentPage(.collection(collectionID)) }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -1981,9 +1982,11 @@ struct EditProfileView: View {
         )
         isSaving = false
         guard saved else {
+            store.playResultHaptic(.error)
             saveError = "资料保存失败，草稿已保留。"
             return
         }
+        store.playResultHaptic(.success)
         if shouldDismiss {
             dismiss()
         }
@@ -2108,7 +2111,7 @@ struct FavoritesView: View {
                 ContentPageFooter(query: .favorites)
             }
         }
-        .refreshable { await store.loadContentPage(.favorites, reset: true) }
+        .refreshable { await store.refreshContentPage(.favorites) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("我的收藏")
     }
@@ -2139,7 +2142,7 @@ struct ReminderCenterView: View {
             .padding(16)
             ContentPageFooter(query: .favorites)
         }
-        .refreshable { await store.loadContentPage(.favorites, reset: true) }
+        .refreshable { await store.refreshContentPage(.favorites) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("收藏截团日期")
     }
@@ -2354,6 +2357,7 @@ struct UserProfileView: View {
                                         .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
                                 .buttonStyle(.pressFeedback)
+                                .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(user.id))
                                 .disabled(user.id == store.currentUserID || store.isBlocked(user.id))
 
                                 if let threadID = store.directMessageThreadRouteID(for: user.id) {

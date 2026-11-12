@@ -10,6 +10,7 @@
 		0E5D56442875779D34DFE6D1 /* SessionIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */; };
 		378378AF12A9304E8F8EEF8A /* MessageConsistencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */; };
 		1F847E5046E432C2E321FE72 /* ImagePipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2E053167ED867E1716ECA4 /* ImagePipelineTests.swift */; };
+		A1F12B0000000000000000B1 /* AppearanceModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F12F0000000000000000F1 /* AppearanceModeTests.swift */; };
 		50402D5CE53C32E98FCB7691 /* MessageMerging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B604123493D0B684AFB21B06 /* MessageMerging.swift */; };
 		7D4E6E0D2C8A4A5100A10001 /* ZhouBianTuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4E6E0C2C8A4A5100A10001 /* ZhouBianTuanApp.swift */; };
 		7D4E6E4A2C8A4A5100A10001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7D4E6E492C8A4A5100A10001 /* PrivacyInfo.xcprivacy */; };
@@ -62,6 +63,7 @@
 		316B1011DCDC46E0E6BFB6A3 /* MessageCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageCache.swift; sourceTree = "<group>"; };
 		5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MessageConsistencyTests.swift; sourceTree = "<group>"; };
 		7C2E053167ED867E1716ECA4 /* ImagePipelineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImagePipelineTests.swift; sourceTree = "<group>"; };
+		A1F12F0000000000000000F1 /* AppearanceModeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppearanceModeTests.swift; sourceTree = "<group>"; };
 		604D56F548AA8D065B77F364 /* ZhouBianTuanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZhouBianTuanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionIsolationTests.swift; sourceTree = "<group>"; };
 		7D4E6E082C8A4A5100A10001 /* ZhouBianTuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ZhouBianTuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -144,6 +146,7 @@
 				77C1C78DA67D87CF34751E08 /* SessionIsolationTests.swift */,
 				5FAC7F2AF82D0A773BCE2EE9 /* MessageConsistencyTests.swift */,
 				7C2E053167ED867E1716ECA4 /* ImagePipelineTests.swift */,
+				A1F12F0000000000000000F1 /* AppearanceModeTests.swift */,
 			);
 			name = ZhouBianTuanTests;
 			path = ZhouBianTuanTests;
@@ -399,6 +402,7 @@
 				0E5D56442875779D34DFE6D1 /* SessionIsolationTests.swift in Sources */,
 				378378AF12A9304E8F8EEF8A /* MessageConsistencyTests.swift in Sources */,
 				1F847E5046E432C2E321FE72 /* ImagePipelineTests.swift in Sources */,
+				A1F12B0000000000000000B1 /* AppearanceModeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
