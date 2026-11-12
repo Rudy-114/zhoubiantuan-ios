@@ -45,7 +45,7 @@ struct GuestAuthView: View {
                             isRegisterPresented = true
                         } label: {
                             Label("邮箱注册 / 登录", systemImage: "envelope.fill")
-                                .font(.system(size: 22, weight: .bold))
+                                .font(AppFont.title)
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .frame(height: 62)
@@ -55,14 +55,14 @@ struct GuestAuthView: View {
                         .buttonStyle(.pressFeedback)
 
                         Text("支持邮箱注册、密码登录和验证码登录。")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Color(red: 0.76, green: 0.82, blue: 0.91))
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         #if DEBUG
                         VStack(alignment: .leading, spacing: 12) {
                             Text("开发调试入口")
-                                .font(.system(size: 13, weight: .black))
+                                .font(AppFont.caption.weight(.bold))
                                 .foregroundStyle(Color.white.opacity(0.46))
 
                             HStack(spacing: 12) {
@@ -70,7 +70,7 @@ struct GuestAuthView: View {
                                     logIn(provider: "微信")
                                 } label: {
                                     Label("微信", systemImage: "bubble.left.and.bubble.right.fill")
-                                        .font(.system(size: 16, weight: .black))
+                                        .font(AppFont.callout.weight(.bold))
                                         .foregroundStyle(.white)
                                         .frame(maxWidth: .infinity)
                                         .frame(height: 48)
@@ -82,7 +82,7 @@ struct GuestAuthView: View {
                                     logIn(provider: "Apple")
                                 } label: {
                                     Label("Apple", systemImage: "apple.logo")
-                                        .font(.system(size: 16, weight: .black))
+                                        .font(AppFont.callout.weight(.bold))
                                         .foregroundStyle(.white)
                                         .frame(maxWidth: .infinity)
                                         .frame(height: 48)
@@ -243,12 +243,13 @@ struct AccountAuthView: View {
                         .foregroundStyle(.white)
                         .frame(width: 48, height: 48)
                 }
+                .accessibilityLabel("返回")
                 .buttonStyle(.pressFeedback)
 
                 Spacer()
 
                 Text(mode == .register ? "注册账号" : "账号登录")
-                    .font(.system(size: 22, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(.white)
 
                 Spacer()
@@ -262,10 +263,10 @@ struct AccountAuthView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(titleText)
-                            .font(.system(size: 34, weight: .black))
+                            .font(AppFont.display)
                             .foregroundStyle(.white)
                         Text(subtitleText)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.56))
                     }
                     .padding(.top, 18)
@@ -276,12 +277,13 @@ struct AccountAuthView: View {
                                 mode = item
                             } label: {
                                 Text(item.rawValue)
-                                    .font(.system(size: store.isBackendEnabled ? 14 : 16, weight: .black))
+                                    .font(AppFont.callout.weight(.bold))
                                     .foregroundStyle(mode == item ? .white : Color.white.opacity(0.52))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
-                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                             }
+                            .accessibilityAddTraits(mode == item ? .isSelected : [])
                             .buttonStyle(.pressFeedback)
                         }
                     }
@@ -306,10 +308,10 @@ struct AccountAuthView: View {
                                         Task { await requestCode() }
                                     } label: {
                                         Text(codeButtonTitle)
-                                            .font(.system(size: 14, weight: .black))
+                                            .font(AppFont.callout.weight(.bold))
                                             .foregroundStyle(.white)
                                             .frame(width: 104, height: 52)
-                                            .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                            .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                     }
                                     .buttonStyle(.pressFeedback)
                                     .disabled(!canRequestCode)
@@ -324,7 +326,7 @@ struct AccountAuthView: View {
                         }
                         if mode == .passwordLogin {
                             Button("忘记密码？") { isPasswordResetPresented = true }
-                                .font(.system(size: 14, weight: .bold))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(Color.white.opacity(0.72))
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
                                 .buttonStyle(.pressFeedback)
@@ -340,11 +342,11 @@ struct AccountAuthView: View {
                         }
                     } label: {
                         Text(submitText)
-                            .font(.system(size: 18, weight: .black))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(!canSubmit)
@@ -631,21 +633,21 @@ struct AuthTextField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(Color.white.opacity(0.56))
             TextField(placeholder, text: $text)
                 .keyboardType(keyboardType)
                 .textContentType(textContentType)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .font(.system(size: 17, weight: .semibold))
+                .font(AppFont.headline)
                 .foregroundStyle(.white)
                 .tint(Theme.hotPink)
                 .padding(.horizontal, 14)
                 .frame(height: 52)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.control)
                         .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
                 }
             if let error {
@@ -665,14 +667,14 @@ struct AuthSecureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(Color.white.opacity(0.56))
             SecureTextField(placeholder: placeholder, text: $text, textContentType: textContentType)
                 .padding(.horizontal, 14)
                 .frame(height: 52)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.control)
                         .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
                 }
             if let error {
@@ -691,7 +693,7 @@ private struct AuthFieldErrorText: View {
 
     var body: some View {
         Text(message)
-            .font(.system(size: 12, weight: .bold))
+            .font(AppFont.caption.weight(.bold))
             .foregroundStyle(Theme.hotPink)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -789,7 +791,7 @@ struct PasswordResetView: View {
                 .accessibilityLabel("关闭")
                 Spacer()
                 Text("重置密码")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(AppFont.title)
                     .foregroundStyle(.white)
                 Spacer()
                 Color.clear.frame(width: 44, height: 44)
@@ -800,7 +802,7 @@ struct PasswordResetView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("验证邮箱后设置新密码。重置后，所有设备上的旧登录都会失效。")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(AppFont.callout.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.56))
                     AuthTextField(title: "邮箱", placeholder: "输入注册邮箱", text: $email,
                                   keyboardType: .emailAddress, textContentType: .emailAddress)
@@ -809,10 +811,10 @@ struct PasswordResetView: View {
                                       keyboardType: .numberPad, textContentType: .oneTimeCode)
                         Button { Task { await sendCode() } } label: {
                             Text(isSendingCode ? "发送中" : (resendSeconds > 0 ? "\(resendSeconds)s后重发" : "发送验证码"))
-                                .font(.system(size: 14, weight: .bold))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(.white)
                                 .frame(width: 104, height: 52)
-                                .background(canSendCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(canSendCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         }
                         .buttonStyle(.pressFeedback)
                         .disabled(!canSendCode)
@@ -828,11 +830,11 @@ struct PasswordResetView: View {
                                     error: !confirmPassword.isEmpty && confirmPassword != newPassword ? "两次输入的密码不一致" : nil)
                     Button { Task { await submit() } } label: {
                         Text(isSubmitting ? "正在提交…" : "重置并登录")
-                            .font(.system(size: 18, weight: .bold))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(!canSubmit)

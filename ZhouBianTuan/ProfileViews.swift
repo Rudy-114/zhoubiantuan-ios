@@ -71,6 +71,7 @@ struct ProfileView: View {
                                             }
                                             .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
                                     }
+                                    .accessibilityLabel("打开菜单")
                                     .buttonStyle(.pressFeedback)
                                     .foregroundStyle(.white)
 
@@ -78,7 +79,7 @@ struct ProfileView: View {
 
                                     NavigationLink(value: Route.editProfile) {
                                         Label("编辑主页", systemImage: "pencil")
-                                            .font(.system(size: 16, weight: .bold))
+                                            .font(AppFont.callout.weight(.bold))
                                             .foregroundStyle(.white)
                                             .padding(.horizontal, 15)
                                             .padding(.vertical, 9)
@@ -102,6 +103,7 @@ struct ProfileView: View {
                                             }
                                             .shadow(color: .black.opacity(0.32), radius: 8, x: 0, y: 3)
                                     }
+                                    .accessibilityLabel("分享主页")
                                     .buttonStyle(.pressFeedback)
                                     .foregroundStyle(.white)
                                 }
@@ -114,10 +116,10 @@ struct ProfileView: View {
                                         .background(.white, in: Circle())
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text(user.nickname)
-                                            .font(.system(size: 28, weight: .black))
+                                            .font(AppFont.title)
                                             .foregroundStyle(Theme.text)
                                         Text("ID：\(store.registrationID(for: user.id))")
-                                            .font(.system(size: 16, weight: .semibold))
+                                            .font(AppFont.callout.weight(.semibold))
                                             .foregroundStyle(Theme.subtext)
                                     }
                                 }
@@ -139,7 +141,7 @@ struct ProfileView: View {
                                     isBioEditorPresented = true
                                 } label: {
                                     Text(user.bio)
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(AppFont.headline)
                                         .foregroundStyle(Theme.text.opacity(0.86))
                                         .lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,7 +163,7 @@ struct ProfileView: View {
                                         VStack(spacing: 8) {
                                             HStack(spacing: 6) {
                                                 Text(tab)
-                                                    .font(.system(size: tab == "拼团合集" ? 15 : 17, weight: selectedTab == tab ? .black : .semibold))
+                                                    .font((tab == "拼团合集" ? AppFont.callout : AppFont.headline).weight(selectedTab == tab ? .bold : .semibold))
                                                     .lineLimit(1)
                                                     .minimumScaleFactor(0.76)
                                             }
@@ -172,6 +174,7 @@ struct ProfileView: View {
                                         }
                                         .frame(maxWidth: .infinity)
                                     }
+                                    .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
                                     .buttonStyle(.pressFeedback)
                                 }
                             }
@@ -249,14 +252,14 @@ struct ProfileBioEditorView: View {
                 Button("取消") {
                     dismiss()
                 }
-                .font(.system(size: 20, weight: .medium))
+                .font(AppFont.title.weight(.medium))
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 86, height: 48, alignment: .leading)
 
                 Spacer()
 
                 Text("编辑简介")
-                    .font(.system(size: 21, weight: .bold))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
 
                 Spacer()
@@ -271,7 +274,7 @@ struct ProfileBioEditorView: View {
                         else { saveError = "简介保存失败，内容已保留。" }
                     }
                 }
-                .font(.system(size: 20, weight: canSave ? .bold : .medium))
+                .font(AppFont.title.weight(canSave ? .bold : .medium))
                 .foregroundStyle(canSave ? Theme.hotPink : Color(red: 0.45, green: 0.08, blue: 0.13))
                 .frame(width: 86, height: 48, alignment: .trailing)
                 .animation(.easeInOut(duration: 0.16), value: canSave)
@@ -282,11 +285,11 @@ struct ProfileBioEditorView: View {
             .padding(.bottom, 14)
 
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous)
                     .fill(Theme.panel)
 
                 TextEditor(text: $bio)
-                    .font(.system(size: 22, weight: .medium))
+                    .font(AppFont.title.weight(.medium))
                     .foregroundStyle(Theme.text)
                     .tint(Theme.hotPink)
                     .scrollContentBackground(.hidden)
@@ -296,7 +299,7 @@ struct ProfileBioEditorView: View {
 
                 if bio.trimmed.isEmpty {
                     Text("填写简介")
-                        .font(.system(size: 22, weight: .medium))
+                        .font(AppFont.title.weight(.medium))
                         .foregroundStyle(Theme.subtext)
                         .padding(.leading, 14)
                         .padding(.top, 18)
@@ -304,7 +307,7 @@ struct ProfileBioEditorView: View {
                 }
 
                 Text("\(bio.count)/\(maxLength)")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(AppFont.body.weight(.medium))
                     .foregroundStyle(Theme.subtext)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(.trailing, 14)
@@ -345,10 +348,10 @@ struct StatInline: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(value)
-                .font(.system(size: 24, weight: .black))
+                .font(AppFont.title)
                 .foregroundStyle(Theme.text)
             Text(title)
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text.opacity(0.86))
         }
     }
@@ -375,14 +378,15 @@ struct UserRelationListView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("返回")
                 .buttonStyle(.pressFeedback)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(kind.title)
-                        .font(.system(size: 25, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Text("\(relatedUsers.count) 位用户")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                 }
                 Spacer()
@@ -401,7 +405,7 @@ struct UserRelationListView: View {
                         .font(.system(size: 52, weight: .light))
                         .foregroundStyle(Theme.muted)
                     Text(kind.emptyText)
-                        .font(.system(size: 18, weight: .bold))
+                        .font(AppFont.headline.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                     Spacer()
                 }
@@ -438,14 +442,14 @@ struct UserRelationRow: View {
                     AvatarView(user: user, size: 52)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(user.nickname)
-                            .font(.system(size: 17, weight: .black))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
                         Text("ID：\(store.registrationID(for: user.id))")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(Theme.hotPink.opacity(0.88))
                         Text(user.bio)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(AppFont.caption.weight(.semibold))
                             .foregroundStyle(Theme.subtext)
                             .lineLimit(1)
                     }
@@ -460,7 +464,7 @@ struct UserRelationRow: View {
                     store.toggleFollow(userID: user.id)
                 } label: {
                     Text(store.followedUserIDs.contains(user.id) ? "已关注" : "关注")
-                        .font(.system(size: 14, weight: .black))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(store.followedUserIDs.contains(user.id) ? Theme.subtext : .white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -471,9 +475,9 @@ struct UserRelationRow: View {
             }
         }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
     }
@@ -491,14 +495,14 @@ struct ProfileEmptyNotesView: View {
                 .font(.system(size: 70, weight: .light))
                 .foregroundStyle(Theme.muted)
             Text(message)
-                .font(.system(size: 22, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(Theme.text.opacity(0.86))
             if showsPublishButton {
                 Button {
                     store.showToast("请点击底部 + 去发布")
                 } label: {
                     Text("去发布")
-                        .font(.system(size: 20, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 32)
                         .padding(.vertical, 12)
@@ -540,7 +544,7 @@ struct ProfileNotesPanel: View {
                 if canManage && !posts.isEmpty {
                     HStack {
                         Text("我的帖子")
-                            .font(.system(size: 18, weight: .black))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(Theme.text)
                         Spacer()
                         Button {
@@ -549,7 +553,7 @@ struct ProfileNotesPanel: View {
                             }
                         } label: {
                             Text(isManaging ? "完成" : "管理")
-                                .font(.system(size: 14, weight: .black))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(isManaging ? Theme.text : Theme.hotPink)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
@@ -580,11 +584,11 @@ struct ProfileNotesPanel: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text(attentionSectionTitle)
-                                .font(.system(size: 18, weight: .black))
+                                .font(AppFont.headline.weight(.bold))
                                 .foregroundStyle(Theme.text)
                             Spacer()
                             Text("\(attentionPosts.count)")
-                                .font(.system(size: 13, weight: .black))
+                                .font(AppFont.caption.weight(.bold))
                                 .foregroundStyle(Theme.hotPink)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
@@ -623,20 +627,20 @@ struct ProfileAttentionPostRow: View {
                 PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                     .scaledToFill()
                     .frame(width: 62, height: 62)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     .saturation(0.65)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(post.title)
-                        .font(.system(size: 16, weight: .black))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                         .lineLimit(2)
                     Text(post.status.rawValue)
-                        .font(.system(size: 12, weight: .black))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(post.status.canRepublish ? Theme.hotPink : Theme.muted)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
@@ -650,7 +654,7 @@ struct ProfileAttentionPostRow: View {
                 if post.status.canRepublish {
                     NavigationLink(value: Route.editRejectedPost(post.id)) {
                         Label("重新编辑", systemImage: "pencil")
-                            .font(.system(size: 14, weight: .black))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
@@ -659,7 +663,7 @@ struct ProfileAttentionPostRow: View {
                     .buttonStyle(.pressFeedback)
                 } else {
                     Label("等待审核", systemImage: "clock")
-                        .font(.system(size: 14, weight: .black))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -672,16 +676,17 @@ struct ProfileAttentionPostRow: View {
                     Image(systemName: "trash")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(Theme.hotPink)
-                        .frame(width: 44, height: 40)
+                        .frame(width: 44, height: 44)
                         .background(Theme.hotPink.opacity(0.12), in: Capsule())
                 }
+                .accessibilityLabel("删除")
                 .buttonStyle(.pressFeedback)
             }
         }
         .padding(12)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
         .confirmationDialog("删除这条帖子？", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
@@ -703,17 +708,17 @@ struct ProfilePostManageRow: View {
             PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                 .scaledToFill()
                 .frame(width: 58, height: 58)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .saturation(post.isEnded ? 0 : 1)
                 .opacity(post.isEnded ? 0.58 : 1)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(post.title)
-                    .font(.system(size: 15, weight: .black))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Text(post.isEnded ? "已结团 · 可保留记录或删除" : "\(post.groupType.rawValue) · \(post.deadline.shortDeadlineText)")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(post.isEnded ? Theme.muted : post.groupType.accent)
                     .lineLimit(1)
             }
@@ -726,15 +731,16 @@ struct ProfilePostManageRow: View {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(Theme.hotPink)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
                     .background(Theme.hotPink.opacity(0.12), in: Circle())
             }
+            .accessibilityLabel("删除")
             .buttonStyle(.pressFeedback)
         }
         .padding(12)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
         .confirmationDialog("删除这条帖子？", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
@@ -807,7 +813,7 @@ struct ProfileEmptyState: View {
                 .font(.system(size: 46, weight: .light))
                 .foregroundStyle(Theme.muted)
             Text(text)
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.subtext)
             Spacer()
         }
@@ -831,10 +837,10 @@ struct ProfileCollectionsPanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("拼团合集")
-                        .font(.system(size: 20, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Text("同一拼团的宣传、进度和余量更新放在一起")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFont.caption.weight(.semibold))
                         .foregroundStyle(Theme.subtext)
                 }
                 Spacer()
@@ -848,7 +854,7 @@ struct ProfileCollectionsPanel: View {
                                 }
                             } label: {
                                 Text(isManaging ? "完成" : "管理")
-                                    .font(.system(size: 13, weight: .black))
+                                    .font(AppFont.caption.weight(.bold))
                                     .foregroundStyle(isManaging ? .white : Theme.text)
                                     .padding(.horizontal, 13)
                                     .frame(height: 36)
@@ -864,9 +870,10 @@ struct ProfileCollectionsPanel: View {
                                 Image(systemName: "plus")
                                     .font(.system(size: 18, weight: .black))
                                     .foregroundStyle(.white)
-                                    .frame(width: 38, height: 38)
+                                    .frame(width: 44, height: 44)
                                     .background(Theme.hotPink, in: Circle())
                             }
+                            .accessibilityLabel("新建合集")
                             .buttonStyle(.pressFeedback)
                         }
                     }
@@ -875,11 +882,11 @@ struct ProfileCollectionsPanel: View {
 
             if collections.isEmpty {
                 Text(canManage ? "还没有合集，点右上角创建第一个拼团合集。" : "这个团长还没有公开拼团合集。")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             } else {
                 VStack(spacing: 10) {
                     ForEach(collections) { collection in
@@ -908,7 +915,7 @@ struct ProfileCollectionsPanel: View {
                     showsDeleteConfirmation = true
                 } label: {
                     Text(selectedCollectionIDs.isEmpty ? "选择要删除的合集" : "删除 \(selectedCollectionIDs.count) 个合集")
-                        .font(.system(size: 16, weight: .black))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(selectedCollectionIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -983,19 +990,19 @@ struct CollectionCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label(collection.name, systemImage: "rectangle.stack.fill")
-                        .font(.system(size: 17, weight: .black))
+                        .font(AppFont.headline.weight(.bold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Spacer()
                     Text(isEnded ? "已结团" : "\(visibleCount)帖")
-                        .font(.system(size: 12, weight: .black))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(isEnded ? Theme.muted : Theme.hotPink)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
                         .background((isEnded ? Theme.panelRaised : Theme.hotPink.opacity(0.13)), in: Capsule())
                 }
                 Text(collection.defaultNote)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(AppFont.caption.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(2)
                 HStack {
@@ -1003,13 +1010,13 @@ struct CollectionCard: View {
                     Spacer()
                     Image(systemName: "chevron.right")
                 }
-                .font(.system(size: 13, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(Theme.muted)
             }
             .padding(14)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: Radius.card)
                     .stroke(Theme.hairline, lineWidth: 1)
             }
 
@@ -1077,7 +1084,7 @@ struct CreateCollectionSheet: View {
                         .datePickerStyle(.compact)
                         .foregroundStyle(Theme.text)
                         .padding(14)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true, limit: InputLimit.groupInfo)
                     Button {
                         let session = store.authSessionVersion
@@ -1099,7 +1106,7 @@ struct CreateCollectionSheet: View {
                         }
                     } label: {
                         Text(isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
-                            .font(.system(size: 17, weight: .bold))
+                            .font(AppFont.headline.weight(.bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
                             .background(canCreate ? Theme.hotPink : Theme.panelRaised, in: Capsule())
@@ -1151,7 +1158,7 @@ struct CollectionDetailView: View {
                             isEditingCollection = true
                         } label: {
                             Label("编辑拼团信息", systemImage: "pencil")
-                                .font(.system(size: 15, weight: .black))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
@@ -1167,16 +1174,16 @@ struct CollectionDetailView: View {
                             .padding(.horizontal, 16)
                     }
                     Text("合集内帖子")
-                        .font(.system(size: 20, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 16)
                     if posts.isEmpty {
                         Text("还没有帖子加入这个合集。")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Theme.muted)
                             .padding(16)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                             .padding(.horizontal, 16)
                     } else {
                         WaterfallGrid(posts: posts)
@@ -1214,7 +1221,7 @@ struct CollectionPostManager: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("切换帖子所属合集")
-                .font(.system(size: 16, weight: .black))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.text)
             ForEach(manageablePosts) { post in
                 let isIncluded = post.collectionID == collection.id
@@ -1222,20 +1229,20 @@ struct CollectionPostManager: View {
                     PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                         .scaledToFill()
                         .frame(width: 52, height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     VStack(alignment: .leading, spacing: 5) {
                         Text(post.title)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
                         Text(post.groupType.rawValue)
-                            .font(.system(size: 12, weight: .black))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(post.groupType.accent)
                     }
                     Spacer()
                     if isIncluded {
                         Text("当前合集")
-                            .font(.system(size: 13, weight: .black))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(Theme.subtext)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -1252,7 +1259,7 @@ struct CollectionPostManager: View {
                             }
                         } label: {
                             Text("移入")
-                                .font(.system(size: 13, weight: .black))
+                                .font(AppFont.caption.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
@@ -1267,7 +1274,7 @@ struct CollectionPostManager: View {
         .disabled(isSaving)
         .onChange(of: store.authSessionVersion) { _, _ in isSaving = false }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 
@@ -1277,7 +1284,7 @@ struct CollectionSharedInfoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("合集共享信息", systemImage: "link.circle.fill")
-                .font(.system(size: 17, weight: .black))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             InfoRow(title: "拼团名称", value: collection.name)
             InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
@@ -1287,9 +1294,9 @@ struct CollectionSharedInfoCard: View {
             InfoRow(title: "默认说明", value: collection.defaultNote)
         }
         .padding(14)
-        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: Radius.card)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
     }
@@ -1312,10 +1319,10 @@ struct DraftsView: View {
                         .font(.system(size: 48, weight: .light))
                         .foregroundStyle(Theme.muted)
                     Text("暂无草稿")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Text("发布页点击“保存草稿”后会显示在这里")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AppFont.callout.weight(.semibold))
                         .foregroundStyle(Theme.subtext)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1331,15 +1338,15 @@ struct DraftsView: View {
                                         .resizable()
                                         .scaledToFill()
                                         .frame(width: 74, height: 74)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 } else {
                                     Image(systemName: "photo")
                                         .frame(width: 74, height: 74)
-                                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                                 }
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(draft.previewTitle)
-                                        .font(.system(size: 17, weight: .bold))
+                                        .font(AppFont.headline.weight(.bold))
                                         .foregroundStyle(Theme.text)
                                         .lineLimit(2)
                                     Text("更新于 (draft.updatedAt.relativeText)")
@@ -1408,7 +1415,7 @@ struct BrowsingHistoryView: View {
                 Spacer()
                 VStack(spacing: 7) {
                     Text("制品")
-                        .font(.system(size: 22, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Capsule()
                         .fill(Theme.hotPink)
@@ -1422,12 +1429,12 @@ struct BrowsingHistoryView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("昨天")
-                        .font(.system(size: 24, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 16)
                     if posts.isEmpty {
                         Text("还没有最近浏览记录")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Theme.muted)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 80)
@@ -1449,7 +1456,7 @@ struct BrowsingHistoryView: View {
                     }
                 } label: {
                     Text(selectedIDs.isEmpty ? "选择要删除的记录" : "删除 \(selectedIDs.count) 条记录")
-                        .font(.system(size: 16, weight: .black))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(selectedIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -1564,7 +1571,7 @@ struct HistoryCard: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(post.title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1572,7 +1579,7 @@ struct HistoryCard: View {
                 HStack(spacing: 7) {
                     AvatarView(user: author, size: 24)
                     Text(author.nickname)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFont.caption.weight(.semibold))
                         .foregroundStyle(Theme.subtext)
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -1580,13 +1587,13 @@ struct HistoryCard: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.muted)
                     Text(post.favoriteCount.formattedCount)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFont.caption.weight(.semibold))
                         .foregroundStyle(Theme.subtext)
                 }
             }
             .padding(10)
         }
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .frame(width: cardWidth)
     }
 }
@@ -1617,7 +1624,7 @@ struct ProfileSideMenu: View {
                 .buttonStyle(.pressFeedback)
             }
             .padding(.vertical, 12)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
             VStack(spacing: 6) {
                 Button {
@@ -1629,7 +1636,7 @@ struct ProfileSideMenu: View {
                 .buttonStyle(.pressFeedback)
             }
             .padding(.vertical, 12)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
             Spacer()
         }
@@ -1675,12 +1682,12 @@ struct DrawerRowContent: View {
                 .foregroundStyle(Theme.text)
                 .frame(width: 40, height: 40)
             Text(title)
-                .font(.system(size: 19, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             Spacer()
             if let badge {
                 Text(badge)
-                    .font(.system(size: 13, weight: .black))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(width: 28, height: 28)
                     .background(Theme.hotPink, in: Circle())
@@ -1703,7 +1710,7 @@ struct DrawerBottomButton: View {
                 .frame(width: 62, height: 62)
                 .background(Theme.panelRaised, in: Circle())
             Text(title)
-                .font(.system(size: 16, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.muted)
         }
     }
@@ -1767,16 +1774,17 @@ struct EditProfileView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("返回")
                 .buttonStyle(.pressFeedback)
                 Spacer()
                 Text("编辑资料")
-                    .font(.system(size: 24, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Button("预览") {
                     store.showToast("下方已实时预览")
                 }
-                .font(.system(size: 19, weight: .black))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             }
             .padding(.horizontal, 16)
@@ -1804,7 +1812,7 @@ struct EditProfileView: View {
 
                         HStack(spacing: 10) {
                             TextField("头像字", text: $avatarSymbol)
-                                .font(.system(size: 18, weight: .bold))
+                                .font(AppFont.headline.weight(.bold))
                                 .foregroundStyle(Theme.text)
                                 .multilineTextAlignment(.center)
                                 .frame(width: 86)
@@ -1826,14 +1834,14 @@ struct EditProfileView: View {
                         }
 
                         Text("点击头像可从相册上传")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Theme.subtext)
                     }
 
                     VStack(spacing: 0) {
                         ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary, isEditable: canEditNickname, limit: InputLimit.nickname)
                         Text(nicknameHint)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(AppFont.caption.weight(.semibold))
                             .foregroundStyle(Theme.subtext)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
@@ -1842,14 +1850,14 @@ struct EditProfileView: View {
                         PhotosPicker(selection: $backgroundPickerItem, matching: .images) {
                             HStack(spacing: 18) {
                                 Text("背景图")
-                                    .font(.system(size: 21, weight: .semibold))
+                                    .font(AppFont.title.weight(.semibold))
                                     .foregroundStyle(Theme.subtext)
                                     .frame(width: 112, alignment: .leading)
 
                                 ProfileBackgroundPreview(imageData: backgroundImageData, fallbackName: backgroundImageName)
 
                                 Text("从相册选择")
-                                    .font(.system(size: 18, weight: .semibold))
+                                    .font(AppFont.headline)
                                     .foregroundStyle(Theme.text)
 
                                 Spacer()
@@ -1869,7 +1877,7 @@ struct EditProfileView: View {
                             } label: {
                                 HStack {
                                     Text("恢复默认背景图")
-                                        .font(.system(size: 16, weight: .bold))
+                                        .font(AppFont.callout.weight(.bold))
                                         .foregroundStyle(Theme.hotPink)
                                     Spacer()
                                 }
@@ -1879,13 +1887,13 @@ struct EditProfileView: View {
                             .buttonStyle(.pressFeedback)
                         }
                     }
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
                         ProfileEditField(title: "简介", placeholder: "介绍一下自己", text: $bio, textColor: Theme.subtext, limit: InputLimit.bio)
                     }
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
@@ -1893,14 +1901,14 @@ struct EditProfileView: View {
                         ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Theme.subtext, limit: 20)
                         ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Theme.subtext, limit: 20)
                     }
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     .padding(.horizontal, 16)
 
                     Button {
                         Task { await saveProfile(shouldDismiss: true) }
                     } label: {
                         Text(isSaving ? "正在保存…" : "保存资料")
-                            .font(.system(size: 20, weight: .black))
+                            .font(AppFont.title)
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
@@ -2021,9 +2029,9 @@ struct ProfileBackgroundPreview: View {
         }
         .scaledToFill()
         .frame(width: 78, height: 54)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: Radius.control)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
     }
@@ -2040,12 +2048,12 @@ struct ProfileEditField: View {
     var body: some View {
         HStack(spacing: 18) {
             Text(title)
-                .font(.system(size: 21, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 112, alignment: .leading)
             TextField(placeholder, text: $text)
                 .characterLimit(limit, text: $text)
-                .font(.system(size: 21, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(text.isEmpty ? Theme.muted : Theme.text)
                 .tint(Theme.hotPink)
                 .disabled(!isEditable)
@@ -2075,11 +2083,11 @@ struct ProfileReadOnlyInfoRow: View {
     var body: some View {
         HStack(spacing: 18) {
             Text(title)
-                .font(.system(size: 21, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 112, alignment: .leading)
             Text(value)
-                .font(.system(size: 21, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(Theme.text)
             Spacer()
             Image(systemName: "lock.fill")
@@ -2124,7 +2132,7 @@ struct ReminderCenterView: View {
         ScrollView {
             VStack(spacing: 12) {
                 Text("显示收藏中尚未截团的内容。请打开 App 查看；目前不会发送系统通知。")
-                    .font(.system(size: 13))
+                    .font(AppFont.caption.weight(.regular))
                     .foregroundStyle(Theme.subtext)
                 ForEach(store.currentUserReminders) { reminder in
                     if let post = store.post(id: reminder.postID) {
@@ -2181,11 +2189,12 @@ struct TagContentView: View {
                                 .font(.system(size: 27, weight: .medium))
                                 .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel("返回")
                         .buttonStyle(.pressFeedback)
                         .foregroundStyle(Theme.text)
 
                         Text("# \(tag)")
-                            .font(.system(size: 23, weight: .black))
+                            .font(AppFont.title)
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
 
@@ -2196,6 +2205,7 @@ struct TagContentView: View {
                                 .font(.system(size: 27, weight: .medium))
                                 .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel("搜索")
                         .buttonStyle(.pressFeedback)
                         .foregroundStyle(Theme.text)
 
@@ -2213,13 +2223,14 @@ struct TagContentView: View {
                             } label: {
                                 VStack(spacing: 8) {
                                     Text(item)
-                                        .font(.system(size: 22, weight: sort == item ? .black : .semibold))
+                                        .font(AppFont.title.weight(sort == item ? .bold : .semibold))
                                         .foregroundStyle(sort == item ? Theme.text : Theme.subtext)
                                     Capsule()
                                         .fill(sort == item ? Theme.hotPink : Color.clear)
                                         .frame(width: 42, height: 4)
                                 }
                             }
+                            .accessibilityAddTraits(sort == item ? .isSelected : [])
                             .buttonStyle(.pressFeedback)
                         }
                         Spacer()
@@ -2233,7 +2244,7 @@ struct TagContentView: View {
                             Image(systemName: "number")
                                 .font(.system(size: 38, weight: .light))
                             Text("这个话题还没有内容")
-                                .font(.system(size: 17, weight: .bold))
+                                .font(AppFont.headline.weight(.bold))
                         }
                         .foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity)
@@ -2299,6 +2310,7 @@ struct UserProfileView: View {
                                         .frame(width: 48, height: 48)
                                         .background(.black.opacity(0.22), in: Circle())
                                 }
+                                .accessibilityLabel("返回")
                                 .buttonStyle(.pressFeedback)
 
                                 Spacer()
@@ -2315,14 +2327,14 @@ struct UserProfileView: View {
                                     }
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(user.nickname)
-                                        .font(.system(size: 31, weight: .black))
+                                        .font(AppFont.display)
                                         .foregroundStyle(.white)
                                         .lineLimit(1)
                                     HStack(spacing: 8) {
                                         Text("小红书号：\(store.registrationID(for: user.id))")
                                         Image(systemName: "doc.on.doc")
                                     }
-                                    .font(.system(size: 17, weight: .bold))
+                                    .font(AppFont.headline.weight(.bold))
                                     .foregroundStyle(.white.opacity(0.68))
                                 }
                             }
@@ -2340,7 +2352,7 @@ struct UserProfileView: View {
                             }
 
                             Text(user.bio == "点击这里，填写简介" ? "这个人还没有填写简介" : user.bio)
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(AppFont.headline)
                                 .foregroundStyle(.white.opacity(0.9))
                                 .lineSpacing(6)
                                 .lineLimit(4)
@@ -2350,11 +2362,11 @@ struct UserProfileView: View {
                                     store.toggleFollow(userID: user.id)
                                 } label: {
                                     Text(user.id == store.currentUserID ? "自己的主页" : (store.followedUserIDs.contains(user.id) ? "已关注" : "关注"))
-                                        .font(.system(size: 20, weight: .black))
+                                        .font(AppFont.title)
                                         .foregroundStyle(.white)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 15)
-                                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 }
                                 .buttonStyle(.pressFeedback)
                                 .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(user.id))
@@ -2363,11 +2375,11 @@ struct UserProfileView: View {
                                 if let threadID = store.directMessageThreadRouteID(for: user.id) {
                                     NavigationLink(value: Route.chat(threadID)) {
                                         Text("发私信")
-                                            .font(.system(size: 20, weight: .black))
+                                            .font(AppFont.title)
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 15)
-                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                     }
                                     .buttonStyle(.pressFeedback)
                                     .simultaneousGesture(
@@ -2380,11 +2392,11 @@ struct UserProfileView: View {
                                         _ = store.directMessageThreadID(for: user.id)
                                     } label: {
                                         Text("发私信")
-                                            .font(.system(size: 20, weight: .black))
+                                            .font(AppFont.title)
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 15)
-                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                     }
                                     .buttonStyle(.pressFeedback)
                                     .disabled(user.id == store.currentUserID)
@@ -2400,11 +2412,11 @@ struct UserProfileView: View {
                                     )
                                 } label: {
                                     Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(AppFont.callout.weight(.bold))
                                         .foregroundStyle(.white.opacity(0.9))
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 12)
-                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 }
                                 .buttonStyle(.pressFeedback)
                                 .padding(.top, 10)
@@ -2426,7 +2438,7 @@ struct UserProfileView: View {
                                 } label: {
                                     VStack(spacing: 8) {
                                         Text(tab)
-                                            .font(.system(size: 22, weight: selectedTab == tab ? .black : .bold))
+                                            .font(AppFont.title.weight(selectedTab == tab ? .bold : .semibold))
                                             .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                         Capsule()
                                             .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
@@ -2435,6 +2447,7 @@ struct UserProfileView: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 18)
                                 }
+                                .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
                                 .buttonStyle(.pressFeedback)
                             }
                         }

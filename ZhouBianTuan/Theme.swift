@@ -79,3 +79,33 @@ enum AppMotion {
         )
     }
 }
+
+/// F19: type scale. Every token is a semantic text style, so it follows
+/// Dynamic Type. Weight overrides use `.weight(_:)`; `.black` is reserved
+/// for the brand wordmark.
+enum AppFont {
+    /// Brand-sized text and empty-state headlines.
+    static let display = Font.system(.largeTitle, weight: .bold)
+    /// Page titles and detail titles.
+    static let title = Font.system(.title2, weight: .bold)
+    /// Card titles and section headings.
+    static let headline = Font.system(.headline, weight: .semibold)
+    static let body = Font.system(.body)
+    /// Secondary information and button labels.
+    static let callout = Font.system(.subheadline, weight: .medium)
+    /// Helper text and timestamps.
+    static let caption = Font.system(.caption, weight: .medium)
+    /// Badges and tags.
+    static let badge = Font.system(.caption2, weight: .bold)
+    static let price = Font.system(.subheadline, weight: .heavy)
+}
+
+/// F23: corner radius scale. Capsules stay capsules.
+enum Radius {
+    /// Buttons, inputs, small tags.
+    static let control: CGFloat = 8
+    /// Feed cards and information panels.
+    static let card: CGFloat = 12
+    /// Sheets and overlays.
+    static let sheet: CGFloat = 16
+}

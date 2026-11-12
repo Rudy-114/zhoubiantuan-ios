@@ -113,7 +113,7 @@ struct HomeFeedStateView: View {
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(Theme.softPink)
             Text(isOffline ? "当前没有可用的离线内容" : (error == nil ? "还没有相关帖子" : "内容加载失败"))
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             Text(isOffline ? "联网后刷新即可继续浏览" : (error ?? "换个分类或稍后再试"))
                 .font(.subheadline)
@@ -152,13 +152,14 @@ struct HomeHeader: View {
                         } label: {
                             VStack(spacing: 7) {
                                 Text(item.rawValue)
-                                    .font(.system(size: 22, weight: feed == item ? .bold : .semibold))
+                                    .font(AppFont.title.weight(feed == item ? .bold : .semibold))
                                     .foregroundStyle(feed == item ? Theme.text : Theme.subtext)
                                 Capsule()
                                     .fill(feed == item ? Theme.hotPink : Color.clear)
                                 .frame(width: 40, height: 4)
                             }
                         }
+                        .accessibilityAddTraits(feed == item ? .isSelected : [])
                         .buttonStyle(.pressFeedback)
                     }
                 }
@@ -169,6 +170,7 @@ struct HomeHeader: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("搜索")
                 .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 12)
@@ -198,7 +200,7 @@ struct FollowingFeedView: View {
                             VStack(spacing: 10) {
                                 AvatarView(user: user, size: 76)
                                 Text(user.nickname)
-                                    .font(.system(size: 15, weight: .medium))
+                                    .font(AppFont.callout)
                                     .foregroundStyle(Theme.text.opacity(0.88))
                                     .lineLimit(1)
                                     .frame(width: 92)
@@ -301,22 +303,22 @@ struct HomeFeedSkeletonCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .fill(Theme.hairline.opacity(0.55))
                 .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth) * imageRatio)
 
             VStack(alignment: .leading, spacing: 10) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(Theme.hairline.opacity(0.65))
                     .frame(width: cardWidth * 0.72, height: 14)
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(Theme.hairline.opacity(0.45))
                     .frame(width: cardWidth * 0.48, height: 12)
                 HStack(spacing: 7) {
                     Circle()
                         .fill(Theme.hairline.opacity(0.65))
                         .frame(width: 24, height: 24)
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                         .fill(Theme.hairline.opacity(0.45))
                         .frame(width: cardWidth * 0.42, height: 11)
                     Spacer(minLength: 0)
@@ -324,9 +326,9 @@ struct HomeFeedSkeletonCard: View {
             }
             .padding(10)
         }
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 0.5)
         }
         .frame(width: cardWidth)
@@ -391,18 +393,22 @@ struct PostCard: View {
                         }
                     }
                     .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
-                    .overlay(alignment: .topLeading) {
-                        PostCardTypeBadge(post: livePost)
-                            .padding(8)
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        PostCardDeadlineBadge(text: isEnded ? "已结团" : livePost.deadline.shortDeadlineText)
-                            .padding(8)
+                    .overlay(alignment: .top) {
+                        // One row so the two badges can never overlap; capped so
+                        // large text sizes do not cover the cover image.
+                        HStack(spacing: 6) {
+                            PostCardTypeBadge(post: livePost)
+                                .layoutPriority(1)
+                            Spacer(minLength: 0)
+                            PostCardDeadlineBadge(text: isEnded ? "已结团" : livePost.deadline.shortDeadlineText)
+                        }
+                        .padding(8)
+                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text(livePost.title)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(isEnded ? Theme.subtext : Theme.text)
                             .lineLimit(2)
                             .lineSpacing(-1.5)
@@ -414,25 +420,25 @@ struct PostCard: View {
                         if livePost.groupType == .splitGoods {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(livePost.pingguAveragePrice.isEmpty ? livePost.price : livePost.pingguAveragePrice)
-                                    .font(.system(size: 13, weight: .black))
+                                    .font(AppFont.price)
                                     .foregroundStyle(livePost.groupType.accent)
                                 if !livePost.pingguNote.isEmpty {
                                     Text(livePost.pingguNote)
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(AppFont.badge.weight(.medium))
                                         .foregroundStyle(Theme.subtext)
                                         .lineLimit(1)
                                 }
                             }
                             .padding(7)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(livePost.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .background(livePost.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         }
 
                         if !livePost.categoryTags.isEmpty {
                             HStack(spacing: 5) {
                                 ForEach(livePost.categoryTags.prefix(2), id: \.self) { tag in
                                     Text(tag)
-                                        .font(.system(size: 11, weight: .bold))
+                                        .font(AppFont.badge)
                                         .foregroundStyle(Theme.tagText)
                                         .padding(.horizontal, 7)
                                         .padding(.vertical, 3)
@@ -444,7 +450,7 @@ struct PostCard: View {
                         HStack(spacing: 6) {
                             AvatarView(user: author, size: 22)
                             Text(author.nickname)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(AppFont.caption)
                                 .foregroundStyle(Theme.subtext)
                                 .lineLimit(1)
                             Spacer(minLength: 4)
@@ -455,14 +461,24 @@ struct PostCard: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 8)
                 }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                // The cover image shares the card's rounded corners.
+                .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 }
                 .frame(width: cardWidth)
             }
             .buttonStyle(.pressFeedback)
+            // F16: VoiceOver reads the card as one link; liking is a custom action.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(cardAccessibilityLabel(livePost, author: author, isEnded: isEnded))
+            .accessibilityAddTraits(.isLink)
+            .accessibilityAction(named: store.likedPostIDs.contains(livePost.id) ? "取消点赞" : "点赞") {
+                guard !isEnded else { return }
+                store.toggleLike(postID: livePost.id)
+            }
             .contextMenu {
                 Button {
                     store.markFeedPostNotInterested(livePost.id)
@@ -482,6 +498,7 @@ struct PostCard: View {
                 PostLikeCountButton(postID: livePost.id)
                     .padding(.trailing, 8)
                     .padding(.bottom, 6)
+                    .accessibilityHidden(true)
             }
         }
         .frame(width: cardWidth)
@@ -491,16 +508,28 @@ struct PostCard: View {
     }
 }
 
+extension PostCard {
+    func cardAccessibilityLabel(_ post: GroupBuyPost, author: User, isEnded: Bool) -> String {
+        let price = post.groupType == .splitGoods && !post.pingguAveragePrice.isEmpty ? post.pingguAveragePrice : post.price
+        let deadline = isEnded ? "已结团" : "截止 \(post.deadline.shortDeadlineText)"
+        return [post.groupType.rawValue, post.title, price, "团长 \(author.nickname)", deadline,
+                "\(post.likedCount.formattedCount) 赞"]
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .joined(separator: "，")
+    }
+}
+
 struct PostCardTypeBadge: View {
     let post: GroupBuyPost
 
     var body: some View {
         Label(post.groupType.rawValue, systemImage: post.groupType.icon)
-            .font(.system(size: 11, weight: .black))
+            .font(AppFont.badge)
             .foregroundStyle(.white)
             .lineLimit(1)
             .minimumScaleFactor(0.82)
-            .frame(width: 64, height: 28)
+            .padding(.horizontal, 9)
+            .frame(minHeight: 28)
             .background(post.groupType.accent.opacity(0.94), in: Capsule())
     }
 }
@@ -510,11 +539,12 @@ struct PostCardDeadlineBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .bold))
+            .font(AppFont.badge)
             .foregroundStyle(Theme.floatingBadgeText)
             .lineLimit(1)
             .minimumScaleFactor(0.78)
-            .frame(width: 74, height: 28)
+            .padding(.horizontal, 9)
+            .frame(minHeight: 28)
             .background(Theme.floatingBadgeBackground, in: Capsule())
     }
 }
@@ -546,7 +576,7 @@ struct PostLikeCountButton: View {
                     .font(.system(size: 17, weight: .semibold))
                     .symbolEffect(.bounce, value: isLiked)
                 Text((post?.likedCount ?? 0).formattedCount)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(AppFont.caption.weight(.semibold))
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)

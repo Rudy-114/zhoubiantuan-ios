@@ -53,12 +53,12 @@ struct PostDetailView: View {
                         VStack(alignment: .leading, spacing: 18) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(post.title)
-                                    .font(.system(size: 28, weight: .bold))
+                                    .font(AppFont.title)
                                     .foregroundStyle(Theme.text)
                                     .fixedSize(horizontal: false, vertical: true)
                                 ModerationInlineNotice(status: post.status, reason: post.moderationReason)
                                 Text(post.description)
-                                    .font(.system(size: 17, weight: .regular))
+                                    .font(AppFont.body)
                                     .lineSpacing(6)
                                     .foregroundStyle(Theme.text.opacity(0.82))
                             }
@@ -176,6 +176,7 @@ struct PostDetailView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 48, height: 48)
                 }
+                .accessibilityLabel("返回")
                 .buttonStyle(.pressFeedback)
 
                 Spacer()
@@ -193,11 +194,11 @@ struct PostDetailView: View {
                     .background(Theme.hotPink.opacity(0.12), in: Circle())
 
                 Text("帖子不可见")
-                    .font(.system(size: 25, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
 
                 Text("你已拉黑该用户，或对方已拉黑你，因此无法查看这条帖子。")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .multilineTextAlignment(.center)
                     .lineSpacing(5)
@@ -374,8 +375,9 @@ struct DetailTopBar: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 24, weight: .semibold))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("返回")
             .buttonStyle(.pressFeedback)
             .foregroundStyle(Theme.text)
 
@@ -383,7 +385,7 @@ struct DetailTopBar: View {
                 HStack(spacing: 10) {
                     AvatarView(user: author, size: 48)
                     Text(author.nickname)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                 }
             }
@@ -394,7 +396,7 @@ struct DetailTopBar: View {
                 store.toggleFollow(userID: author.id)
             } label: {
                 Text(store.followedUserIDs.contains(author.id) ? "已关注" : "关注")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(store.followedUserIDs.contains(author.id) ? Theme.subtext : Theme.hotPink)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 10)
@@ -412,8 +414,9 @@ struct DetailTopBar: View {
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 24, weight: .semibold))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("分享")
             .buttonStyle(.pressFeedback)
             .foregroundStyle(Theme.text)
         }
@@ -446,7 +449,7 @@ struct ShareSheetView: View {
             HStack {
                 Spacer()
                 Text("分享至")
-                    .font(.system(size: 24, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Button {
@@ -457,6 +460,7 @@ struct ShareSheetView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("关闭")
                 .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
@@ -473,7 +477,7 @@ struct ShareSheetView: View {
                             VStack(spacing: 8) {
                                 AvatarView(user: friend, size: 66)
                                 Text(friend.nickname)
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(AppFont.callout.weight(.semibold))
                                     .foregroundStyle(Theme.subtext)
                                     .lineLimit(1)
                                     .frame(width: 82)
@@ -572,7 +576,7 @@ struct ShareRecipientPickerView: View {
                     dismiss()
                 } label: {
                     Text("取消")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(AppFont.title.weight(.semibold))
                         .foregroundStyle(Theme.text)
                         .frame(width: 72, alignment: .leading)
                 }
@@ -580,7 +584,7 @@ struct ShareRecipientPickerView: View {
 
                 Spacer()
                 Text("分享至")
-                    .font(.system(size: 22, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Color.clear.frame(width: 72, height: 1)
@@ -594,7 +598,7 @@ struct ShareRecipientPickerView: View {
                     .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(Theme.muted)
                 TextField("搜索", text: $query)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(AppFont.title.weight(.semibold))
                     .foregroundStyle(Theme.text)
                     .textInputAutocapitalization(.never)
             }
@@ -608,7 +612,7 @@ struct ShareRecipientPickerView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(sections) { section in
                         Text(section.title)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(Theme.muted)
                             .padding(.horizontal, 18)
                             .padding(.top, 18)
@@ -658,7 +662,7 @@ struct ShareRecipientRow: View {
                 .frame(width: 32, height: 32)
             AvatarView(user: user, size: 58)
             Text(user.nickname)
-                .font(.system(size: 22, weight: .semibold))
+                .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -694,7 +698,7 @@ struct ProfileShareSheetView: View {
             HStack {
                 Spacer()
                 Text("分享至")
-                    .font(.system(size: 24, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Button {
@@ -705,6 +709,7 @@ struct ProfileShareSheetView: View {
                         .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("关闭")
                 .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
@@ -721,7 +726,7 @@ struct ProfileShareSheetView: View {
                             VStack(spacing: 8) {
                                 AvatarView(user: friend, size: 66)
                                 Text(friend.nickname)
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(AppFont.callout.weight(.semibold))
                                     .foregroundStyle(Theme.subtext)
                                     .lineLimit(1)
                                     .frame(width: 82)
@@ -789,7 +794,7 @@ struct ShareOptionButton: View {
                     .frame(width: 74, height: 74)
                     .background(color, in: Circle())
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .frame(width: 86)
                     .lineLimit(1)
@@ -813,7 +818,7 @@ struct ShareUtilityButton: View {
                     .frame(width: 74, height: 74)
                     .background(Theme.panelRaised, in: Circle())
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .frame(width: 88)
                     .lineLimit(1)
@@ -834,7 +839,7 @@ private struct SystemShareButton: View {
                 .frame(width: 74, height: 74)
                 .background(Theme.panelRaised, in: Circle())
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(AppFont.callout.weight(.semibold))
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 88)
                 .lineLimit(1)
@@ -852,11 +857,11 @@ struct GroupBuyInfoCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("团购信息", systemImage: "bag.badge.plus")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Text(post.groupType.rawValue)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(post.groupType.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -878,9 +883,9 @@ struct GroupBuyInfoCard: View {
             }
         }
         .padding(16)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.hairline, lineWidth: 0.5)
         }
     }
 }
@@ -899,13 +904,13 @@ private struct ExternalLinkRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text("外部表单")
-                .font(.system(size: 14, weight: .semibold))
+                .font(AppFont.callout.weight(.semibold))
                 .foregroundStyle(Theme.subtext)
             Spacer(minLength: 12)
             if let validURL {
                 Link(destination: validURL) {
                     Text(urlString.trimmed)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.hotPink)
                         .multilineTextAlignment(.trailing)
                         .lineLimit(2)
@@ -913,7 +918,7 @@ private struct ExternalLinkRow: View {
                 .accessibilityLabel("打开外部表单")
             } else {
                 Text("链接格式无效")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.muted)
             }
             Button {
@@ -950,7 +955,7 @@ struct PingguRoleAvailabilityCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Label("未被购买角色", systemImage: "person.crop.rectangle.stack.fill")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(AppFont.headline.weight(.bold))
                     Spacer()
                     if post.authorID == store.currentUserID && post.status == .active {
                         Button(isEditing ? "取消" : "编辑") {
@@ -1013,14 +1018,14 @@ struct PingguRoleAvailabilityCard: View {
                             Text("余量 \(role.quantity)").font(.headline).foregroundStyle(post.groupType.accent)
                         }
                         .padding(12)
-                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card))
                     }
                 }
             }
             .foregroundStyle(Theme.text)
             .tint(post.groupType.accent)
             .padding(16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
             .disabled(isSaving)
             .onChange(of: store.authSessionVersion) { _, _ in
                 isEditing = false
@@ -1051,7 +1056,7 @@ struct EditableRoleRow: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(12)
-        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.control))
     }
 }
 
@@ -1069,15 +1074,15 @@ struct ContactCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("联系团长", systemImage: "person.crop.circle.badge.questionmark")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Text(collection == nil ? "外部交易" : "合集共享")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.hotPink)
             }
             Text("站内仅展示信息和咨询入口，不承接支付、订单、退款、物流或售后。正式交易请在微信、QQ、群聊等外部平台完成。")
-                .font(.system(size: 13))
+                .font(AppFont.caption.weight(.regular))
                 .lineSpacing(3)
                 .foregroundStyle(Theme.subtext)
 
@@ -1087,10 +1092,10 @@ struct ContactCard: View {
                     _ = store.requireLogin(prompt: "登录后查看联系方式")
                 } label: {
                     Label("登录后查看联系方式", systemImage: "lock.fill")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 }
                 .buttonStyle(.pressFeedback)
             } else {
@@ -1114,7 +1119,7 @@ struct ContactCard: View {
             }
             if !groupInfo.trimmed.isEmpty {
                 Text(groupInfo)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(AppFont.caption)
                     .lineSpacing(3)
                     .foregroundStyle(Theme.subtext)
                     .padding(.top, 2)
@@ -1122,26 +1127,18 @@ struct ContactCard: View {
             }
         }
         .padding(16)
-        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .background {
-            NavigationLink(
-                destination: Group {
-                    if let chatThreadID {
-                        ChatView(threadID: chatThreadID)
-                    }
-                },
-                isActive: Binding(
-                    get: { chatThreadID != nil },
-                    set: { isActive in
-                        if !isActive {
-                            chatThreadID = nil
-                        }
-                    }
-                )
-            ) {
-                EmptyView()
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .navigationDestination(isPresented: Binding(
+            get: { chatThreadID != nil },
+            set: { isActive in
+                if !isActive {
+                    chatThreadID = nil
+                }
             }
-            .hidden()
+        )) {
+            if let chatThreadID {
+                ChatView(threadID: chatThreadID)
+            }
         }
     }
 }
@@ -1157,11 +1154,11 @@ struct CommentSection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("评论区")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Text("不能作为正式交易场所")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AppFont.caption)
                     .foregroundStyle(Theme.muted)
             }
             let comments = store.comments(for: postID)
@@ -1181,7 +1178,7 @@ struct CommentSection: View {
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Theme.muted)
                     Text("评论加载失败")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                     Text(error)
                         .font(.caption)
@@ -1199,7 +1196,7 @@ struct CommentSection: View {
                     Image(systemName: "bubble.left")
                         .font(.system(size: 32))
                     Text("抢首评")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(AppFont.headline.weight(.bold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 36)
@@ -1232,26 +1229,26 @@ struct CommentRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(author.nickname)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                     Text(comment.createdAt.relativeText)
-                        .font(.system(size: 12))
+                        .font(AppFont.caption.weight(.regular))
                         .foregroundStyle(Theme.muted)
                 }
                 if let replyToID = comment.replyToID {
                     let repliedComment = store.comment(id: replyToID).flatMap { $0.status == .active ? $0 : nil }
                     let repliedAuthor = repliedComment.map { store.user(id: $0.authorID).nickname } ?? "原评论"
                     Text("回复 \(repliedAuthor)：\(repliedComment?.body ?? "原评论已删除")")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AppFont.caption)
                         .foregroundStyle(Theme.subtext)
                         .lineLimit(2)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
                 Text(comment.body)
-                    .font(.system(size: 15))
+                    .font(AppFont.callout.weight(.regular))
                     .foregroundStyle(Theme.text.opacity(0.86))
                     .fixedSize(horizontal: false, vertical: true)
                 ModerationInlineNotice(status: comment.status, reason: comment.moderationReason)
@@ -1261,7 +1258,7 @@ struct CommentRow: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .scaleEffect(isPressing ? 0.985 : 1)
-        .background(isPressing ? Theme.panelRaised.opacity(0.7) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(isPressing ? Theme.panelRaised.opacity(0.7) : Color.clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 24, pressing: { pressing in
             withAnimation(.easeOut(duration: 0.08)) {
                 isPressing = pressing
@@ -1294,7 +1291,7 @@ struct CommentActionOverlay: View {
                     .padding(.top, 10)
 
                 Text("\(author.nickname) · \(comment.createdAt.relativeText)")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(AppFont.callout)
                     .foregroundStyle(Color.white.opacity(0.52))
 
                 VStack(spacing: 0) {
@@ -1304,22 +1301,22 @@ struct CommentActionOverlay: View {
                     CommentActionDivider()
                     CommentActionRow(title: "举报", systemImage: "flag", action: onReport)
                 }
-                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
                 if store.canDeleteComment(comment) {
                     VStack(spacing: 0) {
                         CommentActionRow(title: "删除", systemImage: "trash", isDestructive: true, action: onDelete)
                     }
-                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
 
                 Button(action: onDismiss) {
                     Text("取消")
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(AppFont.title.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.9))
                         .frame(maxWidth: .infinity)
                         .frame(height: 62)
-                        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
                 .buttonStyle(.pressFeedback)
             }
@@ -1358,7 +1355,7 @@ struct CommentActionRow: View {
                     .font(.system(size: 26, weight: .medium))
                     .frame(width: 36)
                 Text(title)
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(AppFont.title.weight(.semibold))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(isDestructive ? Theme.hotPink : Color.white.opacity(0.9))
@@ -1413,7 +1410,7 @@ struct DetailActionBar: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Theme.hotPink)
                     Text("回复 \(replyAuthor.nickname)")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFont.caption.weight(.semibold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -1424,6 +1421,7 @@ struct DetailActionBar: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(Theme.muted)
                     }
+                    .accessibilityLabel("取消回复")
                     .buttonStyle(.pressFeedback)
                 }
                 .padding(.horizontal, 14)
@@ -1456,7 +1454,7 @@ struct DetailActionBar: View {
                             Image(systemName: "pencil")
                                 .foregroundStyle(Theme.muted)
                             Text("登录后评论")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(AppFont.callout.weight(.semibold))
                                 .foregroundStyle(Theme.subtext)
                             Spacer(minLength: 0)
                         }

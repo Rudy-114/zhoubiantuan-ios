@@ -141,7 +141,7 @@ struct CreatePostView: View {
                             isPreviewPresented = true
                         } label: {
                             Label("预览", systemImage: "eye")
-                                .font(.system(size: 15, weight: .bold))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(Theme.hotPink)
                         }
                         .buttonStyle(.pressFeedback)
@@ -157,17 +157,17 @@ struct CreatePostView: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Label(type.rawValue, systemImage: type.icon)
-                                        .font(.system(size: 17, weight: .black))
+                                        .font(AppFont.headline.weight(.bold))
                                     Text(type.feedDescription)
-                                        .font(.system(size: 12, weight: .bold))
+                                        .font(AppFont.caption.weight(.bold))
                                         .foregroundStyle(selectedGroupType == type ? .white.opacity(0.82) : Theme.muted)
                                 }
                                 .foregroundStyle(selectedGroupType == type ? .white : Theme.subtext)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(14)
-                                .background(selectedGroupType == type ? type.accent : Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(selectedGroupType == type ? type.accent : Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: Radius.control)
                                         .stroke(selectedGroupType == type ? type.accent : Theme.hairline, lineWidth: 1)
                                 }
                             }
@@ -182,16 +182,16 @@ struct CreatePostView: View {
                     if store.collections(ownerID: store.currentUserID).isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Label("发布前必须先创建一个合集", systemImage: "rectangle.stack.badge.plus")
-                                .font(.system(size: 16, weight: .black))
+                                .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(Theme.text)
                             Text("合集会统一保存联系方式、截团时间和默认说明；帖子发布时只能选择已有合集。")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(AppFont.caption.weight(.semibold))
                                 .foregroundStyle(Theme.subtext)
                             Button {
                                 isCreatingCollection = true
                             } label: {
                                 Label("创建合集", systemImage: "plus")
-                                    .font(.system(size: 15, weight: .black))
+                                    .font(AppFont.callout.weight(.bold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 11)
@@ -200,7 +200,7 @@ struct CreatePostView: View {
                             .buttonStyle(.pressFeedback)
                         }
                         .padding(14)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     } else {
                         Button {
                             isCollectionPickerPresented = true
@@ -222,11 +222,11 @@ struct CreatePostView: View {
                         isPhotoLibraryPresented = true
                     }
                     Text(uploadedImageData.isEmpty ? "点击加号从相册导入图片。" : "拖动图片调整顺序，第一张会作为信息流封面。")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.muted)
                     if isLoadingRepublishImages {
                         Label("正在载入旧帖图片", systemImage: "arrow.down.circle")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(Theme.hotPink)
                     }
                 }
@@ -266,24 +266,24 @@ struct CreatePostView: View {
                             RequiredLabel("未被购买角色")
                             if roleDrafts.isEmpty {
                                 Text("添加后会用于详情页展示和搜索栏角色筛选。")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(AppFont.caption.weight(.semibold))
                                     .foregroundStyle(Theme.muted)
                             } else {
                                 ForEach(roleDrafts) { role in
                                     HStack {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(role.name)
-                                                .font(.system(size: 15, weight: .bold))
+                                                .font(AppFont.callout.weight(.bold))
                                                 .foregroundStyle(Theme.text)
                                             if role.priceAdjustment != 0 {
                                                 Text("角色调价 \(role.priceAdjustmentText)")
-                                                    .font(.system(size: 12, weight: .black))
+                                                    .font(AppFont.price)
                                                     .foregroundStyle(GroupBuyType.splitGoods.accent)
                                             }
                                         }
                                         Spacer()
                                         Text("(\(role.quantity))")
-                                            .font(.system(size: 15, weight: .black))
+                                            .font(AppFont.callout.weight(.bold))
                                             .foregroundStyle(GroupBuyType.splitGoods.accent)
                                         Button {
                                             roleDrafts.removeAll { $0.id == role.id }
@@ -291,29 +291,30 @@ struct CreatePostView: View {
                                             Image(systemName: "xmark.circle.fill")
                                                 .foregroundStyle(Theme.muted)
                                         }
+                                        .accessibilityLabel("移除该角色")
                                         .buttonStyle(.pressFeedback)
                                     }
                                     .padding(12)
-                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 }
                             }
                             HStack(spacing: 8) {
                                 TextField("角色名，如 Bucky Barnes", text: $newRoleName)
                                     .foregroundStyle(Theme.text)
                                     .padding(12)
-                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                                 TextField("数量", text: $newRoleQuantity)
                                     .keyboardType(.numberPad)
                                     .foregroundStyle(Theme.text)
                                     .frame(width: 72)
                                     .padding(12)
-                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                                 TextField("调价", text: $newRolePriceAdjustment)
                                     .keyboardType(.numbersAndPunctuation)
                                     .foregroundStyle(Theme.text)
                                     .frame(width: 78)
                                     .padding(12)
-                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                                 Button {
                                     addRoleDraft()
                                 } label: {
@@ -321,8 +322,9 @@ struct CreatePostView: View {
                                         .font(.system(size: 18, weight: .black))
                                         .foregroundStyle(.white)
                                         .frame(width: 44, height: 44)
-                                        .background(GroupBuyType.splitGoods.accent, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .background(GroupBuyType.splitGoods.accent, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 }
+                                .accessibilityLabel("添加角色")
                                 .buttonStyle(.pressFeedback)
                             }
                         }
@@ -347,7 +349,7 @@ struct CreatePostView: View {
                     }
                 }
                 .padding(16)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                 .padding(.horizontal, 16)
 
                 Button {
@@ -384,7 +386,7 @@ struct CreatePostView: View {
                     validationMessage = firstIssue
                 } label: {
                     Text(isPublishing ? "正在上传并提交审核…" : canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(AppFont.headline.weight(.bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
                         .background(canPublish ? Theme.hotPink : Theme.panelRaised, in: Capsule())
@@ -397,7 +399,7 @@ struct CreatePostView: View {
                     saveDraft()
                 } label: {
                     Label("保存草稿", systemImage: "tray.and.arrow.down")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
@@ -633,10 +635,10 @@ struct PostDraftPreviewView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                     }
                     Text(draft.previewTitle)
-                        .font(.system(size: 28, weight: .bold))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     if !draft.description.trimmed.isEmpty {
                         Text(draft.description)
@@ -686,13 +688,13 @@ struct ImageUploadComposer: View {
                         Image(systemName: "plus")
                             .font(.system(size: 38, weight: .light))
                         Text(images.isEmpty ? "上传图片" : "继续添加")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(AppFont.caption.weight(.bold))
                     }
                     .foregroundStyle(Theme.subtext)
                     .frame(width: 132, height: 132)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: Radius.control)
                             .stroke(Theme.hairline, lineWidth: 1)
                     }
                 }
@@ -716,10 +718,10 @@ struct UploadedImageTile: View {
             UploadedImageView(data: data)
                 .scaledToFill()
                 .frame(width: 132, height: 132)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .overlay(alignment: .topLeading) {
                     Text(isCover ? "封面" : "\(index + 1)")
-                        .font(.system(size: 12, weight: .black))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
@@ -727,7 +729,7 @@ struct UploadedImageTile: View {
                         .padding(8)
                 }
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.control)
                         .stroke(isCover ? Theme.hotPink : Theme.hairline, lineWidth: isCover ? 2 : 1)
                 }
 
@@ -831,7 +833,7 @@ struct PhotoLibraryImportView: View {
 
             HStack(spacing: 6) {
                 Text("最近项目")
-                    .font(.system(size: 28, weight: .bold))
+                    .font(AppFont.title)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 18, weight: .bold))
             }
@@ -857,7 +859,7 @@ struct PhotoLibraryImportView: View {
                     ProgressView()
                         .tint(Theme.hotPink)
                     Text("正在读取相册")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -867,7 +869,7 @@ struct PhotoLibraryImportView: View {
                         .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(Theme.muted)
                     Text("相册里还没有可选图片")
-                        .font(.system(size: 17, weight: .bold))
+                        .font(AppFont.headline.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -905,7 +907,7 @@ struct PhotoLibraryImportView: View {
                                 PhotoLibraryThumbnailImage(image: item.thumbnail)
                                     .scaledToFill()
                                     .frame(width: 74, height: 74)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                 Button {
                                     toggleSelection(id)
                                 } label: {
@@ -915,6 +917,7 @@ struct PhotoLibraryImportView: View {
                                         .frame(width: 24, height: 24)
                                         .background(Color.black.opacity(0.72), in: Circle())
                                 }
+                                .accessibilityLabel("取消选择这张图片")
                                 .buttonStyle(.pressFeedback)
                                 .offset(x: 6, y: -6)
                             }
@@ -926,7 +929,7 @@ struct PhotoLibraryImportView: View {
 
             HStack {
                 Text("可选择\(maxSelection)张图片")
-                    .font(.system(size: 22, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Button {
@@ -938,14 +941,14 @@ struct PhotoLibraryImportView: View {
                                 .tint(.white)
                         }
                         Text(isImporting ? "导入中" : "下一步")
-                            .font(.system(size: 20, weight: .black))
+                            .font(AppFont.title)
                     }
                     .foregroundStyle(.white)
                     .frame(width: 170, height: 62)
                     .background(Theme.hotPink, in: Capsule())
                     .overlay(alignment: .topLeading) {
                         Text("\(selectedIDs.count)")
-                            .font(.system(size: 17, weight: .black))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(width: 38, height: 38)
                             .background(Theme.hotPink, in: Circle())
@@ -962,7 +965,7 @@ struct PhotoLibraryImportView: View {
 
             if let importErrorMessage {
                 Text(importErrorMessage)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.hotPink)
                     .padding(.horizontal, 26)
             }
@@ -970,7 +973,7 @@ struct PhotoLibraryImportView: View {
         .padding(.top, 20)
         .padding(.bottom, 34)
         .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous)
                 .fill(Theme.panel)
                 .ignoresSafeArea(edges: .bottom)
         )
@@ -982,17 +985,17 @@ struct PhotoLibraryImportView: View {
                 .font(.system(size: 46, weight: .semibold))
                 .foregroundStyle(Theme.hotPink)
             Text(title)
-                .font(.system(size: 24, weight: .black))
+                .font(AppFont.title)
                 .foregroundStyle(Theme.text)
             Text(message)
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 34)
             Button(buttonTitle) {
                 requestPhotoAccess()
             }
-            .font(.system(size: 17, weight: .black))
+            .font(AppFont.headline.weight(.bold))
             .foregroundStyle(.white)
             .padding(.horizontal, 26)
             .padding(.vertical, 13)
@@ -1228,7 +1231,7 @@ struct PhotoLibraryGridCell: View {
     private var selectionCircle: some View {
         if let selectionIndex {
             Text("\(selectionIndex)")
-                .font(.system(size: 15, weight: .black))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
                 .background(Theme.hotPink, in: Circle())
@@ -1268,7 +1271,7 @@ struct CollectionPickerSummary: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(collection == nil ? Theme.panelRaised : Theme.hotPink.opacity(0.18))
                     .frame(width: 46, height: 46)
                 Image(systemName: "rectangle.stack.fill")
@@ -1278,11 +1281,11 @@ struct CollectionPickerSummary: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(collection?.name ?? "请选择合集")
-                    .font(.system(size: 18, weight: .black))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(collection == nil ? Theme.subtext : Theme.text)
                     .lineLimit(1)
                 Text(collection == nil ? "每个帖子必须归入一个拼团合集" : "自动继承合集联系方式、截团时间和默认说明")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
             }
@@ -1294,12 +1297,12 @@ struct CollectionPickerSummary: View {
                 .foregroundStyle(Theme.hotPink)
         }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .stroke(collection == nil ? Theme.hairline : Theme.hotPink.opacity(0.48), lineWidth: 1)
         }
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
 }
 
@@ -1315,10 +1318,10 @@ struct CollectionPickerSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("选择拼团合集")
-                        .font(.system(size: 24, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Text("发布前必须选择一个合集")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                 }
                 Spacer()
@@ -1328,9 +1331,10 @@ struct CollectionPickerSheet: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 17, weight: .black))
                         .foregroundStyle(Theme.text)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                         .background(Theme.panelRaised, in: Circle())
                 }
+                .accessibilityLabel("关闭")
                 .buttonStyle(.pressFeedback)
             }
             .padding(.horizontal, 18)
@@ -1361,14 +1365,14 @@ struct CollectionPickerSheet: View {
                                 .font(.system(size: 22, weight: .black))
                                 .foregroundStyle(.white)
                                 .frame(width: 56, height: 56)
-                                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("新建拼团合集")
-                                    .font(.system(size: 19, weight: .black))
+                                    .font(AppFont.headline.weight(.bold))
                                     .foregroundStyle(Theme.text)
                                 Text("创建后自动选中，用于发布这篇帖子")
-                                    .font(.system(size: 13, weight: .bold))
+                                    .font(AppFont.caption.weight(.bold))
                                     .foregroundStyle(Theme.subtext)
                                     .lineLimit(1)
                             }
@@ -1380,9 +1384,9 @@ struct CollectionPickerSheet: View {
                                 .foregroundStyle(Theme.hotPink)
                         }
                         .padding(14)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                                 .stroke(Theme.hotPink.opacity(0.42), lineWidth: 1)
                         }
                     }
@@ -1419,15 +1423,15 @@ struct CollectionPickerOption: View {
                     .font(.system(size: 18, weight: .black))
                     .foregroundStyle(isSelected ? .white : Theme.hotPink)
                     .frame(width: 42, height: 42)
-                    .background(isSelected ? Theme.hotPink : Theme.hotPink.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(isSelected ? Theme.hotPink : Theme.hotPink.opacity(0.14), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
-                        .font(.system(size: 18, weight: .black))
+                        .font(AppFont.headline.weight(.bold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                         .lineLimit(1)
                 }
@@ -1439,9 +1443,9 @@ struct CollectionPickerOption: View {
                     .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
             }
             .padding(14)
-            .background(isSelected ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(isSelected ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .stroke(isSelected ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
         }

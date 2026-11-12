@@ -45,15 +45,15 @@ private struct EmptyModerationState: View {
                 .font(.system(size: 34, weight: .bold))
                 .foregroundStyle(Theme.hotPink)
             Text("暂无待审内容")
-                .font(.system(size: 17, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             Text("阿里云判定为疑似、超时或失败的内容会出现在这里。")
-                .font(.system(size: 13))
+                .font(AppFont.caption.weight(.regular))
                 .foregroundStyle(Theme.subtext)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 36)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 
@@ -66,15 +66,15 @@ private struct ModerationReviewCard: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(review.targetType.displayName)
-                        .font(.system(size: 13, weight: .black))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.hotPink)
                     Text(review.reason.isEmpty ? "等待人工复核" : review.reason)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.text)
                 }
                 Spacer()
                 Text(review.status.displayName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Color.orange)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -86,17 +86,17 @@ private struct ModerationReviewCard: View {
                 Label(riskText, systemImage: "exclamationmark.shield.fill")
                 Text(review.createdAt.relativeText)
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(AppFont.caption.weight(.semibold))
             .foregroundStyle(Theme.subtext)
 
             if !review.textSnapshot.isEmpty {
                 Text(review.textSnapshot)
-                    .font(.system(size: 13))
+                    .font(AppFont.caption.weight(.regular))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(6)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             }
 
             if !review.imageURLs.isEmpty {
@@ -105,7 +105,7 @@ private struct ModerationReviewCard: View {
                         ForEach(review.imageURLs, id: \.self) { url in
                             RemoteImagePreview(urlString: url, maxPixelSize: ImagePipeline.Tier.avatar)
                             .frame(width: 86, height: 86)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         }
                     }
                 }
@@ -120,7 +120,7 @@ private struct ModerationReviewCard: View {
             }
         }
         .padding(16)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 
     private var riskText: String {

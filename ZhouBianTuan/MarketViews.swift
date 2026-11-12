@@ -14,7 +14,7 @@ struct MarketView: View {
                 VStack(spacing: 0) {
                     HStack {
                         Text("关注")
-                            .font(.system(size: 28, weight: .black))
+                            .font(AppFont.title)
                             .foregroundStyle(Theme.text)
                         Spacer()
                         NavigationLink(value: Route.search) {
@@ -23,6 +23,7 @@ struct MarketView: View {
                                 .foregroundStyle(Theme.text)
                                 .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel("搜索")
                         .buttonStyle(.pressFeedback)
                     }
                     .padding(.horizontal, 16)

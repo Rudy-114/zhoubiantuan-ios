@@ -147,13 +147,14 @@ struct SearchView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 28, weight: .medium))
                         .foregroundStyle(Theme.text)
-                        .frame(width: 42, height: 50)
+                        .frame(width: 44, height: 50)
                 }
+                .accessibilityLabel("返回")
                 .buttonStyle(.pressFeedback)
 
                 HStack(spacing: 10) {
                     TextField("搜索角色名 / 团长名", text: $query)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(AppFont.title.weight(.semibold))
                         .submitLabel(.search)
                         .textInputAutocapitalization(.never)
                         .foregroundStyle(Theme.text)
@@ -170,6 +171,7 @@ struct SearchView: View {
                                 .font(.system(size: 20, weight: .bold))
                                 .foregroundStyle(Theme.muted)
                         }
+                        .accessibilityLabel("清除搜索内容")
                         .buttonStyle(.pressFeedback)
                     }
 
@@ -179,7 +181,7 @@ struct SearchView: View {
 
                     Button(action: submitSearch) {
                         Text("搜索")
-                            .font(.system(size: 20, weight: .black))
+                            .font(AppFont.title)
                             .foregroundStyle(Theme.text)
                     }
                     .buttonStyle(.pressFeedback)
@@ -281,6 +283,7 @@ struct SearchSuggestionsContent: View {
                         .padding(.vertical, 17)
                         .contentShape(Rectangle())
                     }
+                    .accessibilityLabel("搜索")
                     .buttonStyle(.pressFeedback)
                     Divider()
                         .overlay(Theme.hairline)
@@ -299,7 +302,7 @@ struct HighlightedSuggestionText: View {
 
     var body: some View {
         Text(attributedText)
-            .font(.system(size: 20, weight: .semibold))
+            .font(AppFont.title.weight(.semibold))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -326,7 +329,7 @@ struct SearchInitialContent: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
                     Text("历史记录")
-                        .font(.system(size: 24, weight: .black))
+                        .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Spacer()
                     if isManaging {
@@ -337,7 +340,7 @@ struct SearchInitialContent: View {
                             }
                         } label: {
                             Text("全部删除")
-                                .font(.system(size: 20, weight: .semibold))
+                                .font(AppFont.title.weight(.semibold))
                                 .foregroundStyle(history.isEmpty ? Theme.muted : Theme.subtext)
                         }
                         .disabled(history.isEmpty)
@@ -354,7 +357,7 @@ struct SearchInitialContent: View {
                             }
                         } label: {
                             Text("完成")
-                                .font(.system(size: 20, weight: .semibold))
+                                .font(AppFont.title.weight(.semibold))
                                 .foregroundStyle(Theme.subtext)
                         }
                         .buttonStyle(.pressFeedback)
@@ -369,6 +372,7 @@ struct SearchInitialContent: View {
                                 .foregroundStyle(Theme.muted)
                                 .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel("管理")
                         .buttonStyle(.pressFeedback)
                     }
                 }
@@ -376,7 +380,7 @@ struct SearchInitialContent: View {
 
                 if history.isEmpty {
                     Text("暂无搜索历史")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(AppFont.headline)
                         .foregroundStyle(Theme.muted)
                         .padding(.horizontal, 16)
                         .padding(.top, 10)
@@ -422,7 +426,7 @@ struct SearchHistoryChip: View {
         } label: {
             HStack(spacing: 8) {
                 Text(displayTitle)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(AppFont.title.weight(.semibold))
                     .foregroundStyle(Theme.text.opacity(0.86))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -538,7 +542,7 @@ struct SearchResultsContent: View {
                                             .foregroundStyle(Theme.link)
                                     }
                                     Text(tab)
-                                        .font(.system(size: 22, weight: selectedTab == tab ? .black : .semibold))
+                                        .font(AppFont.title.weight(selectedTab == tab ? .bold : .semibold))
                                         .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                 }
                                 ZStack {
@@ -553,6 +557,7 @@ struct SearchResultsContent: View {
                                 }
                             }
                         }
+                        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
                         .buttonStyle(.pressFeedback)
                     }
                 }
@@ -579,13 +584,14 @@ struct SearchResultsContent: View {
                                                     .font(.system(size: 16, weight: .bold))
                                             }
                                             Text(filter)
-                                                .font(.system(size: 18, weight: .bold))
+                                                .font(AppFont.headline.weight(.bold))
                                         }
                                         .foregroundStyle(selectedFilter == filter ? Theme.text : Theme.subtext)
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 12)
-                                        .background(selectedFilter == filter ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .background(selectedFilter == filter ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                     }
+                                    .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
                                     .buttonStyle(.pressFeedback)
                                 }
                             }
@@ -651,7 +657,7 @@ struct SearchEmptyState: View {
             Image(systemName: icon)
                 .font(.system(size: 42, weight: .light))
             Text(text)
-                .font(.system(size: 17, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .multilineTextAlignment(.center)
         }
         .foregroundStyle(Theme.muted)
@@ -688,14 +694,14 @@ struct SearchLeaderRow: View {
                     AvatarView(user: user, size: 58)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(user.nickname)
-                            .font(.system(size: 21, weight: .bold))
+                            .font(AppFont.title)
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
                         Text("粉丝 \(user.followersCount.formattedCount)")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(AppFont.callout.weight(.semibold))
                             .foregroundStyle(Theme.subtext)
                         Text("小红书号：\(user.redBookID.isEmpty ? store.registrationID(for: user.id) : user.redBookID)")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(AppFont.callout)
                             .foregroundStyle(Theme.subtext)
                             .lineLimit(1)
                     }
@@ -712,7 +718,7 @@ struct SearchLeaderRow: View {
                 }
             } label: {
                 Text(followTitle)
-                    .font(.system(size: 16, weight: .black))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(isFollowing ? Theme.text : Theme.hotPink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)

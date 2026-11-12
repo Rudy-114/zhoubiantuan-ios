@@ -28,12 +28,12 @@ struct MessagesView: View {
                         .padding(.horizontal, 16)
                         NavigationLink(value: Route.reminders) {
                             Text("查看收藏截团日期 · 需打开 App 查看")
-                                .font(.system(size: 12)).foregroundStyle(Theme.subtext)
+                                .font(AppFont.caption.weight(.regular)).foregroundStyle(Theme.subtext)
                         }
                         .padding(.horizontal, 16)
 
                         Text("私信咨询")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(AppFont.title)
                             .foregroundStyle(Theme.text)
                             .padding(.horizontal, 16)
 
@@ -50,7 +50,7 @@ struct MessagesView: View {
                                 }
                             }
                         }
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                         .padding(.horizontal, 16)
                     }
                     .padding(.bottom, 28)
@@ -81,15 +81,15 @@ struct MessagesEmptyPanel: View {
                 .frame(width: 38, height: 38)
                 .background(Theme.panelRaised, in: Circle())
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.subtext)
             Spacer()
         }
         .padding(14)
         .frame(maxWidth: .infinity)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
     }
@@ -107,22 +107,22 @@ struct ThreadRow: View {
             AvatarView(user: user, size: 46)
             VStack(alignment: .leading, spacing: 5) {
                 Text(user.nickname)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Text(post?.title ?? "好友私聊")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AppFont.caption)
                     .foregroundStyle(Theme.softPink)
                     .lineLimit(1)
                 Text(lastVisibleMessage.map(previewText) ?? "互相关注，开始聊天")
-                    .font(.system(size: 14))
+                    .font(AppFont.callout.weight(.regular))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             if thread.unreadCount > 0 {
                 Text("\(thread.unreadCount)")
-                    .font(.system(size: 12, weight: .black))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(.white)
                     .monospacedDigit()
                     .padding(.horizontal, 8)
@@ -171,14 +171,15 @@ struct ChatView: View {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 28, weight: .medium))
                             .foregroundStyle(Theme.text)
-                            .frame(width: 42, height: 48)
+                            .frame(width: 44, height: 48)
                     }
+                    .accessibilityLabel("返回")
                     .buttonStyle(.pressFeedback)
                     NavigationLink(value: Route.userProfile(peer.id)) {
                         HStack(spacing: 10) {
                             AvatarView(user: peer, size: 44)
                             Text(peer.nickname)
-                                .font(.system(size: 23, weight: .bold))
+                                .font(AppFont.title)
                                 .foregroundStyle(Theme.text)
                         }
                     }
@@ -203,7 +204,7 @@ struct ChatView: View {
                             ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
                                 if showsTimeSeparator(at: index, in: visibleMessages) {
                                     Text(ChatTimeSeparator.label(for: message.createdAt))
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(AppFont.headline)
                                         .foregroundStyle(Theme.muted)
                                         .padding(.top, index == 0 ? 18 : 10)
                                 }
@@ -268,8 +269,9 @@ struct ChatView: View {
                             Image(systemName: "face.smiling")
                                 .font(.system(size: 29, weight: .medium))
                                 .foregroundStyle(Theme.text)
-                                .frame(width: 42, height: 42)
+                                .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel("表情")
                         .buttonStyle(.pressFeedback)
 
                         Button {
@@ -282,8 +284,9 @@ struct ChatView: View {
                             Image(systemName: draft.trimmed.isEmpty ? "plus.circle" : "paperplane.fill")
                                 .font(.system(size: 31, weight: .medium))
                                 .foregroundStyle(draft.trimmed.isEmpty ? Theme.text : Theme.hotPink)
-                                .frame(width: 42, height: 42)
+                                .frame(width: 44, height: 44)
                         }
+                        .accessibilityLabel(draft.trimmed.isEmpty ? "更多" : "发送")
                         .buttonStyle(.pressFeedback)
                     }
                     .padding(.horizontal, 16)
@@ -541,9 +544,9 @@ struct ChatAttachmentOption: View {
                     .font(.system(size: 31, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .frame(width: 82, height: 82)
-                    .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
                 Text(title)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.subtext)
             }
         }
@@ -647,11 +650,11 @@ struct ChatBubble: View {
                 }
                 failureDecorated(
                     Text(message.body)
-                        .font(.system(size: 16, weight: .medium))
+                        .font(AppFont.callout)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 15)
                         .padding(.vertical, 11)
-                        .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .background(isMine ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
                 )
                 if isMine {
                     avatar(for: store.currentUser, size: 34)
@@ -685,11 +688,12 @@ struct ChatBubble: View {
                             .font(.system(size: 22))
                             .foregroundStyle(.red)
                     }
+                    .accessibilityLabel("重新发送")
                     .buttonStyle(.pressFeedback)
                     bubble
                 }
                 Text(failureReasonText)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AppFont.caption)
                     .foregroundStyle(.red.opacity(0.85))
             }
         } else if message.deliveryStatus == .sending {
@@ -718,7 +722,7 @@ struct ChatBubble: View {
         }
         .buttonStyle(.pressFeedback)
         .disabled(isLoadingPreview)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
         .accessibilityLabel("图片消息，点按查看大图")
     }
 
@@ -728,18 +732,18 @@ struct ChatBubble: View {
             UploadedImageView(data: imageData)
                 .scaledToFill()
                 .frame(width: 184, height: 184)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 }
         } else if !message.remoteImageURL.isEmpty {
             RemoteImageView(urlString: message.remoteImageURL, maxPixelSize: ImagePipeline.Tier.card)
                 .scaledToFill()
             .frame(width: 184, height: 184)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous)
                     .stroke(Theme.hairline, lineWidth: 0.5)
             }
         }
@@ -824,6 +828,7 @@ private struct ChatImagePreviewView: View {
                             .frame(width: 44, height: 44)
                             .background(.white.opacity(0.14), in: Circle())
                     }
+                    .accessibilityLabel("关闭")
                     .buttonStyle(.pressFeedback)
 
                     Spacer()
@@ -832,7 +837,7 @@ private struct ChatImagePreviewView: View {
                         saveImage()
                     } label: {
                         Label(saveButtonTitle, systemImage: saveButtonIcon)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16)
                             .frame(height: 44)
@@ -850,7 +855,7 @@ private struct ChatImagePreviewView: View {
 
             if showsSaveConfirmation {
                 Text("已保存至系统相册")
-                    .font(.system(size: 17, weight: .black))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 24)
                     .frame(height: 52)
@@ -936,14 +941,14 @@ struct SharedPostMessageCard: View {
                 .clipped()
             VStack(alignment: .leading, spacing: 12) {
                 Text(post.title)
-                    .font(.system(size: 24, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     AvatarView(user: author, size: 28)
                     Text(author.nickname)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.subtext)
                         .lineLimit(1)
                 }
@@ -952,9 +957,9 @@ struct SharedPostMessageCard: View {
             .frame(width: 250, alignment: .leading)
             .background(Theme.panel)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Radius.card)
                 .stroke(Theme.hairline, lineWidth: 0.5)
         }
     }
@@ -979,22 +984,22 @@ struct SharedProfileMessageCard: View {
                     .padding(.top, -42)
 
                 Text(user.nickname)
-                    .font(.system(size: 24, weight: .black))
+                    .font(AppFont.title)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
 
                 Text("制品 · \(noteCount)  |  粉丝 · \(store.followerUsers(for: user.id).count)")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.subtext)
 
                 Text(user.bio == "点击这里，填写简介" ? "这个人还没有填写简介" : user.bio)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
 
                 Text("去看看")
-                    .font(.system(size: 17, weight: .black))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(Theme.hotPink)
                     .padding(.horizontal, 26)
                     .padding(.vertical, 9)
@@ -1008,9 +1013,9 @@ struct SharedProfileMessageCard: View {
             .frame(width: 280)
             .background(Theme.panel)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Radius.card)
                 .stroke(Theme.hairline, lineWidth: 0.5)
         }
     }

@@ -18,30 +18,30 @@ struct LegalDocumentView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
                 Text("服务说明")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.hotPink)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Theme.hotPink.opacity(0.12), in: Capsule())
 
                 Text("本页面向你说明周边团的服务规则和个人信息处理方式。完整条款以《用户服务协议》《隐私政策》及 App Store 中展示的隐私说明为准。")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.subtext)
                     .lineSpacing(6)
 
                 ForEach(document.sections) { section in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(section.title)
-                            .font(.system(size: 19, weight: .black))
+                            .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(Theme.text)
                         Text(section.body)
-                            .font(.system(size: 15, weight: .medium))
+                            .font(AppFont.callout)
                             .foregroundStyle(Theme.subtext)
                             .lineSpacing(7)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
             }
             .padding(.horizontal, 20)
@@ -129,7 +129,7 @@ struct SettingsLegalLinks: View {
                             selectedDocument = document
                         } label: {
                             Text("《\(document.shortTitle)》")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(AppFont.caption.weight(.semibold))
                                 .foregroundStyle(Theme.subtext)
                                 .underline()
                                 .lineLimit(1)

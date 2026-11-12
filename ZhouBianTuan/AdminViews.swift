@@ -105,7 +105,7 @@ struct ReportListView: View {
                                     if let result = report.adminResult { Text("处理说明：\(result)").font(.subheadline) }
                                 }
                                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                             }
                         }
                         if hasMore { Button("加载更多") { Task { await load(reset: false) } }.disabled(requestID != nil) }
@@ -183,7 +183,7 @@ struct AdminReportCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
         .disabled(isSaving)
     }
 

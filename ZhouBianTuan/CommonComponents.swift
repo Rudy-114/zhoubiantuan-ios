@@ -359,10 +359,10 @@ struct HeaderTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 30, weight: .black))
+                .font(AppFont.display)
                 .foregroundStyle(Theme.text)
             Text(subtitle)
-                .font(.system(size: 14, weight: .medium))
+                .font(AppFont.callout)
                 .foregroundStyle(Theme.subtext)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -409,7 +409,7 @@ struct SelectChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(isSelected ? .white : Theme.subtext)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
@@ -426,7 +426,7 @@ struct TagCloud: View {
         FlowWrapStatic(items: tags) { tag in
             NavigationLink(value: Route.tag(tag)) {
                 Text("#\(tag)")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.link)
             }
             .buttonStyle(.pressFeedback)
@@ -469,11 +469,11 @@ struct InfoRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Text(title)
-                .font(.system(size: 14, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.subtext)
                 .frame(width: 84, alignment: .leading)
             Text(value)
-                .font(.system(size: 15, weight: .semibold))
+                .font(AppFont.callout.weight(.semibold))
                 .foregroundStyle(Theme.text.opacity(0.88))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -490,11 +490,11 @@ struct ContactButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(isEnabled ? .white : Theme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         }
         .buttonStyle(.pressFeedback)
         .disabled(!isEnabled)
@@ -537,7 +537,7 @@ struct ActionIconButton: View {
                 Image(systemName: icon)
                     .font(.system(size: 24, weight: .semibold))
                 Text(title)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
             }
             .foregroundStyle(tint)
             .frame(width: 46)
@@ -567,10 +567,10 @@ struct RequiredLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.text)
             Text("*")
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.hotPink)
         }
     }
@@ -636,11 +636,11 @@ struct PrototypeTextField: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.subtext)
                 if required {
                     Text("*")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.hotPink)
                 }
                 if let limit {
@@ -652,9 +652,9 @@ struct PrototypeTextField: View {
                 .characterLimit(limit, text: $text)
                 .foregroundStyle(Theme.text)
                 .padding(13)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.control)
                         .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
                 }
         }
@@ -672,11 +672,11 @@ struct PrototypeTextEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(Theme.subtext)
                 if required {
                     Text("*")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.hotPink)
                 }
                 if let limit {
@@ -698,9 +698,9 @@ struct PrototypeTextEditor: View {
                     .scrollContentBackground(.hidden)
                     .padding(8)
             }
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: Radius.control)
                     .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
             }
         }
@@ -726,7 +726,7 @@ struct TagEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("品类 / 圈层标签")
-                .font(.system(size: 15, weight: .bold))
+                .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(Theme.text)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(visibleTags, id: \.self) { tag in
@@ -738,7 +738,7 @@ struct TagEditor: View {
                         }
                     } label: {
                         Text(tag)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(selection.contains(tag) ? .white : Theme.subtext)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 8)
@@ -751,9 +751,9 @@ struct TagEditor: View {
                 TextField("自定义标签", text: $customTag)
                     .foregroundStyle(Theme.text)
                     .padding(12)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: Radius.control)
                             .stroke(Theme.hairline, lineWidth: 1)
                     }
                 Button {
@@ -763,8 +763,9 @@ struct TagEditor: View {
                         .font(.system(size: 18, weight: .black))
                         .foregroundStyle(normalizedCustomTag.isEmpty ? Theme.muted : .white)
                         .frame(width: 44, height: 44)
-                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 }
+                .accessibilityLabel("添加标签")
                 .buttonStyle(.pressFeedback)
                 .disabled(normalizedCustomTag.isEmpty)
             }
@@ -785,7 +786,7 @@ struct ValidationRow: View {
 
     var body: some View {
         Label(text, systemImage: isValid ? "checkmark.circle.fill" : "xmark.circle")
-            .font(.system(size: 14, weight: .semibold))
+            .font(AppFont.callout.weight(.semibold))
             .foregroundStyle(isValid ? Color.green.opacity(0.9) : Theme.muted)
     }
 }
@@ -803,17 +804,17 @@ struct ReminderMiniCard: View {
                 .background(Theme.hotPink.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(reminder.isUpcoming ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                 Text("《\(post.title)》\(post.deadline.shortDeadlineText)")
-                    .font(.system(size: 13))
+                    .font(AppFont.caption.weight(.regular))
                     .foregroundStyle(Theme.subtext)
                     .lineLimit(2)
             }
             Spacer()
         }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -826,23 +827,23 @@ struct ReminderLargeCard: View {
             PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                 .scaledToFill()
                 .frame(width: 80, height: 80)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.control))
             VStack(alignment: .leading, spacing: 7) {
                 Text(post.title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
                 Text("截团：\(post.deadline.fullDisplay)")
-                    .font(.system(size: 13))
+                    .font(AppFont.caption.weight(.regular))
                     .foregroundStyle(Theme.subtext)
                 Text(reminder.isUpcoming ? "即将截团" : "请留意截团时间")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.hotPink)
             }
             Spacer()
         }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -885,10 +886,10 @@ struct ProfileRowContent: View {
                 .background(Theme.hotPink.opacity(0.13), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(AppFont.callout.weight(.bold))
                     .foregroundStyle(Theme.text)
                 Text(subtitle)
-                    .font(.system(size: 13))
+                    .font(AppFont.caption.weight(.regular))
                     .foregroundStyle(Theme.subtext)
             }
             Spacer()
@@ -897,7 +898,7 @@ struct ProfileRowContent: View {
                 .foregroundStyle(Theme.muted)
         }
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -908,10 +909,10 @@ struct StatItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(value)
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(AppFont.caption)
                 .foregroundStyle(Theme.subtext)
         }
     }
@@ -924,15 +925,15 @@ struct AdminMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(value)
-                .font(.system(size: 24, weight: .black))
+                .font(AppFont.title)
                 .foregroundStyle(Theme.text)
             Text(title)
-                .font(.system(size: 12, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(Theme.subtext)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -943,7 +944,7 @@ struct AdminActionButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(title == "下架" ? .white : Theme.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
@@ -967,12 +968,12 @@ struct ToastHost: View {
                             .accessibilityHidden(true)
                     }
                     Text(toast.message)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(.white)
                         .lineLimit(2)
                     if let action = toast.action {
                         Button(action.title) { store.performToastAction() }
-                            .font(.system(size: 14, weight: .black))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(Theme.hotPink)
                             .padding(.leading, 2)
                     }

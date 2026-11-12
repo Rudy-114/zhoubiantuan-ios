@@ -198,7 +198,7 @@ struct SettingsSecureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .font(AppFont.caption.weight(.bold))
                 .foregroundStyle(Theme.subtext)
             SecureField(title, text: $text)
                 .textContentType(contentType)
@@ -206,8 +206,8 @@ struct SettingsSecureField: View {
                 .autocorrectionDisabled()
                 .foregroundStyle(Theme.text)
                 .padding(13)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1) }
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
+                .overlay { RoundedRectangle(cornerRadius: Radius.control).stroke(Theme.hairline, lineWidth: 1) }
         }
     }
 }
@@ -233,11 +233,11 @@ struct SettingsPrimaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
-                .background(tint.opacity(isEnabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(tint.opacity(isEnabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         }
         .buttonStyle(.pressFeedback)
         .disabled(!isEnabled)
@@ -252,7 +252,7 @@ struct GeneralSettingsView: View {
     var body: some View {
         SettingsDetailScaffold(title: "通用设置", dismiss: dismiss) {
             Text("显示")
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -262,7 +262,7 @@ struct GeneralSettingsView: View {
             }
 
             Text("功能")
-                .font(.system(size: 18, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -288,7 +288,7 @@ struct NotificationSettingsView: View {
                 SettingsValueRow(title: "系统推送", value: "暂未提供")
             }
             Text("私信和互动在打开 App 后更新。收藏的截团日期可在 App 内查看，目前不会在截团前发送系统通知。")
-                .font(.system(size: 15))
+                .font(AppFont.callout.weight(.regular))
                 .foregroundStyle(Theme.subtext)
                 .padding(.horizontal, 14)
         }
@@ -340,7 +340,7 @@ struct SettingsDetailGroup<Content: View>: View {
         VStack(spacing: 0) {
             content
         }
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 
@@ -353,18 +353,18 @@ struct SettingsValueRow: View {
         HStack(alignment: subtitle == nil ? .center : .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 22, weight: .regular))
+                    .font(AppFont.title.weight(.regular))
                     .foregroundStyle(Theme.text.opacity(0.92))
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(AppFont.callout.weight(.semibold))
                         .foregroundStyle(Theme.muted)
                         .lineLimit(2)
                 }
             }
             Spacer(minLength: 12)
             Text(value)
-                .font(.system(size: 22, weight: .regular))
+                .font(AppFont.title.weight(.regular))
                 .foregroundStyle(Theme.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -387,11 +387,11 @@ struct SettingsToggleRow: View {
         HStack(alignment: subtitle == nil ? .center : .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 22, weight: .regular))
+                    .font(AppFont.title.weight(.regular))
                     .foregroundStyle(Theme.text.opacity(0.92))
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(AppFont.callout.weight(.semibold))
                         .foregroundStyle(Theme.muted)
                         .lineLimit(2)
                 }
@@ -412,7 +412,7 @@ struct SettingsAppearanceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("外观")
-                .font(.system(size: 22, weight: .regular))
+                .font(AppFont.title.weight(.regular))
                 .foregroundStyle(Theme.text.opacity(0.92))
             Picker("外观", selection: $mode) {
                 ForEach(AppearanceMode.allCases) { item in
@@ -448,7 +448,7 @@ struct SettingsGroup<Content: View>: View {
             content
         }
         .padding(.vertical, 4)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 
@@ -463,7 +463,7 @@ struct SettingsRow: View {
                 .foregroundStyle(Theme.text.opacity(0.88))
                 .frame(width: 40, height: 56)
             Text(title)
-                .font(.system(size: 20, weight: .regular))
+                .font(AppFont.title.weight(.regular))
                 .foregroundStyle(Theme.text.opacity(0.9))
             Spacer()
             Image(systemName: "chevron.right")
@@ -480,7 +480,7 @@ struct SettingsPlainActionRow: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 20, weight: .regular))
+            .font(AppFont.title.weight(.regular))
             .foregroundStyle(Theme.text.opacity(0.92))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
@@ -506,7 +506,7 @@ struct SimpleTopBar: View {
 
             Spacer()
             Text(title)
-                .font(.system(size: 22, weight: .black))
+                .font(AppFont.title)
                 .foregroundStyle(Theme.text)
             Spacer()
 
@@ -518,7 +518,7 @@ struct SimpleTopBar: View {
                                 .font(.system(size: 16, weight: .bold))
                         }
                         Text(trailing)
-                            .font(.system(size: 16, weight: .black))
+                            .font(AppFont.callout.weight(.bold))
                     }
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 13)
@@ -565,7 +565,7 @@ struct HelpFeedbackView: View {
             }
 
             Text("如需帮助、举报申诉或反馈问题，请通过以上邮箱联系我们，我们会尽快回复。")
-                .font(.system(size: 14))
+                .font(AppFont.callout.weight(.regular))
                 .foregroundStyle(Theme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -586,7 +586,7 @@ struct BlockedUsersView: View {
         SettingsDetailScaffold(title: "已拉黑用户", dismiss: dismiss) {
             if blockedUsers.isEmpty {
                 Text("你还没有拉黑任何用户。")
-                    .font(.system(size: 15))
+                    .font(AppFont.callout.weight(.regular))
                     .foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 48)
@@ -596,7 +596,7 @@ struct BlockedUsersView: View {
                         if index > 0 { SettingsSeparator() }
                         HStack(spacing: 12) {
                             Text(user.nickname)
-                                .font(.system(size: 18))
+                                .font(AppFont.body)
                                 .foregroundStyle(Theme.text)
                                 .lineLimit(1)
                             Spacer(minLength: 12)
@@ -604,7 +604,7 @@ struct BlockedUsersView: View {
                                 pendingUnblockUser = user
                             } label: {
                                 Text("解除")
-                                    .font(.system(size: 15, weight: .bold))
+                                    .font(AppFont.callout.weight(.bold))
                                     .foregroundStyle(Theme.hotPink)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 7)
@@ -676,20 +676,20 @@ struct AccountDeletionView: View {
         SettingsDetailScaffold(title: "删除账号", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("删除账号后将会：")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(AppFont.headline.weight(.bold))
                     .foregroundStyle(Theme.text)
                 bullet("退出并注销当前账号，登录凭证立即失效")
                 bullet("隐藏你发布的拼团帖子、合集和评论")
                 bullet("清除你的昵称、头像、简介等个人资料")
                 bullet("释放你的注册邮箱，之后可重新注册")
                 Text("此操作不可恢复，请谨慎操作。")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(AppFont.callout.weight(.semibold))
                     .foregroundStyle(Theme.hotPink)
                     .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
             if showsVerification {
                 verificationSection
@@ -714,7 +714,7 @@ struct AccountDeletionView: View {
     private var verificationSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("验证身份")
-                .font(.system(size: 17, weight: .bold))
+                .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             Picker("验证方式", selection: $method) {
                 ForEach(VerificationMethod.allCases) { Text($0.rawValue).tag($0) }
@@ -730,7 +730,7 @@ struct AccountDeletionView: View {
                 HStack(alignment: .bottom, spacing: 10) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("验证码")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(AppFont.caption.weight(.bold))
                             .foregroundStyle(Theme.subtext)
                         TextField("6 位数字", text: $code)
                             .keyboardType(.numberPad)
@@ -738,7 +738,7 @@ struct AccountDeletionView: View {
                             .characterLimit(6, text: $code)
                             .foregroundStyle(Theme.text)
                             .padding(13)
-                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                     }
                     Button {
                         Task {
@@ -750,10 +750,10 @@ struct AccountDeletionView: View {
                         }
                     } label: {
                         Text(isSendingCode ? "发送中" : (codeSent ? "重新发送" : "发送验证码"))
-                            .font(.system(size: 14, weight: .bold))
+                            .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(width: 104, height: 48)
-                            .background(Theme.hotPink.opacity(isSendingCode ? 0.5 : 1), in: RoundedRectangle(cornerRadius: 8))
+                            .background(Theme.hotPink.opacity(isSendingCode ? 0.5 : 1), in: RoundedRectangle(cornerRadius: Radius.control))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(isSendingCode)
@@ -781,14 +781,14 @@ struct AccountDeletionView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
     }
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("•").foregroundStyle(Theme.muted)
             Text(text)
-                .font(.system(size: 15))
+                .font(AppFont.callout.weight(.regular))
                 .foregroundStyle(Theme.subtext)
         }
     }

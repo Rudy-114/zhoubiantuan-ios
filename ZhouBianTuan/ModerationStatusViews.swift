@@ -10,7 +10,7 @@ struct ModerationStatusBadge: View {
                 Image(systemName: iconName)
                     .font(.system(size: 11, weight: .bold))
                 Text(status.rawValue)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(AppFont.badge)
                     .lineLimit(1)
             }
             .foregroundStyle(color)
@@ -62,11 +62,11 @@ struct ModerationInlineNotice: View {
                     .foregroundStyle(status == .rejected ? Color.red : Color.orange)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(AppFont.caption.weight(.bold))
                         .foregroundStyle(Theme.text)
                     if !reason.isEmpty {
                         Text(reason)
-                            .font(.system(size: 12))
+                            .font(AppFont.caption.weight(.regular))
                             .foregroundStyle(Theme.subtext)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -74,7 +74,7 @@ struct ModerationInlineNotice: View {
                 Spacer()
             }
             .padding(10)
-            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         }
     }
 
