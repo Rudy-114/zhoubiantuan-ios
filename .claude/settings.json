@@ -3,7 +3,12 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "command": "if echo \"$CLAUDE_CODE_TOOL_INPUT\" | grep -qE '(git add|git commit|git push|git reset|git clean|git checkout --|npm install|npm update|pod install|swift package update|npm --prefix backend run migrate|rm -rf|aws ecs|aliyun)' && ! echo \"$CLAUDE_CODE_TOOL_INPUT\" | grep -qE '(git status|git diff|git log|git blame|node --check|xcodebuild|npm --prefix backend test)'; then echo 'BLOCKED: 此命令可能修改仓库或变更云资源。请确认用户是否明确要求。'; exit 1; fi"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); if printf '%s' \"$cmd\" | grep -qE '(git push (-f|--force)|git reset|git clean|git checkout --|npm install|npm update|pod install|swift package update|rm -rf)'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"此命令可能破坏仓库状态或改动依赖。请确认用户是否明确要求。\"}}'; fi"
+          }
+        ]
       }
     ]
   },
@@ -18,7 +23,16 @@
       "TaskUpdate",
       "TaskGet",
       "TaskList",
-      "AskUserQuestion"
+      "AskUserQuestion",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(rsync *)",
+      "Bash(git push *)",
+      "Bash(aliyun *)",
+      "Bash(npm --prefix backend run migrate*)",
+      "Bash(xcodebuild *)",
+      "Bash(xcrun altool *)",
+      "Bash(xcrun notarytool *)"
     ],
     "deny": []
   }
