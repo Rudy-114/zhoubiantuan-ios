@@ -32,6 +32,9 @@ struct ContentPageState {
     var requestID: UUID?
     var error: String?
     var isOfflineSnapshot = false
+    /// True while a `reset: true` request is in flight, so concurrent resets
+    /// (task + refresh + offline restore) cannot reorder the list twice.
+    var isResetting = false
     /// The server ranking seed for the current personalized feed snapshot.
     /// It is intentionally kept out of ContentQuery.key so offline restore
     /// remains stable while pagination stays pinned to one ordering.
@@ -96,6 +99,7 @@ extension MockAppStore {
         guard isBackendEnabled else { return }
         var state = pageState(query)
         guard reset || (state.requestID == nil && state.hasMore) else { return }
+        if reset && state.isResetting { return }
         let refreshSeed: String?
         if reset, query.path == "/feed", query.parameters["feedMode"] == "forYou" {
             refreshSeed = UUID().uuidString.lowercased()
@@ -104,10 +108,14 @@ extension MockAppStore {
         }
         let session = authSessionVersion, epoch = contentPageEpoch, requestID = UUID()
         state.requestID = requestID
+        state.isResetting = reset
         state.error = nil
         contentPages[query.key] = state
         defer {
-            if contentPages[query.key]?.requestID == requestID { contentPages[query.key]?.requestID = nil }
+            if contentPages[query.key]?.requestID == requestID {
+                contentPages[query.key]?.requestID = nil
+                contentPages[query.key]?.isResetting = false
+            }
         }
         do {
             let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken, refreshSeed: refreshSeed)
@@ -126,6 +134,7 @@ extension MockAppStore {
             state.nextCursor = page.nextCursor
             state.feedRefreshSeed = refreshSeed
             state.requestID = nil
+            state.isResetting = false
             state.isOfflineSnapshot = false
             contentPages[query.key] = state
             isShowingOfflineFeed = false

@@ -3,35 +3,6 @@ import ImageIO
 import SwiftUI
 import UIKit
 
-private struct PopNavigationRouteActionKey: EnvironmentKey {
-    static let defaultValue: (() -> Void)? = nil
-}
-
-private struct PopNavigationRouteEnabledKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-private struct NavigationBackdropKey: EnvironmentKey {
-    static let defaultValue: AnyView? = nil
-}
-
-extension EnvironmentValues {
-    var popNavigationRoute: (() -> Void)? {
-        get { self[PopNavigationRouteActionKey.self] }
-        set { self[PopNavigationRouteActionKey.self] = newValue }
-    }
-
-    var popNavigationRouteEnabled: Bool {
-        get { self[PopNavigationRouteEnabledKey.self] }
-        set { self[PopNavigationRouteEnabledKey.self] = newValue }
-    }
-
-    var navigationBackdrop: AnyView? {
-        get { self[NavigationBackdropKey.self] }
-        set { self[NavigationBackdropKey.self] = newValue }
-    }
-}
-
 /// Gives every primary app action the same immediate pressed-state feedback.
 ///
 /// `Button` still owns activation and cancellation: pressing down changes the
@@ -55,150 +26,63 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
     static var pressFeedback: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
 }
 
-/// An edge-only, interactive back gesture for screens that hide the system
-/// navigation bar.  The screen follows the finger from the initial grab
-/// point, resists the last part of the travel, and either settles back or
-/// completes the pop based on the release position and projected travel.
+/// Enables the system edge-swipe back gesture on screens that hide the
+/// navigation bar. UIKit drives the transition, so the real previous page is
+/// shown underneath and `NavigationStack(path:)` is updated automatically.
 struct InteractiveBackSwipeModifier: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.popNavigationRoute) private var popNavigationRoute
-    @Environment(\.popNavigationRouteEnabled) private var popNavigationRouteEnabled
-    @Environment(\.navigationBackdrop) private var navigationBackdrop
-    @State private var offset: CGFloat = 0
-    @State private var isTracking = false
-    @State private var isCompleting = false
-    private let backdrop: AnyView?
-    private let onComplete: (() -> Void)?
-
-    private let edgeWidth: CGFloat = 32
-    private let completionDistance: CGFloat = 112
-
-    init<Backdrop: View>(onComplete: (() -> Void)? = nil, @ViewBuilder backdrop: () -> Backdrop) {
-        self.backdrop = AnyView(backdrop())
-        self.onComplete = onComplete
-    }
-
-    init(onComplete: (() -> Void)? = nil) {
-        self.backdrop = nil
-        self.onComplete = onComplete
-    }
-
     func body(content: Content) -> some View {
-        let width = max(UIScreen.main.bounds.width, 1)
-        ZStack(alignment: .leading) {
-            // A root view can be supplied as the backdrop for its child route.
-            // Clear the inherited backdrop while rendering that root view so a
-            // root that also uses this modifier cannot recursively render itself.
-            (backdrop ?? navigationBackdrop ?? AnyView(Theme.background.ignoresSafeArea()))
-                .environment(\.navigationBackdrop, nil)
-                .environment(\.popNavigationRouteEnabled, false)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        content.background {
+            InteractivePopGestureEnabler()
+                .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
-
-            content
-                .offset(x: offset)
-                .overlay(alignment: .leading) {
-                    Color.black
-                        .opacity(Double(min(0.18, 0.18 * offset / width)))
-                        .allowsHitTesting(false)
-                }
-                .contentShape(Rectangle())
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 8, coordinateSpace: .local)
-                        .onChanged { value in
-                            guard !isCompleting, value.startLocation.x <= edgeWidth else { return }
-                            let horizontal = value.translation.width
-                            let vertical = value.translation.height
-                            if !isTracking {
-                                guard horizontal > 0, abs(horizontal) > abs(vertical) * 1.15 else { return }
-                                isTracking = true
-                            }
-                            guard isTracking else { return }
-                            offset = rubberBand(max(0, horizontal), width: width)
-                        }
-                        .onEnded { value in
-                            guard isTracking, !isCompleting else { return }
-                            isTracking = false
-                            let projected = max(value.translation.width, value.predictedEndTranslation.width)
-                            let shouldComplete = value.translation.width >= completionDistance
-                                || projected >= width * 0.34
-                            if shouldComplete {
-                                isCompleting = true
-                                withAnimation(.easeOut(duration: 0.2), completionCriteria: .removed) {
-                                    offset = width
-                                } completion: {
-                                    // The drag has already animated the screen offscreen.
-                                    // Pop only after it finishes, without a second transition.
-                                    var transaction = Transaction(animation: nil)
-                                    transaction.disablesAnimations = true
-                                    withTransaction(transaction) {
-                                        if let onComplete {
-                                            onComplete()
-                                        } else if popNavigationRouteEnabled, let popNavigationRoute {
-                                            popNavigationRoute()
-                                        } else {
-                                            dismiss()
-                                        }
-                                    }
-                                }
-                            } else {
-                                withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.86)) {
-                                    offset = 0
-                                }
-                            }
-                        }
-                )
-                .background {
-                    NavigationInteractivePopDisabler()
-                        .frame(width: 0, height: 0)
-                        .allowsHitTesting(false)
-                }
         }
-    }
-
-    private func rubberBand(_ distance: CGFloat, width: CGFloat) -> CGFloat {
-        let resistanceStart = width * 0.68
-        guard distance > resistanceStart else { return distance }
-        return resistanceStart + (distance - resistanceStart) * 0.18
     }
 }
 
-/// SwiftUI's NavigationStack can keep its UIKit edge-pop recognizer enabled
-/// even when the navigation bar is hidden.  Disable that recognizer on screens
-/// with the custom gesture so a completed drag cannot start a second pop.
-private struct NavigationInteractivePopDisabler: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> Controller {
-        Controller()
-    }
+/// Hidden navigation bars disable the default pop-gesture delegate. This
+/// delegate re-enables it but refuses to begin on the root page: starting an
+/// interactive pop with a single view controller freezes UIKit's navigation.
+final class PopGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var navigationController: UINavigationController?
 
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.disableInteractivePop()
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        (navigationController?.viewControllers.count ?? 0) > 1
     }
+}
+
+private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
 
     final class Controller: UIViewController {
+        private static var delegateKey: UInt8 = 0
+
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
-            disableInteractivePop()
-        }
-
-        override func viewWillDisappear(_ animated: Bool) {
-            super.viewWillDisappear(animated)
-            navigationController?.interactivePopGestureRecognizer?.isEnabled = true
-        }
-
-        func disableInteractivePop() {
-            navigationController?.interactivePopGestureRecognizer?.isEnabled = false
+            guard let navigationController,
+                  let recognizer = navigationController.interactivePopGestureRecognizer else { return }
+            // The recognizer only holds its delegate weakly. Retain one delegate
+            // per navigation controller so it outlives individual pages; if it
+            // were released after a pop, the root page would lose the depth guard.
+            let delegate: PopGestureDelegate
+            if let existing = objc_getAssociatedObject(navigationController, &Self.delegateKey) as? PopGestureDelegate {
+                delegate = existing
+            } else {
+                delegate = PopGestureDelegate()
+                delegate.navigationController = navigationController
+                objc_setAssociatedObject(navigationController, &Self.delegateKey, delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+            recognizer.delegate = delegate
+            recognizer.isEnabled = true
         }
     }
 }
 
 extension View {
+    /// `onComplete` is kept for source compatibility and ignored: the system
+    /// pop updates the navigation path by itself.
     func interactiveBackSwipe(onComplete: (() -> Void)? = nil) -> some View {
-        modifier(InteractiveBackSwipeModifier(onComplete: onComplete))
-    }
-
-    func interactiveBackSwipe<Backdrop: View>(onComplete: (() -> Void)? = nil, @ViewBuilder backdrop: @escaping () -> Backdrop) -> some View {
-        modifier(InteractiveBackSwipeModifier(onComplete: onComplete, backdrop: backdrop))
+        modifier(InteractiveBackSwipeModifier())
     }
 }
 
@@ -388,7 +272,6 @@ struct RemoteImagePreview: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var retryCount = 0
     let urlString: String
-    var blurRadius: CGFloat = 0
     @StateObject private var loader = RemoteImageLoader()
 
     var body: some View {
@@ -398,7 +281,6 @@ struct RemoteImagePreview: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .blur(radius: blurRadius)
             case .idle, .loading:
                 imagePlaceholder.overlay { ProgressView().tint(Theme.muted) }
             case .failed:
@@ -432,7 +314,7 @@ struct PostImageView: View {
 
     var body: some View {
         if preferPreview, post.previewRemoteImageURLs.indices.contains(index), !post.previewRemoteImageURLs[index].isEmpty {
-            RemoteImagePreview(urlString: post.previewRemoteImageURLs[index], blurRadius: 0.7)
+            RemoteImagePreview(urlString: post.previewRemoteImageURLs[index])
         } else if post.remoteImageURLs.indices.contains(index) {
             RemoteImageView(urlString: post.remoteImageURLs[index])
         } else if post.uploadedImageData.indices.contains(index) {
@@ -536,7 +418,7 @@ struct TagCloud: View {
             NavigationLink(value: Route.tag(tag)) {
                 Text("#\(tag)")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.78, green: 0.86, blue: 1))
+                    .foregroundStyle(Theme.link)
             }
             .buttonStyle(.pressFeedback)
         }

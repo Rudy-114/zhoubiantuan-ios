@@ -135,14 +135,8 @@ struct RootView: View {
             TabView(selection: $selectedTab) {
                 NavigationStack(path: $homePath) {
                     HomeView()
-                        .withAppDestinations(popNavigationRoute: {
-                            popHomeRoute()
-                        })
+                        .withAppDestinations()
                 }
-                .environment(\.popNavigationRoute, {
-                    popHomeRoute()
-                })
-                .environment(\.navigationBackdrop, AnyView(HomeView()))
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.icon) }
                 .tag(AppTab.home)
 
@@ -150,16 +144,8 @@ struct RootView: View {
                     AuthenticatedTabContent {
                         MarketView()
                     }
-                        .withAppDestinations(popNavigationRoute: {
-                            popMarketRoute()
-                        })
+                        .withAppDestinations()
                 }
-                .environment(\.popNavigationRoute, {
-                    popMarketRoute()
-                })
-                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
-                    MarketView()
-                }))
                 .tabItem { Label(AppTab.market.title, systemImage: AppTab.market.icon) }
                 .tag(AppTab.market)
 
@@ -167,16 +153,8 @@ struct RootView: View {
                     AuthenticatedTabContent {
                         CreatePostView()
                     }
-                        .withAppDestinations(popNavigationRoute: {
-                            popCreateRoute()
-                        })
+                        .withAppDestinations()
                 }
-                .environment(\.popNavigationRoute, {
-                    popCreateRoute()
-                })
-                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
-                    CreatePostView()
-                }))
                 .tabItem { Label(AppTab.create.title, systemImage: AppTab.create.icon) }
                 .tag(AppTab.create)
 
@@ -184,16 +162,8 @@ struct RootView: View {
                     AuthenticatedTabContent {
                         MessagesView()
                     }
-                        .withAppDestinations(popNavigationRoute: {
-                            popMessagesRoute()
-                        })
+                        .withAppDestinations()
                 }
-                .environment(\.popNavigationRoute, {
-                    popMessagesRoute()
-                })
-                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
-                    MessagesView()
-                }))
                 .tabItem { Label(AppTab.messages.title, systemImage: AppTab.messages.icon) }
                 .badge(unreadMessageCount)
                 .tag(AppTab.messages)
@@ -202,16 +172,8 @@ struct RootView: View {
                     AuthenticatedTabContent {
                         ProfileView()
                     }
-                        .withAppDestinations(popNavigationRoute: {
-                            popProfileRoute()
-                        })
+                        .withAppDestinations()
                 }
-                .environment(\.popNavigationRoute, {
-                    popProfileRoute()
-                })
-                .environment(\.navigationBackdrop, AnyView(AuthenticatedTabContent {
-                    ProfileView()
-                }))
                 .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
                 .tag(AppTab.profile)
             }
@@ -264,35 +226,6 @@ struct RootView: View {
                         else { withAnimation(.easeOut(duration: 0.35)) { showsLaunchSplash = false } }
                     }
             }
-        }
-    }
-
-    private func popHomeRoute() {
-        popRoute(&homePath)
-    }
-
-    private func popMarketRoute() {
-        popRoute(&marketPath)
-    }
-
-    private func popCreateRoute() {
-        popRoute(&createPath)
-    }
-
-    private func popMessagesRoute() {
-        popRoute(&messagesPath)
-    }
-
-    private func popProfileRoute() {
-        popRoute(&profilePath)
-    }
-
-    private func popRoute(_ path: inout [Route]) {
-        guard !path.isEmpty else { return }
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        _ = withTransaction(transaction) {
-            path.removeLast()
         }
     }
 }
@@ -366,13 +299,13 @@ struct AuthenticatedTabContent<Content: View>: View {
 }
 
 extension View {
-    func withAppDestinations(popNavigationRoute: (() -> Void)? = nil) -> some View {
+    func withAppDestinations() -> some View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case .search:
                 SearchView()
             case .postDetail(let id):
-                PostDetailView(postID: id, onInteractiveBack: popNavigationRoute)
+                PostDetailView(postID: id)
             case .collectionDetail(let id):
                 CollectionDetailView(collectionID: id)
             case .tag(let tag):

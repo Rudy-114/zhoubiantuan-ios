@@ -1277,7 +1277,7 @@ async function createEmailUser(client, { email, passwordHash, nickname, emailVer
   await client.query(
     `INSERT INTO group_collections (id, owner_id, name, deadline, default_note)
      VALUES ($1, $2, $3, now() + interval '7 days', $4)`,
-    [`col-${randomUUID()}`, userId, "我的第一个拼团合集", "该合集用于内部测试发布，可在后续版本编辑联系方式和截团时间。"]
+    [`col-${randomUUID()}`, userId, "我的第一个拼团合集", "该合集内帖子共享联系方式、截团时间和默认说明。"]
   );
   return inserted.rows[0];
 }

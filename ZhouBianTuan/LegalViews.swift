@@ -7,7 +7,6 @@ struct LegalDocumentSheet: View {
         NavigationStack {
             LegalDocumentView(document: document)
         }
-        .preferredColorScheme(.dark)
     }
 }
 

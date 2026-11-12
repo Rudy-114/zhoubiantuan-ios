@@ -535,7 +535,7 @@ struct SearchResultsContent: View {
                                     if tab == "问一问" {
                                         Image(systemName: "sparkle")
                                             .font(.system(size: 22, weight: .bold))
-                                            .foregroundStyle(Color(red: 0.38, green: 0.62, blue: 1))
+                                            .foregroundStyle(Theme.link)
                                     }
                                     Text(tab)
                                         .font(.system(size: 22, weight: selectedTab == tab ? .black : .semibold))

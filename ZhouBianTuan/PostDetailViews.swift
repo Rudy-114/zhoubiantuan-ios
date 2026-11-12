@@ -14,21 +14,14 @@ struct PostDetailView: View {
     @State private var pendingDeleteCommentID: String?
     @State private var selectedImageIndex = 0
     let postID: String
-    let onInteractiveBack: (() -> Void)?
-
-    init(postID: String, onInteractiveBack: (() -> Void)? = nil) {
-        self.postID = postID
-        self.onInteractiveBack = onInteractiveBack
-    }
 
     var body: some View {
         detailBody
-            .interactiveBackSwipe(onComplete: onInteractiveBack)
+            .interactiveBackSwipe()
             .task(id: "\(store.authSessionVersion)-\(postID)") { await store.loadPostDetail(postID) }
             .navigationDestination(isPresented: $isAuthorProfilePresented) {
                 if let authorProfileUserID {
                     UserProfileView(userID: authorProfileUserID)
-                        .environment(\.popNavigationRouteEnabled, false)
                 }
             }
     }
@@ -1120,7 +1113,6 @@ struct ContactCard: View {
                 destination: Group {
                     if let chatThreadID {
                         ChatView(threadID: chatThreadID)
-                            .environment(\.popNavigationRouteEnabled, false)
                     }
                 },
                 isActive: Binding(

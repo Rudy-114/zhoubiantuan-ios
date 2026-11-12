@@ -756,7 +756,7 @@ final class AliyunBackendClient {
 
     func uploadPostPreviewImages(token: String, images: [Data]) async throws -> [String] {
         let previewImages = images.map {
-            ImageDataNormalizer.jpegData(from: $0, maxSide: 520, compressionQuality: 0.42)
+            ImageDataNormalizer.jpegData(from: $0, maxSide: 720, compressionQuality: 0.7)
         }
         return try await uploadImages(token: token, images: previewImages, kind: "post", filenamePrefix: "post-preview")
     }

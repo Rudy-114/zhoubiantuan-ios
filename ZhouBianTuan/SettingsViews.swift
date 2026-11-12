@@ -18,41 +18,34 @@ struct SettingsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     SettingsGroup {
-                        NavigationLink(destination: AccountSecuritySettingsView()
-                            .environment(\.popNavigationRouteEnabled, false)) {
+                        NavigationLink(destination: AccountSecuritySettingsView()) {
                             SettingsRow(icon: "person.crop.circle", title: "账号与安全")
                         }
                         .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: GeneralSettingsView()
-                            .environment(\.popNavigationRouteEnabled, false)) {
+                        NavigationLink(destination: GeneralSettingsView()) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }
                         .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: NotificationSettingsView()
-                            .environment(\.popNavigationRouteEnabled, false)) {
+                        NavigationLink(destination: NotificationSettingsView()) {
                             SettingsRow(icon: "bell", title: "通知说明")
                         }
                         .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: ReportListView(admin: false)
-                            .environment(\.popNavigationRouteEnabled, false)) {
+                        NavigationLink(destination: ReportListView(admin: false)) {
                             SettingsRow(icon: "flag", title: "我的举报")
                         }
                         .buttonStyle(.pressFeedback)
                         if store.canModerate {
-                            NavigationLink(destination: AdminReportView()
-                                .environment(\.popNavigationRouteEnabled, false)) {
+                            NavigationLink(destination: AdminReportView()) {
                                 SettingsRow(icon: "checkmark.shield", title: "举报处理")
                             }.buttonStyle(.pressFeedback)
-                            NavigationLink(destination: AdminModerationView()
-                                .environment(\.popNavigationRouteEnabled, false)) {
+                            NavigationLink(destination: AdminModerationView()) {
                                 SettingsRow(icon: "text.badge.checkmark", title: "内容审核")
                             }.buttonStyle(.pressFeedback)
                         }
-                        NavigationLink(destination: HelpFeedbackView()
-                            .environment(\.popNavigationRouteEnabled, false)) {
+                        NavigationLink(destination: HelpFeedbackView()) {
                             SettingsRow(icon: "questionmark.circle", title: "帮助与反馈")
                         }
                         .buttonStyle(.pressFeedback)

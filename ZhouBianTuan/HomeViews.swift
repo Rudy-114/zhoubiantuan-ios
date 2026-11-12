@@ -79,11 +79,12 @@ struct HomeView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(true)
-        .task(id: pageQuery) {
-            // Load the first page on cold start and whenever the user switches
-            // between the two home feeds. This also keeps the public feed
-            // usable before authentication and gives the seeded test content
-            // a real pagination path instead of relying on an old cache.
+        .task(id: "\(store.authSessionVersion)-\(store.contentPageEpoch)-\(pageQuery.key)") {
+            // Only load a feed that has never been loaded. Returning from a
+            // detail page or switching tabs must keep the current list, order
+            // and scroll position; pull-to-refresh and retry start a new page.
+            let state = store.pageState(pageQuery)
+            guard !state.isLoaded, state.requestID == nil else { return }
             await store.loadContentPage(pageQuery, reset: true)
         }
     }
@@ -453,13 +454,6 @@ struct PostCard: View {
                         PostCardDeadlineBadge(text: isEnded ? "已结团" : livePost.deadline.shortDeadlineText)
                             .padding(8)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        guard !isEnded else { return }
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-                            store.toggleLike(postID: livePost.id)
-                        }
-                    }
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text(livePost.title)
@@ -489,6 +483,19 @@ struct PostCard: View {
                             .background(livePost.groupType.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         }
 
+                        if !livePost.categoryTags.isEmpty {
+                            HStack(spacing: 5) {
+                                ForEach(livePost.categoryTags.prefix(2), id: \.self) { tag in
+                                    Text(tag)
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(Theme.tagText)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                                }
+                            }
+                        }
+
                         HStack(spacing: 6) {
                             AvatarView(user: author, size: 22)
                             Text(author.nickname)
@@ -498,17 +505,6 @@ struct PostCard: View {
                             Spacer(minLength: 4)
                             Color.clear
                                 .frame(width: 72, height: 28)
-                        }
-
-                        HStack(spacing: 5) {
-                            ForEach(livePost.categoryTags.prefix(2), id: \.self) { tag in
-                                Text(tag)
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(Theme.softPink)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(Theme.hotPink.opacity(0.13), in: Capsule())
-                            }
                         }
                     }
                     .padding(.horizontal, 9)
@@ -538,9 +534,11 @@ struct PostCard: View {
             }
 
             if !isEnded {
+                // The author row is always the card's last line; the reserved
+                // 72x28 slot there lines the button up with the avatar.
                 PostLikeCountButton(postID: livePost.id)
                     .padding(.trailing, 8)
-                    .padding(.bottom, 42)
+                    .padding(.bottom, 6)
             }
         }
         .frame(width: cardWidth)

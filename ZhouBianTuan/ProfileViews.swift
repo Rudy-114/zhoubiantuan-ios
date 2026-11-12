@@ -1376,7 +1376,6 @@ struct DraftsView: View {
             drafts = PostDraftStore.shared.drafts(ownerID: store.currentUserID)
         }) { draft in
             CreatePostView(initialDraft: draft)
-                .environment(\.popNavigationRouteEnabled, false)
         }
     }
 }
@@ -1764,20 +1763,20 @@ struct EditProfileView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(Color.black.opacity(0.82))
+                        .foregroundStyle(Theme.text)
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.pressFeedback)
                 Spacer()
                 Text("编辑资料")
                     .font(.system(size: 24, weight: .black))
-                    .foregroundStyle(Color.black.opacity(0.82))
+                    .foregroundStyle(Theme.text)
                 Spacer()
                 Button("预览") {
                     store.showToast("下方已实时预览")
                 }
                 .font(.system(size: 19, weight: .black))
-                .foregroundStyle(Color.black.opacity(0.82))
+                .foregroundStyle(Theme.text)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -1789,14 +1788,14 @@ struct EditProfileView: View {
                         PhotosPicker(selection: $avatarPickerItem, matching: .images) {
                             ZStack(alignment: .bottomTrailing) {
                                 AvatarView(user: previewUser, size: 126)
-                                    .background(.white, in: Circle())
+                                    .background(Theme.panel, in: Circle())
                                 Image(systemName: "camera.fill")
                                     .font(.system(size: 20, weight: .bold))
                                     .foregroundStyle(.white)
                                     .frame(width: 38, height: 38)
                                     .background(Color.black.opacity(0.72), in: Circle())
                                     .overlay {
-                                        Circle().stroke(.white, lineWidth: 3)
+                                        Circle().stroke(Theme.background, lineWidth: 3)
                                     }
                             }
                         }
@@ -1805,11 +1804,11 @@ struct EditProfileView: View {
                         HStack(spacing: 10) {
                             TextField("头像字", text: $avatarSymbol)
                                 .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(Color.black.opacity(0.82))
+                                .foregroundStyle(Theme.text)
                                 .multilineTextAlignment(.center)
                                 .frame(width: 86)
                                 .padding(.vertical, 9)
-                                .background(.white, in: Capsule())
+                                .background(Theme.panel, in: Capsule())
                             ForEach(tintChoices, id: \.self) { tint in
                                 Button {
                                     avatarTint = tint
@@ -1818,7 +1817,7 @@ struct EditProfileView: View {
                                         .fill(tint.gradient)
                                         .frame(width: 30, height: 30)
                                         .overlay {
-                                            Circle().stroke(avatarTint == tint ? Color.black.opacity(0.82) : Color.clear, lineWidth: 2)
+                                            Circle().stroke(avatarTint == tint ? Theme.text : Color.clear, lineWidth: 2)
                                         }
                                 }
                                 .buttonStyle(.pressFeedback)
@@ -1827,14 +1826,14 @@ struct EditProfileView: View {
 
                         Text("点击头像可从相册上传")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.black.opacity(0.42))
+                            .foregroundStyle(Theme.subtext)
                     }
 
                     VStack(spacing: 0) {
                         ProfileEditField(title: "名字", placeholder: "填写名字", text: $nickname, textColor: .primary, isEditable: canEditNickname)
                         Text(nicknameHint)
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.black.opacity(0.42))
+                            .foregroundStyle(Theme.subtext)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
                             .padding(.bottom, 14)
@@ -1843,20 +1842,20 @@ struct EditProfileView: View {
                             HStack(spacing: 18) {
                                 Text("背景图")
                                     .font(.system(size: 21, weight: .semibold))
-                                    .foregroundStyle(Color.black.opacity(0.45))
+                                    .foregroundStyle(Theme.subtext)
                                     .frame(width: 112, alignment: .leading)
 
                                 ProfileBackgroundPreview(imageData: backgroundImageData, fallbackName: backgroundImageName)
 
                                 Text("从相册选择")
                                     .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(Color.black.opacity(0.72))
+                                    .foregroundStyle(Theme.text)
 
                                 Spacer()
 
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 19, weight: .bold))
-                                    .foregroundStyle(Color.black.opacity(0.18))
+                                    .foregroundStyle(Theme.muted)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 18)
@@ -1879,21 +1878,21 @@ struct EditProfileView: View {
                             .buttonStyle(.pressFeedback)
                         }
                     }
-                    .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "简介", placeholder: "介绍一下自己", text: $bio, textColor: Color.black.opacity(0.42))
+                        ProfileEditField(title: "简介", placeholder: "介绍一下自己", text: $bio, textColor: Theme.subtext)
                     }
-                    .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
 
                     VStack(spacing: 0) {
-                        ProfileEditField(title: "性别", placeholder: "编辑性别", text: $gender, textColor: Color.black.opacity(0.42))
-                        ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Color.black.opacity(0.42))
-                        ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Color.black.opacity(0.42))
+                        ProfileEditField(title: "性别", placeholder: "编辑性别", text: $gender, textColor: Theme.subtext)
+                        ProfileEditField(title: "生日", placeholder: "选择生日", text: $birthday, textColor: Theme.subtext)
+                        ProfileEditField(title: "地区", placeholder: "选择所在的地区", text: $region, textColor: Theme.subtext)
                     }
-                    .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(.horizontal, 16)
 
                     Button {
@@ -1914,7 +1913,7 @@ struct EditProfileView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
-        .background(Color(red: 0.95, green: 0.95, blue: 0.95).ignoresSafeArea())
+        .background(Theme.background.ignoresSafeArea())
         .interactiveBackSwipe()
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
@@ -2022,7 +2021,7 @@ struct ProfileBackgroundPreview: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                .stroke(Theme.hairline, lineWidth: 1)
         }
     }
 }
@@ -2038,23 +2037,23 @@ struct ProfileEditField: View {
         HStack(spacing: 18) {
             Text(title)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.45))
+                .foregroundStyle(Theme.subtext)
                 .frame(width: 112, alignment: .leading)
             TextField(placeholder, text: $text)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(text.isEmpty ? Color.black.opacity(0.32) : Color.black.opacity(0.82))
+                .foregroundStyle(text.isEmpty ? Theme.muted : Theme.text)
                 .tint(Theme.hotPink)
                 .disabled(!isEditable)
                 .opacity(isEditable ? 1 : 0.52)
             Image(systemName: "chevron.right")
                 .font(.system(size: 19, weight: .bold))
-                .foregroundStyle(Color.black.opacity(0.18))
+                .foregroundStyle(Theme.muted)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 20)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.black.opacity(0.08))
+                .fill(Theme.hairline)
                 .frame(height: 0.5)
                 .padding(.leading, 146)
         }
@@ -2069,21 +2068,21 @@ struct ProfileReadOnlyInfoRow: View {
         HStack(spacing: 18) {
             Text(title)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.45))
+                .foregroundStyle(Theme.subtext)
                 .frame(width: 112, alignment: .leading)
             Text(value)
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.82))
+                .foregroundStyle(Theme.text)
             Spacer()
             Image(systemName: "lock.fill")
                 .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(Color.black.opacity(0.22))
+                .foregroundStyle(Theme.muted)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 20)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.black.opacity(0.08))
+                .fill(Theme.hairline)
                 .frame(height: 0.5)
                 .padding(.leading, 146)
         }
