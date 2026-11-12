@@ -619,7 +619,7 @@ struct ProfileAttentionPostRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                PostImageView(post: post)
+                PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                     .scaledToFill()
                     .frame(width: 62, height: 62)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -699,7 +699,7 @@ struct ProfilePostManageRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PostImageView(post: post)
+            PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                 .scaledToFill()
                 .frame(width: 58, height: 58)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1218,7 +1218,7 @@ struct CollectionPostManager: View {
             ForEach(manageablePosts) { post in
                 let isIncluded = post.collectionID == collection.id
                 HStack(spacing: 10) {
-                    PostImageView(post: post)
+                    PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                         .scaledToFill()
                         .frame(width: 52, height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1546,7 +1546,7 @@ struct HistoryCard: View {
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
-                PostImageView(post: post)
+                PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.card)
                     .scaledToFill()
                     .frame(width: cardWidth, height: FeedCardMetrics.imageHeight(for: cardWidth))
                     .clipped()

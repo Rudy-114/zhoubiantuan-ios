@@ -1,3 +1,4 @@
+import Network
 import SwiftUI
 
 struct ContentQuery: Hashable {
@@ -254,8 +255,11 @@ extension MockAppStore {
                                                           collections: snapshotCollections, comments: snapshotComments))
     }
 
+    /// Detail prefetch (post body + first comments) is a Wi-Fi-only nicety for
+    /// offline reading; on cellular the detail page loads on demand.
     private func prefetchFeedDetailsIfNeeded(for feedPosts: ArraySlice<GroupBuyPost>) {
-        let candidates = feedPosts.filter { !prefetchedFeedPostIDs.contains($0.id) }
+        guard NetworkConditions.shared.isUnconstrained else { return }
+        let candidates = feedPosts.prefix(5).filter { !prefetchedFeedPostIDs.contains($0.id) }
         guard !candidates.isEmpty else { return }
         prefetchedFeedPostIDs.formUnion(candidates.map(\.id))
         Task { @MainActor [weak self] in
@@ -274,29 +278,68 @@ extension MockAppStore {
         }
     }
 
+    /// Warms what a feed card shows: the first preview image (or the first
+    /// original when the post has no preview) and the author avatar, decoded at
+    /// the tiers the card uses. On Wi-Fi, the first original image is also
+    /// fetched so offline detail pages have their first image. Other originals
+    /// and profile backgrounds are loaded on demand.
     func prefetchFeedAssets(for feedPosts: [GroupBuyPost]) {
         guard isBackendEnabled else { return }
-        let posts = feedPosts.prefix(OfflineFeedCache.maximumPostsPerPage)
-        let urls = Array(Set(posts.flatMap { post in
-            post.previewRemoteImageURLs + post.remoteImageURLs +
-            (users.first { $0.id == post.authorID }.map { [$0.avatarURL, $0.backgroundURL] } ?? [])
-        }.filter { !$0.isEmpty }.map(RemoteAssetRequest.canonicalURLString)))
-        let token = backendToken, accountID = currentUserID
-        RemoteImageCache.shared.register(urls, accountID: accountID)
+        let posts = Array(feedPosts.prefix(OfflineFeedCache.maximumPostsPerPage))
+        func canonical(_ urls: [String]) -> [String] {
+            Array(Set(urls.filter { !$0.isEmpty }.map(RemoteAssetRequest.canonicalURLString)))
+        }
+        let cardURLs = canonical(posts.compactMap { post in
+            post.previewRemoteImageURLs.first(where: { !$0.isEmpty }) ?? post.remoteImageURLs.first
+        })
+        let avatarURLs = canonical(posts.compactMap { post in user(id: post.authorID).avatarURL })
+        let originalURLs = NetworkConditions.shared.isUnconstrained
+            ? canonical(posts.compactMap { $0.remoteImageURLs.first })
+            : []
+        let token = backendToken, accountID = currentUserID, scale = UIScreen.main.scale
+        RemoteImageCache.shared.register(cardURLs + avatarURLs + originalURLs, accountID: accountID)
+        // (url, decode tier or nil for bytes only)
+        let jobs: [(String, Int?)] = cardURLs.map { ($0, ImagePipeline.Tier.card) }
+            + avatarURLs.map { ($0, ImagePipeline.Tier.avatar) }
+            + originalURLs.map { ($0, nil) }
         Task.detached(priority: .utility) {
             await withTaskGroup(of: Void.self) { group in
-                for chunkStart in stride(from: 0, to: urls.count, by: 4) {
-                    let chunk = Array(urls[chunkStart..<min(chunkStart + 4, urls.count)])
+                for chunkStart in stride(from: 0, to: jobs.count, by: 4) {
+                    let chunk = Array(jobs[chunkStart..<min(chunkStart + 4, jobs.count)])
                     group.addTask {
-                        for url in chunk {
+                        for (url, tier) in chunk {
                             guard !Task.isCancelled else { return }
-                            _ = try? await RemoteAssetRequest.data(urlString: url, token: token, accountID: accountID)
+                            if let tier {
+                                _ = try? await ImagePipeline.image(url: url, token: token, accountID: accountID, maxPixel: tier, scale: scale)
+                            } else {
+                                _ = try? await RemoteAssetRequest.data(urlString: url, token: token, accountID: accountID)
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// Current network cost, used to keep prefetching off cellular and Low Data Mode.
+final class NetworkConditions: @unchecked Sendable {
+    static let shared = NetworkConditions()
+    private let monitor = NWPathMonitor()
+    private let lock = NSLock()
+    private var unconstrained = false
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let value = path.status == .satisfied && !path.isExpensive && !path.isConstrained
+            self?.lock.withLock { self?.unconstrained = value }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.zhoubiantuan.network-conditions", qos: .utility))
+    }
+
+    /// Wi-Fi / Ethernet without Low Data Mode. False until the first path
+    /// update arrives, so the very first request is treated as cellular.
+    var isUnconstrained: Bool { lock.withLock { unconstrained } }
 }
 
 struct ContentPageFooter: View {

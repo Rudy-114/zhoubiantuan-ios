@@ -14,7 +14,8 @@ const storage = {
   removeImage: async key => { objects.delete(key); }
 };
 before(async () => {
-  api = await startTestApp({ objectStorage: storage });
+  // Permission rules are checked without the 30 s allow-cache (asset-cache.test.js covers it).
+  api = await startTestApp({ objectStorage: storage, assetAccessCacheMs: 0 });
   jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#ff0000' } }).jpeg().toBuffer();
   png = await sharp(jpeg).png().toBuffer();
 });
@@ -53,7 +54,8 @@ test('anonymous and unrelated users cannot read private messages, even with the 
   for (const user of [sender, recipient]) {
     const response = await api.request(path, { token: user.token });
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.equal(response.headers.get('cache-control'), 'private, max-age=300');
+    assert.equal(response.headers.get('vary'), 'Authorization');
   }
   await query('UPDATE direct_messages SET deleted_for_user_ids=$2 WHERE id=$1', [message, [recipient.id]]);
   assert.equal((await api.request(path, { token: recipient.token })).status, 404);

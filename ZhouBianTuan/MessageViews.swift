@@ -717,7 +717,7 @@ struct ChatBubble: View {
                         .stroke(Theme.hairline, lineWidth: 0.5)
                 }
         } else if !message.remoteImageURL.isEmpty {
-            RemoteImageView(urlString: message.remoteImageURL)
+            RemoteImageView(urlString: message.remoteImageURL, maxPixelSize: ImagePipeline.Tier.card)
                 .scaledToFill()
             .frame(width: 184, height: 184)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -913,7 +913,7 @@ struct SharedPostMessageCard: View {
     var body: some View {
         let author = store.user(id: post.authorID)
         VStack(alignment: .leading, spacing: 0) {
-            PostImageView(post: post)
+            PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.background)
                 .scaledToFill()
                 .frame(width: 250, height: 250)
                 .clipped()

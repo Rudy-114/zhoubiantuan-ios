@@ -28,12 +28,20 @@ const ALLOWED_IMAGE_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/w
 const FEED_EVENT_TYPES = new Set(["impression", "open", "dwell", "complete", "like", "favorite", "comment", "follow", "share", "notInterested", "hideAuthor"]);
 const FEED_MODES = new Set(["forYou", "following", "recent"]);
 
+function ifNoneMatchIncludes(header, etag) {
+  if (!header) return false;
+  return String(header).split(",").some((value) => {
+    const candidate = value.trim().replace(/^W\//, "");
+    return candidate === etag || candidate === "*";
+  });
+}
+
 import { assertReadyUploads, installUploadRoute, issueUploadTicket } from "./uploads.js";
-import { canReadAsset } from "./assets.js";
+import { createAssetAccessCache, ASSET_ACCESS_CACHE_MS } from "./assets.js";
 import { validateContent } from "./contentValidation.js";
 import { visiblePostSQL, visibleCommentSQL, visibleCollectionSQL, unblockedSQL } from "./visibility.js";
 
-export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
+export function createRouter({ objectStorage = defaultObjectStorage, assetAccessCacheMs = ASSET_ACCESS_CACHE_MS } = {}) {
   const router = express.Router();
   installUploadRoute(router, objectStorage);
   router.use(validateContent);
@@ -54,14 +62,20 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
     message: "验证码发送太频繁，请稍后再试",
     keyGenerator: (req) => `${req.ip}:${normalizeEmail(req.body?.email)}:${req.body?.purpose || ""}`
   });
-  const assetLimiter = createRateLimiter({
-    name: "asset",
-    store: sharedRateLimitStore,
-    windowMs: 60 * 1000,
-    max: 120,
-    message: "图片请求太频繁，请稍后再试",
-    keyGenerator: (req) => req.ip
+  // High-frequency, low-risk traffic counts in process memory (per instance);
+  // see rateLimit.js. Signed-in users are keyed by account so a shared NAT
+  // does not throttle everybody behind it.
+  const signedInAssetLimiter = createRateLimiter({
+    name: "asset_user", store: "memory", windowMs: 60 * 1000, max: 600,
+    message: "图片请求太频繁，请稍后再试", keyGenerator: (req) => `u:${req.user.id}`
   });
+  const anonymousAssetLimiter = createRateLimiter({
+    name: "asset_ip", store: "memory", windowMs: 60 * 1000, max: 240,
+    message: "图片请求太频繁，请稍后再试", keyGenerator: (req) => `ip:${req.ip}`
+  });
+  // optionalAuth runs first, so req.user is known here.
+  const assetLimiter = (req, res, next) => (req.user ? signedInAssetLimiter : anonymousAssetLimiter)(req, res, next);
+  const assetAccess = createAssetAccessCache({ ttlMs: assetAccessCacheMs });
 
   router.get("/health", asyncRoute(async (_req, res) => {
     await query("SELECT 1");
@@ -75,11 +89,24 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
         return res.status(404).json({ error: "图片不存在" });
       }
 
-      res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("Vary", "Authorization");
-      if (!(await canReadAsset(objectKey, req.user))) return res.status(404).json({ error: "图片不存在" });
+      const access = await assetAccess.check(objectKey, req.user);
+      if (!access.allowed) {
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.status(404).json({ error: "图片不存在" });
+      }
+      // Object keys are immutable uploads, so the upload hash is a strong ETag.
+      // Permission is always checked first: a 304 never bypasses visibility.
+      res.setHeader("Cache-Control", "private, max-age=300");
+      if (access.sha256) {
+        const etag = `"${access.sha256}"`;
+        res.setHeader("ETag", etag);
+        if (ifNoneMatchIncludes(req.headers["if-none-match"], etag)) return res.status(304).end();
+      }
       const upstream = await objectStorage.readImage(objectKey);
       if (!upstream.ok || !upstream.body) {
+        res.setHeader("Cache-Control", "private, no-store");
+        res.removeHeader("ETag");
         return res.status(upstream.status || 404).json({ error: "图片不存在" });
       }
 
@@ -298,10 +325,10 @@ export function createRouter({ objectStorage = defaultObjectStorage } = {}) {
   const contentLimiter = createRateLimiter({ name: "content", store: sharedRateLimitStore,
     windowMs: 10 * 60 * 1000, max: 30, keyGenerator: req => req.user.id,
     message: "内容提交太频繁，请稍后再试" });
-  const feedEventLimiter = createRateLimiter({ name: "feed_event", store: sharedRateLimitStore,
+  const feedEventLimiter = createRateLimiter({ name: "feed_event", store: "memory",
     windowMs: 60 * 1000, max: 120, keyGenerator: req => req.user.id,
     message: "信息流操作太频繁，请稍后再试" });
-  const interactionLimiter = createRateLimiter({ name: "interaction", store: sharedRateLimitStore,
+  const interactionLimiter = createRateLimiter({ name: "interaction", store: "memory",
     windowMs: 60 * 1000, max: 300, keyGenerator: req => req.user.id,
     message: "互动操作太频繁，请稍后再试" });
 

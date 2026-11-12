@@ -103,7 +103,7 @@ private struct ModerationReviewCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(review.imageURLs, id: \.self) { url in
-                            RemoteImagePreview(urlString: url)
+                            RemoteImagePreview(urlString: url, maxPixelSize: ImagePipeline.Tier.avatar)
                             .frame(width: 86, height: 86)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }

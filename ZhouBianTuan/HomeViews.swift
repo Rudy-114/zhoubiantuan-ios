@@ -440,7 +440,7 @@ struct PostCard: View {
             NavigationLink(value: Route.postDetail(livePost.id)) {
                 VStack(alignment: .leading, spacing: 0) {
                     ZStack {
-                        PostImageView(post: livePost, preferPreview: true)
+                        PostImageView(post: livePost, preferPreview: true, maxPixelSize: ImagePipeline.Tier.card)
                             .scaledToFill()
                             .frame(width: cardWidth, height: FeedCardMetrics.feedImageHeight(for: cardWidth, aspect: livePost.imageAspect))
                             .clipped()

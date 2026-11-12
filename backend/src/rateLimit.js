@@ -4,6 +4,15 @@ import { logger } from "./logger.js";
 
 const RATE_LIMIT_EVENT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
+const MEMORY_BUCKET_SWEEP_INTERVAL_MS = 60 * 1000;
+
+/**
+ * `store: "memory"` counts per process. With several API instances behind a
+ * load balancer each instance enforces its own limit, so the effective limit
+ * is `max x instances`. Use it for high-frequency, low-risk traffic (images,
+ * interactions, feed events, anonymous reads). Security-sensitive limits
+ * (auth, email codes, content, DM abuse) must use `store: "postgres"`.
+ */
 export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory" }) {
   if (store === "postgres") {
     return createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name });
@@ -11,31 +20,40 @@ export function createRateLimiter({ windowMs, max, message, keyGenerator, name =
   return createMemoryRateLimiter({ windowMs, max, message, keyGenerator });
 }
 
-function createMemoryRateLimiter({ windowMs, max, message, keyGenerator }) {
+export function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, now = Date.now, sweepIntervalMs = MEMORY_BUCKET_SWEEP_INTERVAL_MS }) {
   const buckets = new Map();
 
-  return (req, res, next) => {
-    const now = Date.now();
+  const sweep = () => {
+    const current = now();
+    for (const [bucketKey, timestamps] of buckets) {
+      if (!timestamps.some((timestamp) => current - timestamp < windowMs)) buckets.delete(bucketKey);
+    }
+  };
+  // Sweep on a timer instead of only when the map grows large, so idle keys
+  // are released. unref() keeps the timer from holding the process open.
+  const timer = setInterval(sweep, sweepIntervalMs);
+  timer.unref?.();
+
+  const limiter = (req, res, next) => {
+    const current = now();
     const key = keyGenerator ? keyGenerator(req) : req.ip;
-    const bucket = (buckets.get(key) || []).filter((timestamp) => now - timestamp < windowMs);
+    const bucket = (buckets.get(key) || []).filter((timestamp) => current - timestamp < windowMs);
 
     if (bucket.length >= max) {
+      buckets.set(key, bucket);
+      const retryAfterMs = Math.max(0, windowMs - (current - bucket[0]));
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
       return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
     }
 
-    bucket.push(now);
+    bucket.push(current);
     buckets.set(key, bucket);
-
-    if (buckets.size > 10000) {
-      for (const [bucketKey, timestamps] of buckets) {
-        if (!timestamps.some((timestamp) => now - timestamp < windowMs)) {
-          buckets.delete(bucketKey);
-        }
-      }
-    }
-
     next();
   };
+  limiter.sweep = sweep;
+  limiter.bucketCount = () => buckets.size;
+  limiter.stop = () => clearInterval(timer);
+  return limiter;
 }
 
 function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name }) {

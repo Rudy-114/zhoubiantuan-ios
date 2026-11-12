@@ -291,6 +291,8 @@ final class MockAppStore: ObservableObject {
     }
 
     private func invalidateSessionWork() {
+        // Decoded images are per account; drop them before the account changes.
+        ImagePipeline.clear(accountID: currentUserID)
         totalUnreadMessageCount = nil
         unreadSnapshotCursor = nil
         messageCache.invalidate()
@@ -404,6 +406,7 @@ final class MockAppStore: ObservableObject {
         self.backendClient = backendClient
         self.persistsData = persistsData
         self.automaticallyRefresh = automaticallyRefresh
+        _ = NetworkConditions.shared // start observing before the first feed load
         if persistsData {
             Self.resetLocalDataForEmptyBetaIfNeeded()
             Self.migrateBackendTokenToKeychain()
@@ -1802,6 +1805,7 @@ final class MockAppStore: ObservableObject {
         invalidateSessionWork()
         OfflineFeedCache.shared.remove(accountID: previousAccountID)
         RemoteImageCache.shared.remove(accountID: previousAccountID)
+        ImagePipeline.clear(accountID: previousAccountID)
         SyncCursorStore.remove(for: currentUserID)
         isLoggedIn = false
         isAuthPromptPresented = false

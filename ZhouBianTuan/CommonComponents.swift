@@ -166,30 +166,25 @@ final class RemoteImageLoader: ObservableObject {
     @Published private(set) var state: State = .idle
     private var generation = UUID()
 
-    func load(urlString: String, token: String?, accountID: String? = nil) async {
+    func load(urlString: String, token: String?, accountID: String? = nil, maxPixelSize: Int = ImagePipeline.Tier.detail) async {
         let requestGeneration = UUID()
         generation = requestGeneration
+        let account = accountID ?? "public"
+        // A memory hit is shown immediately, without the loading state or a fade.
+        if let cached = ImagePipeline.cachedImage(url: urlString, accountID: account, maxPixel: maxPixelSize) {
+            state = .loaded(cached)
+            return
+        }
         state = .loading
         do {
-            let data = try await RemoteAssetRequest.data(urlString: urlString, token: token, accountID: accountID)
+            let image = try await ImagePipeline.image(url: urlString, token: token, accountID: account,
+                                                      maxPixel: maxPixelSize, scale: UIScreen.main.scale)
             guard !Task.isCancelled, generation == requestGeneration else { return }
-            guard let image = Self.downsampledImage(from: data) else { state = .failed; return }
-            state = .loaded(image)
+            withAnimation(.easeOut(duration: 0.18)) { state = .loaded(image) }
         } catch {
             guard !Task.isCancelled, generation == requestGeneration else { return }
             state = .failed
         }
-    }
-
-    private static func downsampledImage(from data: Data, maxPixelSize: Int = 1600) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return UIImage(cgImage: cgImage, scale: UIScreen.main.scale, orientation: .up)
     }
 }
 
@@ -235,74 +230,84 @@ struct RemoteImageView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var retryCount = 0
     let urlString: String
+    /// Decode size in pixels; see `ImagePipeline.Tier`.
+    var maxPixelSize: Int = ImagePipeline.Tier.detail
+    /// Large single images (post detail) keep a spinner; lists stay quiet.
+    var showsProgress = false
+    var fillsFrame = false
     @StateObject private var loader = RemoteImageLoader()
 
-    var body: some View {
-        Group {
-            switch loader.state {
-            case .loaded(let image):
-                Image(uiImage: image).resizable()
-            case .idle, .loading:
-                imagePlaceholder.overlay { ProgressView().tint(Theme.muted) }
-            case .failed:
-                imagePlaceholder.overlay {
-                    Button { retryCount += 1 } label: {
-                        Label("重新加载", systemImage: "arrow.clockwise").font(.caption)
-                    }.buttonStyle(.bordered).tint(Theme.muted)
-                }
+    /// Prefers the memory cache on the first frame, before `.task` has run, so
+    /// cards scrolled back into view never flash a placeholder.
+    private var displayState: RemoteImageLoader.State {
+        switch loader.state {
+        case .loaded, .failed: return loader.state
+        case .idle, .loading:
+            if let cached = ImagePipeline.cachedImage(url: urlString, accountID: store.currentUserID, maxPixel: maxPixelSize) {
+                return .loaded(cached)
             }
-        }
-        .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken, accountID: store.currentUserID)
+            return loader.state
         }
     }
 
-    private var imagePlaceholder: some View {
-        Rectangle()
-            .fill(Theme.panelRaised)
-            .overlay {
-                Image(systemName: "photo")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(Theme.muted)
+    var body: some View {
+        Group {
+            switch displayState {
+            case .loaded(let image):
+                if fillsFrame {
+                    Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+                } else {
+                    Image(uiImage: image).resizable().transition(.opacity)
+                }
+            case .idle, .loading:
+                Rectangle()
+                    .fill(Theme.panelRaised)
+                    .overlay {
+                        if showsProgress { ProgressView().tint(Theme.muted) }
+                    }
+            case .failed:
+                RemoteImageFailureView { retryCount += 1 }
             }
+        }
+        .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount) + String(maxPixelSize)) {
+            await loader.load(urlString: urlString, token: store.backendToken, accountID: store.currentUserID,
+                              maxPixelSize: maxPixelSize)
+        }
     }
 }
 
+/// Aspect-filling variant used by cards and thumbnails.
 struct RemoteImagePreview: View {
-    @EnvironmentObject private var store: MockAppStore
-    @State private var retryCount = 0
     let urlString: String
-    @StateObject private var loader = RemoteImageLoader()
+    var maxPixelSize: Int = ImagePipeline.Tier.card
 
     var body: some View {
-        Group {
-            switch loader.state {
-            case .loaded(let image):
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            case .idle, .loading:
-                imagePlaceholder.overlay { ProgressView().tint(Theme.muted) }
-            case .failed:
-                imagePlaceholder.overlay {
-                    Button { retryCount += 1 } label: {
-                        Label("重新加载", systemImage: "arrow.clockwise").font(.caption)
-                    }.buttonStyle(.bordered).tint(Theme.muted)
-                }
-            }
-        }
-        .task(id: urlString + store.authSessionVersion.uuidString + String(retryCount)) {
-            await loader.load(urlString: urlString, token: store.backendToken, accountID: store.currentUserID)
-        }
+        RemoteImageView(urlString: urlString, maxPixelSize: maxPixelSize, fillsFrame: true)
     }
+}
 
-    private var imagePlaceholder: some View {
+private struct RemoteImageFailureView: View {
+    let retry: () -> Void
+
+    var body: some View {
         Rectangle()
             .fill(Theme.panelRaised)
             .overlay {
-                Image(systemName: "photo")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(Theme.muted)
+                GeometryReader { proxy in
+                    Button(action: retry) {
+                        if proxy.size.width < 80 {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption)
+                                .frame(width: 44, height: 44)
+                        } else {
+                            Label("重新加载", systemImage: "arrow.clockwise").font(.caption)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.muted)
+                    .accessibilityLabel("重新加载图片")
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                }
             }
     }
 }
@@ -311,12 +316,16 @@ struct PostImageView: View {
     let post: GroupBuyPost
     var index = 0
     var preferPreview = false
+    /// nil: card tier for previews, detail tier for originals.
+    var maxPixelSize: Int? = nil
+    var showsProgress = false
 
     var body: some View {
         if preferPreview, post.previewRemoteImageURLs.indices.contains(index), !post.previewRemoteImageURLs[index].isEmpty {
-            RemoteImagePreview(urlString: post.previewRemoteImageURLs[index])
+            RemoteImagePreview(urlString: post.previewRemoteImageURLs[index], maxPixelSize: maxPixelSize ?? ImagePipeline.Tier.card)
         } else if post.remoteImageURLs.indices.contains(index) {
-            RemoteImageView(urlString: post.remoteImageURLs[index])
+            RemoteImageView(urlString: post.remoteImageURLs[index], maxPixelSize: maxPixelSize ?? ImagePipeline.Tier.detail,
+                            showsProgress: showsProgress)
         } else if post.uploadedImageData.indices.contains(index) {
             UploadedImageView(data: post.uploadedImageData[index])
         } else {
@@ -332,7 +341,7 @@ struct UserBackgroundImage: View {
 
     var body: some View {
         if !user.backgroundURL.isEmpty {
-            RemoteImageView(urlString: user.backgroundURL)
+            RemoteImageView(urlString: user.backgroundURL, maxPixelSize: ImagePipeline.Tier.background)
         } else if let imageData = user.backgroundImageData,
            let image = UIImage(data: imageData) {
             Image(uiImage: image)
@@ -369,7 +378,7 @@ struct AvatarView: View {
     var body: some View {
         Group {
             if !user.avatarURL.isEmpty {
-                RemoteImageView(urlString: user.avatarURL)
+                RemoteImageView(urlString: user.avatarURL, maxPixelSize: size > 96 ? ImagePipeline.Tier.card : ImagePipeline.Tier.avatar)
                     .scaledToFill()
             } else if let imageData = user.avatarImageData,
                let image = UIImage(data: imageData) {
@@ -728,7 +737,7 @@ struct ReminderLargeCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PostImageView(post: post)
+            PostImageView(post: post, maxPixelSize: ImagePipeline.Tier.avatar)
                 .scaledToFill()
                 .frame(width: 80, height: 80)
                 .clipShape(RoundedRectangle(cornerRadius: 8))

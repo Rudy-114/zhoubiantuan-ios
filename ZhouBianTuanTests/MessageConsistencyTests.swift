@@ -119,17 +119,23 @@ final class OfflineFeedCacheTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("snapshot.json").path))
     }
 
-    func testRemoteImageCacheRequiresFeedRegistrationAndIsAccountScoped() async {
+    func testRemoteImageCacheRequiresFeedRegistrationForDiskAndIsAccountScoped() async {
         let url = "https://example.test/feed/\(UUID().uuidString).jpg"
         let data = Data([1, 2, 3])
         let cache = RemoteImageCache.shared
+        // Unregistered (e.g. chat) images are kept in memory for the session only.
         await cache.insert(data, for: url, accountID: "unregistered")
         let unregistered = await cache.data(for: url, accountID: "unregistered")
-        XCTAssertNil(unregistered)
+        XCTAssertEqual(unregistered, data)
+        XCTAssertFalse(cache.hasDiskEntry(for: url, accountID: "unregistered"))
+        cache.remove(accountID: "unregistered")
+        let purged = await cache.data(for: url, accountID: "unregistered")
+        XCTAssertNil(purged)
         cache.register([url], accountID: "account-a")
         await cache.insert(data, for: url, accountID: "account-a")
         let loaded = await cache.data(for: url, accountID: "account-a")
         XCTAssertEqual(loaded, data)
+        XCTAssertTrue(cache.hasDiskEntry(for: url, accountID: "account-a"))
         let wrongAccount = await cache.data(for: url, accountID: "account-b")
         XCTAssertNil(wrongAccount)
         cache.remove(accountID: "account-a")

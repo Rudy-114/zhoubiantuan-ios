@@ -264,7 +264,7 @@ struct PostDetailImagePage: View {
     /// zoomed, where it is actually needed.
     @ViewBuilder
     private var interactiveImage: some View {
-        let image = PostImageView(post: post, index: index)
+        let image = PostImageView(post: post, index: index, showsProgress: true)
             .scaledToFit()
             .frame(width: canvasWidth, height: canvasHeight)
             .scaleEffect(zoomScale)

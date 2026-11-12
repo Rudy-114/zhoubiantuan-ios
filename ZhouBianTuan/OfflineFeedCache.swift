@@ -58,9 +58,9 @@ final class OfflineFeedCache: @unchecked Sendable {
 
     func save(_ snapshot: OfflineFeedSnapshot) {
         let writeID = UUID()
-        lock.lock(); latestWrite = writeID; lock.unlock()
+        lock.withLock { latestWrite = writeID }
         queue.async { [self] in
-            lock.lock(); let isLatest = latestWrite == writeID; lock.unlock()
+            let isLatest = lock.withLock { latestWrite == writeID }
             guard isLatest else { return }
             do {
                 let directory = accountDirectory(accountID: snapshot.accountID)
@@ -79,7 +79,7 @@ final class OfflineFeedCache: @unchecked Sendable {
     }
 
     func remove(accountID: String) {
-        lock.lock(); latestWrite = nil; lock.unlock()
+        lock.withLock { latestWrite = nil }
         queue.async { [self] in
             try? FileManager.default.removeItem(at: accountDirectory(accountID: accountID))
         }
@@ -114,46 +114,50 @@ extension JSONDecoder {
     }
 }
 
-/// A three-day, account-scoped disk cache for remote feed images. Authenticated
-/// assets are never shared between accounts, even when their URL is identical.
+/// Account-scoped cache for remote image bytes. Authenticated assets are never
+/// shared between accounts, even when their URL is identical.
+///
+/// - Memory: every URL, for the current session.
+/// - Disk (three days): only URLs registered for the offline Feed window, so
+///   chat and other private images never land on disk.
 final class RemoteImageCache: @unchecked Sendable {
     static let shared = RemoteImageCache()
     private let queue = DispatchQueue(label: "com.zhoubiantuan.remote-image-cache", qos: .utility)
     private let lock = NSLock()
     private let root: URL
     private let memory = NSCache<NSString, NSData>()
-    private var memoryExpiry: [String: Date] = [:]
+    /// NSCache cannot be enumerated; remember keys so one account can be purged.
+    private var memoryKeys = Set<String>()
     private var allowedKeys = Set<String>()
 
     init(root: URL? = nil) {
         self.root = root ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RemoteImageCacheV2", isDirectory: true)
-        memory.countLimit = 160
+        memory.countLimit = 400
         memory.totalCostLimit = 64 * 1024 * 1024
     }
 
     /// Registers only the assets that belong to the current offline Feed window.
     /// Ordinary chat/profile image requests never become persistent cache entries.
     func register(_ urls: [String], accountID: String) {
-        lock.lock(); defer { lock.unlock() }
         let namespace = Self.digest(accountID)
-        urls.forEach { allowedKeys.insert(Self.cacheKey(namespace: namespace, url: $0)) }
+        lock.withLock {
+            urls.forEach { allowedKeys.insert(Self.cacheKey(namespace: namespace, url: $0)) }
+        }
+    }
+
+    /// Whether `urlString` may be written to disk for this account.
+    func isPersistable(_ urlString: String, accountID: String) -> Bool {
+        let key = Self.cacheKey(namespace: Self.digest(accountID), url: urlString)
+        return lock.withLock { allowedKeys.contains(key) }
     }
 
     func data(for urlString: String, accountID: String) async -> Data? {
         let namespace = Self.digest(accountID)
         let key = Self.cacheKey(namespace: namespace, url: urlString)
-        lock.lock()
-        let allowed = allowedKeys.contains(key)
-        let expiry = memoryExpiry[key]
-        let inMemory = allowed ? memory.object(forKey: key as NSString) : nil
-        if let expiry, expiry <= Date() {
-            memory.removeObject(forKey: key as NSString)
-            memoryExpiry.removeValue(forKey: key)
-        }
-        lock.unlock()
+        let (cached, allowed) = memoryLookup(key)
+        if let cached { return cached }
         guard allowed else { return nil }
-        if let inMemory, expiry.map({ $0 > Date() }) ?? false { return inMemory as Data }
         return await withCheckedContinuation { continuation in
             queue.async { [self] in
                 let url = fileURL(namespace: namespace, url: urlString)
@@ -165,11 +169,9 @@ final class RemoteImageCache: @unchecked Sendable {
                     continuation.resume(returning: nil)
                     return
                 }
-                lock.lock()
-                guard allowedKeys.contains(key) else { lock.unlock(); continuation.resume(returning: nil); return }
-                memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
-                memoryExpiry[key] = Date().addingTimeInterval(OfflineFeedCache.retention)
-                lock.unlock()
+                // The key may have been revoked (blocked author, logout) while reading.
+                guard isAllowed(key) else { continuation.resume(returning: nil); return }
+                storeInMemory(data, key: key)
                 continuation.resume(returning: data)
             }
         }
@@ -178,20 +180,14 @@ final class RemoteImageCache: @unchecked Sendable {
     func insert(_ data: Data, for urlString: String, accountID: String) async {
         let namespace = Self.digest(accountID)
         let key = Self.cacheKey(namespace: namespace, url: urlString)
-        lock.lock()
-        guard allowedKeys.contains(key) else { lock.unlock(); return }
-        memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
-        memoryExpiry[key] = Date().addingTimeInterval(OfflineFeedCache.retention)
-        lock.unlock()
+        storeInMemory(data, key: key)
+        guard isAllowed(key) else { return }
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 do {
                     let directory = accountDirectory(namespace: namespace)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    lock.lock()
-                    let stillAllowed = allowedKeys.contains(key)
-                    lock.unlock()
-                    guard stillAllowed, !Task.isCancelled else { continuation.resume(); return }
+                    guard isAllowed(key), !Task.isCancelled else { continuation.resume(); return }
                     try data.write(to: fileURL(namespace: namespace, url: urlString), options: [.atomic, .completeFileProtection])
                 } catch {
                     // Memory caching still provides a useful session-level fallback.
@@ -203,14 +199,12 @@ final class RemoteImageCache: @unchecked Sendable {
 
     func remove(accountID: String) {
         let namespace = Self.digest(accountID)
-        lock.lock()
-        let keys = allowedKeys.filter { $0.hasPrefix(namespace + "|") }
-        keys.forEach {
-            allowedKeys.remove($0)
-            memory.removeObject(forKey: $0 as NSString)
-            memoryExpiry.removeValue(forKey: $0)
+        lock.withLock {
+            allowedKeys = allowedKeys.filter { !$0.hasPrefix(namespace + "|") }
+            let keys = memoryKeys.filter { $0.hasPrefix(namespace + "|") }
+            keys.forEach { memory.removeObject(forKey: $0 as NSString) }
+            memoryKeys.subtract(keys)
         }
-        lock.unlock()
         queue.async { [self] in
             try? FileManager.default.removeItem(at: accountDirectory(namespace: namespace))
         }
@@ -219,18 +213,34 @@ final class RemoteImageCache: @unchecked Sendable {
     func remove(urls: [String], accountID: String) {
         let namespace = Self.digest(accountID)
         let keys = urls.map { Self.cacheKey(namespace: namespace, url: $0) }
-        lock.lock()
-        keys.forEach {
-            allowedKeys.remove($0)
-            memory.removeObject(forKey: $0 as NSString)
-            memoryExpiry.removeValue(forKey: $0)
+        lock.withLock {
+            keys.forEach {
+                allowedKeys.remove($0)
+                memoryKeys.remove($0)
+                memory.removeObject(forKey: $0 as NSString)
+            }
         }
-        lock.unlock()
         queue.async { [self] in
             keys.forEach { key in
                 let digest = key.split(separator: "|", maxSplits: 1).last.map(String.init) ?? key
                 try? FileManager.default.removeItem(at: accountDirectory(namespace: namespace).appendingPathComponent(digest + ".img"))
             }
+        }
+    }
+
+    // Synchronous critical sections: NSLock must not be held across `await`.
+    private func memoryLookup(_ key: String) -> (Data?, Bool) {
+        lock.withLock { (memory.object(forKey: key as NSString) as Data?, allowedKeys.contains(key)) }
+    }
+
+    private func isAllowed(_ key: String) -> Bool {
+        lock.withLock { allowedKeys.contains(key) }
+    }
+
+    private func storeInMemory(_ data: Data, key: String) {
+        lock.withLock {
+            memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
+            memoryKeys.insert(key)
         }
     }
 
@@ -248,5 +258,10 @@ final class RemoteImageCache: @unchecked Sendable {
 
     private static func digest(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Test hook: whether a file exists on disk for this URL and account.
+    func hasDiskEntry(for urlString: String, accountID: String) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(namespace: Self.digest(accountID), url: urlString).path)
     }
 }
