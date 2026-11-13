@@ -4,7 +4,8 @@
 
 - 后端：已上线提交 `eab3cfd`（分支 `claude/merge-prod-20261112`，已快进合入 `main`）。目录为 `/opt/zbt-releases/20261113-merge`，使用 Node 24.21.0。
 - 生产库迁移：已执行 `024_feed_events`、`025_feed_snapshots`、`026_backend_read_path_indexes`、`027_moderation_queue_cursor`、`028_account_security`，共 36 个迁移。
-- iOS：build 13（1.0）已归档。**还没有上传 TestFlight**：本机 Xcode 没有登录可以访问 App Store Connect 的账号，需要本人在 Xcode Organizer 里上传。
+- iOS：build 13（1.0）已归档。命令行上传失败，因为 `xcodebuild` 没有 App Store Connect 账号。用户改用 Xcode Organizer 上传：第一次因为 Apple 开发者协议没有同意而被拒（"You do not have required contracts"），同意协议后重新上传，状态显示 "Uploaded to Apple"。
+  - **待确认**：Organizer 里还有一个 2026-09-13 的 1.0 (13)，状态也是已上传。需要到 App Store Connect → TestFlight 看 build 13 的上传日期。如果是 09-13，说明今天这个包被当成重复 build 丢掉了，要把 build 号改成 14 再传一次。
 - 停服时间：08:33:24 至 08:39:49 CST，约 6.5 分钟。
 
 ## 内容

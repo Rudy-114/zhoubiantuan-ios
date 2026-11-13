@@ -11,7 +11,7 @@
 - **后端:** Node.js / Express / PostgreSQL / 阿里云 OSS / 阿里云内容安全
 - **线上 API:** `https://api.zhoubiantuanmail.top/api`
 - **Debug:** `http://127.0.0.1:18080/api`
-- **分支:** 修复工作在 `claude/fix-plan-20261112`（回滚点 `backup/pre-fix-plan-20261112`），上线后合入 `main`
+- **分支:** `main`（2026-11-13 已快进到发布版本）。修复方案在 `claude/fix-plan-20261112`，与生产线的合并在 `claude/merge-prod-20261112`；修复前的回滚点是 `backup/pre-fix-plan-20261112`
 
 ## 关键路径
 
@@ -66,8 +66,8 @@ backend/src/moderation/     - 审核系统（阿里云/Mock）
 
 ### 数据库迁移
 ```
-backend/sql/001_init.sql … backend/sql/027_account_security.sql   （共 27 个，按编号顺序执行）
-backend/sql/down/                                                  - 部分迁移的回滚脚本（含 027）
+backend/sql/001_init.sql … backend/sql/028_account_security.sql   （共 36 个，按文件名排序执行；生产已执行到 028_account_security）
+backend/sql/down/                                                  - 部分迁移的回滚脚本（含 024–028）
 ```
 
 ### 密钥文件（只读，禁止复制内容到聊天）
@@ -100,8 +100,11 @@ backend/sql/down/                                                  - 部分迁�
 
 ## 当前状态
 
-- 修复方案 `docs/FIX_PLAN_2026-11-12.md` 阶段 A–E 已在 `claude/fix-plan-20261112` 分阶段提交。
-- 上线须知见 `docs/DIAGNOSTIC_FIX_DEPLOYMENT.md`（迁移 027 必须先于新后端）。
+- **2026-11-13 已上线**：后端 `eab3cfd`（修复方案 A–E 加生产线 `5bf2c59` 的合并）运行在 ECS `/opt/zbt-releases/20261113-merge`，使用 Node 24.21.0。生产库已迁移到 028。旧版本目录 `20260912-diagnostics` 保留。记录和回滚步骤见 `docs/DEPLOYMENT_2026-11-13.md`。
+- **待确认**：iOS build 13 已在 Xcode Organizer 上传，状态显示 "Uploaded to Apple"。但 Organizer 里还有一个 2026-09-13 的 1.0 (13)，需要到 App Store Connect → TestFlight 确认 build 13 的上传日期是不是 11-13。如果不是，就把 build 号改成 14，重新归档后由用户在 Organizer 上传。
+- TestFlight 只能由用户本人在 Xcode Organizer 上传：命令行 `xcodebuild -exportArchive` 没有 App Store Connect 账号。
+- 生产库导出：自动模式不允许 Claude 读取数据库密码。由用户自己执行 `! bash .project-secrets/deployments/20261113/dump-prod.sh`（可用 `DUMP_NAME=xxx` 改文件名，`OUTDIR` 写死在 20261113，复用时先改）（走单独的 15532 隧道），导出文件放在 `.project-secrets/deployments/<日期>/`。
+- 本机访问公网 HTTPS（API、GitHub、Apple）时，因为本机代理偶尔会出现 TLS 失败，重试即可，不要改网络配置。
 - 用户正在处理 ICP 备案，CDN 尚未正式接入。
 
 ## 诊断与审查资料
