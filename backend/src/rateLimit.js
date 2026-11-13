@@ -13,14 +13,14 @@ const MEMORY_BUCKET_SWEEP_INTERVAL_MS = 60 * 1000;
  * interactions, feed events, anonymous reads). Security-sensitive limits
  * (auth, email codes, content, DM abuse) must use `store: "postgres"`.
  */
-export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory" }) {
+export function createRateLimiter({ windowMs, max, message, keyGenerator, name = "default", store = "memory", apiCode }) {
   if (store === "postgres") {
-    return createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name });
+    return createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name, apiCode });
   }
-  return createMemoryRateLimiter({ windowMs, max, message, keyGenerator });
+  return createMemoryRateLimiter({ windowMs, max, message, keyGenerator, apiCode });
 }
 
-export function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, now = Date.now, sweepIntervalMs = MEMORY_BUCKET_SWEEP_INTERVAL_MS }) {
+export function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, apiCode, now = Date.now, sweepIntervalMs = MEMORY_BUCKET_SWEEP_INTERVAL_MS }) {
   const buckets = new Map();
 
   const sweep = () => {
@@ -43,7 +43,7 @@ export function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, 
       buckets.set(key, bucket);
       const retryAfterMs = Math.max(0, windowMs - (current - bucket[0]));
       res.setHeader("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
-      return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
+      return res.status(429).json({ error: message || "操作太频繁，请稍后再试", ...(apiCode ? { code: apiCode } : {}) });
     }
 
     bucket.push(current);
@@ -56,7 +56,7 @@ export function createMemoryRateLimiter({ windowMs, max, message, keyGenerator, 
   return limiter;
 }
 
-function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name }) {
+function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name, apiCode }) {
   const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
 
   return async (req, res, next) => {
@@ -84,7 +84,7 @@ function createPostgresRateLimiter({ windowMs, max, message, keyGenerator, name 
 
       if (!allowed) {
         res.setHeader("Retry-After", String(windowSeconds));
-        return res.status(429).json({ error: message || "操作太频繁，请稍后再试" });
+        return res.status(429).json({ error: message || "操作太频繁，请稍后再试", ...(apiCode ? { code: apiCode } : {}) });
       }
 
       next();

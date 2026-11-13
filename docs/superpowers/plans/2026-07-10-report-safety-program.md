@@ -155,51 +155,60 @@ RealtimeConnectionState
 
 **Plan:** `docs/superpowers/plans/2026-07-10-01-realtime-p0.md`
 
-- [ ] Execute every checkbox in the P0 plan.
-- [ ] Verify the public WebSocket handshake, HTTPS health, and privacy-policy route after the Nginx reload.
-- [ ] Record the P0 commit and production verification before starting database work.
+- [x] Execute every checkbox in the P0 plan.
+- [x] Verify the public WebSocket handshake, HTTPS health, and privacy-policy route after the Nginx reload.
+- [x] Record the P0 commit and production verification before starting database work.
 
 ### Task 2: Build the Safety-Case Backend Core
 
 **Plan:** `docs/superpowers/plans/2026-07-10-02-safety-core-backend.md`
 
-- [ ] Execute the additive migration, report intake, evidence, case aggregation, action, visibility, and job-queue tasks.
-- [ ] Deploy with `SAFETY_CASES_ENABLED=false` and `SAFETY_AI_MODE=off` before any client uses the new endpoints.
+- [x] Execute the additive migration, report intake, evidence, case aggregation, action, visibility, and job-queue tasks.
+- [x] Deploy with `SAFETY_CASES_ENABLED=false` and `SAFETY_AI_MODE=off` before any client uses the new endpoints.
 
 ### Task 3: Add the Five iOS Reporting Workflows
 
 **Plan:** `docs/superpowers/plans/2026-07-10-03-ios-reporting.md`
 
-- [ ] Add shared models, networking, report form, five entry points, optional block flow, and My Reports.
-- [ ] Pass `swift test`, Xcode Debug build, and simulator layout checks.
+- [x] Add shared models, networking, report form, five entry points, optional block flow, and My Reports.
+- [x] Pass `swift test`, Xcode Debug build, and simulator layout checks.
 
 ### Task 4: Add Owner Remediation and Appeals
 
 **Plan:** `docs/superpowers/plans/2026-07-10-04-content-remediation.md`
 
-- [ ] Add immutable revisions, original-ID publishing, automatic restoration boundaries, content-action UI, and one human appeal.
-- [ ] Prove likes, comments, favorites, and child-post states survive correction.
+- [x] Add immutable revisions, original-ID publishing, automatic restoration boundaries, content-action UI, and one human appeal.
+- [x] Prove likes, comments, favorites, and child-post states survive correction.
 
 ### Task 5: Add Isolated Admin Authentication
 
 **Plan:** `docs/superpowers/plans/2026-07-10-05-admin-auth.md`
 
-- [ ] Add separate admin tables, hidden password bootstrap, P-256 device challenges, sessions, CSRF, approvals, recovery, and audit.
-- [ ] Do not create the real administrator account until the Phase 6 browser UI is deployed.
+- [x] Add separate admin tables, hidden password bootstrap, P-256 device challenges, sessions, CSRF, approvals, recovery, and audit.
+- [x] Do not create the real administrator account until the Phase 6 browser UI is deployed.
 
 ### Task 6: Build and Deploy the Admin Web Console
 
 **Plan:** `docs/superpowers/plans/2026-07-10-06-admin-web.md`
 
-- [ ] Add authenticated case APIs, queue/detail/action views, device management, audit, and Playwright coverage.
-- [ ] Initialize the real admin account and enroll this device as root without exposing credentials or recovery codes in chat.
+- [x] Add authenticated case APIs, queue/detail/action views, device management, audit, and Playwright coverage.
+- [x] Initialize the real admin account and enroll this device as root without exposing credentials or recovery codes in chat.
 
 ### Task 7: Add Qwen Shadow Analysis
 
 **Plan:** `docs/superpowers/plans/2026-07-10-07-ai-shadow-mode.md`
 
+Status: implementation Tasks 1–8 and Task 9's zero-budget production deployment
+are complete. Privacy-safe diagnostics and prompt-v2 are deployed at `8f224db`.
+Three authorized synthetic calls settled CNY 0.006918 total: two prompt-v1
+schema failures followed by one prompt-v2 closed-schema pass. The passing run
+retains no raw response and created no real-case side effect. Production remains
+shadow, automatic actions disabled, and budget zero. Synthetic validation is
+complete; real shadow comparisons remain incomplete and require a separate
+production traffic decision.
+
 - [ ] Add schema validation, prompt minimization, budget reservation, deterministic policy tests, fixtures, AI health, and shadow comparisons.
-- [ ] Keep the budget at zero until Rudy explicitly approves the single paid validation call.
+- [x] Keep the budget at zero until Rudy explicitly approves the single paid validation call.
 
 ### Task 8: Harden, Gate, and Finish Production Rollout
 

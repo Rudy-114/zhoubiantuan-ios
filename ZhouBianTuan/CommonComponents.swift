@@ -26,6 +26,254 @@ extension ButtonStyle where Self == PressFeedbackButtonStyle {
     static var pressFeedback: PressFeedbackButtonStyle { PressFeedbackButtonStyle() }
 }
 
+private struct PullRefreshOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private enum PullRefreshPhase {
+    case idle
+    case ready
+    case refreshing
+}
+
+struct PullToRefreshScrollView<Content: View>: View {
+    private let threshold: CGFloat = 72
+    private let content: () -> Content
+    private let action: () async -> Void
+    private let coordinateSpace = UUID()
+
+    @State private var pullDistance: CGFloat = 0
+    @State private var phase: PullRefreshPhase = .idle
+
+    init(
+        @ViewBuilder content: @escaping () -> Content,
+        action: @escaping () async -> Void
+    ) {
+        self.content = content
+        self.action = action
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            ScrollView(showsIndicators: false) {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(
+                            key: PullRefreshOffsetKey.self,
+                            value: proxy.frame(in: .named(coordinateSpace)).minY
+                        )
+                }
+                .frame(height: 0)
+
+                content()
+            }
+            .coordinateSpace(name: coordinateSpace)
+            .refreshable {
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        phase = .refreshing
+                    }
+                }
+                await action()
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        phase = .idle
+                        pullDistance = 0
+                    }
+                }
+            }
+            .onPreferenceChange(PullRefreshOffsetKey.self) { value in
+                let distance = max(0, value)
+                pullDistance = distance
+                guard phase != .refreshing else { return }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    phase = distance >= threshold ? .ready : .idle
+                }
+            }
+
+            PullRefreshIndicator(
+                phase: phase,
+                distance: pullDistance
+            )
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct PullRefreshIndicator: View {
+    let phase: PullRefreshPhase
+    let distance: CGFloat
+
+    private var isVisible: Bool {
+        phase != .idle || distance > 2
+    }
+
+    private var title: String {
+        switch phase {
+        case .idle: "下拉刷新"
+        case .ready: "松开刷新"
+        case .refreshing: "正在刷新…"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if phase == .refreshing {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: phase == .ready ? "arrow.down.circle.fill" : "arrow.down")
+            }
+            Text(title)
+        }
+        .font(AppFont.caption.weight(.semibold))
+        .foregroundStyle(Theme.subtext)
+        .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .opacity(isVisible ? 1 : 0)
+        .offset(y: max(-36, min(18, distance * 0.5 - 18)))
+        .animation(.easeOut(duration: 0.12), value: phase == .ready)
+        .animation(.easeOut(duration: 0.12), value: distance)
+        .accessibilityLabel(title)
+    }
+}
+
+/// Production's in-page horizontal swipe, kept only for what the system pop
+/// cannot do: swiping left to open the author profile, and swiping a
+/// full-screen overlay (not a pushed page) closed. Pushed pages go back with
+/// the system pop from `interactiveBackSwipe()`; do not add this to them.
+struct EdgeSwipeNavigationModifier: ViewModifier {
+    private let screenWidth = UIScreen.main.bounds.width
+    private let edgeWidth: CGFloat = 52
+    private let commitDistanceRatio: CGFloat = 0.34
+    private let onBack: () -> Void
+    private let onForward: (() -> Void)?
+    private let canGoBack: () -> Bool
+    private let resetOffsetAfterCommit: Bool
+
+    @GestureState private var gestureTranslation: CGSize = .zero
+    @State private var settledOffset: CGFloat = 0
+
+    init(
+        onBack: @escaping () -> Void,
+        onForward: (() -> Void)? = nil,
+        canGoBack: @escaping () -> Bool = { true },
+        resetOffsetAfterCommit: Bool = false
+    ) {
+        self.onBack = onBack
+        self.onForward = onForward
+        self.canGoBack = canGoBack
+        self.resetOffsetAfterCommit = resetOffsetAfterCommit
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: effectiveOffset)
+            .opacity(1 - min(0.04, abs(effectiveOffset) / screenWidth * 0.04))
+            .overlay(alignment: effectiveOffset >= 0 ? .leading : .trailing) {
+                if abs(effectiveOffset) > 0.5 {
+                    Rectangle()
+                        .fill(.black.opacity(0.16))
+                        .frame(width: 7)
+                        .blur(radius: 3)
+                        .opacity(min(CGFloat(1), abs(effectiveOffset) / CGFloat(80)))
+                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .local)
+                    .updating($gestureTranslation) { value, state, _ in
+                        guard accepts(value) else { return }
+                        state = CGSize(width: clampedTranslation(value.translation.width), height: 0)
+                    }
+                    .onEnded { value in
+                        finish(value)
+                    }
+            )
+    }
+
+    private var effectiveOffset: CGFloat {
+        settledOffset + gestureTranslation.width
+    }
+
+    private func accepts(_ value: DragGesture.Value) -> Bool {
+        let translation = value.translation
+        guard abs(translation.width) > abs(translation.height) * 1.08 else { return false }
+        if translation.width >= 0 {
+            return canGoBack() && value.startLocation.x <= edgeWidth
+        }
+        return onForward != nil && value.startLocation.x >= screenWidth - edgeWidth
+    }
+
+    private func clampedTranslation(_ width: CGFloat) -> CGFloat {
+        let limit = screenWidth * 1.08
+        return min(limit, max(-limit, width))
+    }
+
+    private func finish(_ value: DragGesture.Value) {
+        guard accepts(value) else {
+            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.86)) {
+                settledOffset = 0
+            }
+            return
+        }
+
+        let width = value.translation.width
+        let predictedWidth = value.predictedEndTranslation.width
+        let shouldCommit = abs(width) >= screenWidth * commitDistanceRatio || abs(predictedWidth) >= screenWidth * 0.48
+        let direction: CGFloat = width >= 0 ? 1 : -1
+
+        guard shouldCommit else {
+            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.86)) {
+                settledOffset = 0
+            }
+            return
+        }
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            settledOffset = direction * screenWidth
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            if direction > 0 {
+                onBack()
+            } else {
+                onForward?()
+            }
+            if resetOffsetAfterCommit {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    settledOffset = 0
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    func edgeSwipeNavigation(
+        onBack: @escaping () -> Void,
+        onForward: (() -> Void)? = nil,
+        canGoBack: @escaping () -> Bool = { true },
+        resetOffsetAfterCommit: Bool = false
+    ) -> some View {
+        modifier(
+            EdgeSwipeNavigationModifier(
+                onBack: onBack,
+                onForward: onForward,
+                canGoBack: canGoBack,
+                resetOffsetAfterCommit: resetOffsetAfterCommit
+            )
+        )
+    }
+}
+
+// Authenticated assets bypass persistent caches so revocation and account changes take effect.
+// A bounded, session-scoped memory cache keeps navigation responsive without persisting
+// private images on disk or allowing one account to see another account's cached data.
+
 /// Enables the system edge-swipe back gesture on screens that hide the
 /// navigation bar. UIKit drives the transition, so the real previous page is
 /// shown underneath and `NavigationStack(path:)` is updated automatically.
@@ -413,7 +661,7 @@ struct SelectChip: View {
                 .foregroundStyle(isSelected ? .white : Theme.subtext)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
-                .background(isSelected ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                .background(isSelected ? Theme.accentFill : Theme.panelRaised, in: Capsule())
         }
         .buttonStyle(.pressFeedback)
     }
@@ -494,7 +742,7 @@ struct ContactButton: View {
                 .foregroundStyle(isEnabled ? .white : Theme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(isEnabled ? Theme.hotPink : Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .background(isEnabled ? Theme.accentFill : Theme.panelRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         }
         .buttonStyle(.pressFeedback)
         .disabled(!isEnabled)
@@ -571,7 +819,7 @@ struct RequiredLabel: View {
                 .foregroundStyle(Theme.text)
             Text("*")
                 .font(AppFont.callout.weight(.bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
         }
     }
 }
@@ -619,7 +867,7 @@ struct CharacterCountLabel: View {
         let count = InputLimit.count(text)
         Text("\(count)/\(limit)")
             .font(.caption2.monospacedDigit())
-            .foregroundStyle(count >= limit ? Theme.hotPink : Theme.muted)
+            .foregroundStyle(count >= limit ? Theme.danger : Theme.muted)
             .accessibilityLabel("已输入 \(count) 字，上限 \(limit) 字")
     }
 }
@@ -641,7 +889,7 @@ struct PrototypeTextField: View {
                 if required {
                     Text("*")
                         .font(AppFont.caption.weight(.bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                 }
                 if let limit {
                     Spacer(minLength: 0)
@@ -655,7 +903,7 @@ struct PrototypeTextField: View {
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.control)
-                        .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
+                        .stroke(required && text.trimmed.isEmpty ? Theme.accent.opacity(0.45) : Theme.hairline, lineWidth: 1)
                 }
         }
     }
@@ -677,7 +925,7 @@ struct PrototypeTextEditor: View {
                 if required {
                     Text("*")
                         .font(AppFont.caption.weight(.bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                 }
                 if let limit {
                     Spacer(minLength: 0)
@@ -701,7 +949,70 @@ struct PrototypeTextEditor: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: Radius.control)
-                    .stroke(required && text.trimmed.isEmpty ? Theme.hotPink.opacity(0.45) : Theme.hairline, lineWidth: 1)
+                    .stroke(required && text.trimmed.isEmpty ? Theme.accent.opacity(0.45) : Theme.hairline, lineWidth: 1)
+            }
+        }
+    }
+}
+
+struct ConstrainedFormTextEditor: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    let limit: Int
+    var errorMessage: String? = nil
+    var minHeight: CGFloat = 132
+
+    private var characterCount: Int {
+        SafetyReportFormLogic.codePointCount(in: text)
+    }
+
+    private var isOverLimit: Bool {
+        characterCount > limit
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text("\(characterCount)/\(limit)")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isOverLimit ? Theme.danger : Theme.subtext)
+                    .accessibilityLabel("当前输入 \(characterCount) 个字，上限 \(limit) 个字")
+            }
+
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(Theme.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                }
+                TextEditor(text: $text)
+                    .font(.body)
+                    .foregroundStyle(Theme.text)
+                    .frame(minHeight: minHeight)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .stroke(errorMessage != nil || isOverLimit ? Theme.danger.opacity(0.7) : Theme.hairline, lineWidth: 1)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -742,7 +1053,7 @@ struct TagEditor: View {
                             .foregroundStyle(selection.contains(tag) ? .white : Theme.subtext)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 8)
-                            .background(selection.contains(tag) ? Theme.hotPink : Theme.panel, in: Capsule())
+                            .background(selection.contains(tag) ? Theme.accentFill : Theme.panel, in: Capsule())
                     }
                     .buttonStyle(.pressFeedback)
                 }
@@ -763,7 +1074,7 @@ struct TagEditor: View {
                         .font(.system(size: 18, weight: .black))
                         .foregroundStyle(normalizedCustomTag.isEmpty ? Theme.muted : .white)
                         .frame(width: 44, height: 44)
-                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                        .background(normalizedCustomTag.isEmpty ? Theme.panelRaised : Theme.accentFill, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 }
                 .accessibilityLabel("添加标签")
                 .buttonStyle(.pressFeedback)
@@ -799,9 +1110,9 @@ struct ReminderMiniCard: View {
         HStack(spacing: 12) {
             Image(systemName: reminder.isUpcoming ? "bell.badge.fill" : "bell.fill")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .frame(width: 44, height: 44)
-                .background(Theme.hotPink.opacity(0.14), in: Circle())
+                .background(Theme.accent.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(reminder.isUpcoming ? "你收藏的团购即将截团" : "已收藏，留意截团时间")
                     .font(AppFont.callout.weight(.bold))
@@ -838,7 +1149,7 @@ struct ReminderLargeCard: View {
                     .foregroundStyle(Theme.subtext)
                 Text(reminder.isUpcoming ? "即将截团" : "请留意截团时间")
                     .font(AppFont.caption.weight(.bold))
-                    .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.hotPink)
+                    .foregroundStyle(reminder.isUpcoming ? Color.green : Theme.accent)
             }
             Spacer()
         }
@@ -881,9 +1192,9 @@ struct ProfileRowContent: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
                 .frame(width: 42, height: 42)
-                .background(Theme.hotPink.opacity(0.13), in: Circle())
+                .background(Theme.accent.opacity(0.13), in: Circle())
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(AppFont.callout.weight(.bold))
@@ -948,7 +1259,7 @@ struct AdminActionButton: View {
                 .foregroundStyle(title == "下架" ? .white : Theme.text)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
-                .background(title == "下架" ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                .background(title == "下架" ? Theme.danger : Theme.panelRaised, in: Capsule())
         }
         .buttonStyle(.pressFeedback)
     }
@@ -964,7 +1275,7 @@ struct ToastHost: View {
                 HStack(spacing: 10) {
                     if toast.style == .error {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.danger)
                             .accessibilityHidden(true)
                     }
                     Text(toast.message)
@@ -974,7 +1285,7 @@ struct ToastHost: View {
                     if let action = toast.action {
                         Button(action.title) { store.performToastAction() }
                             .font(AppFont.callout.weight(.bold))
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                             .padding(.leading, 2)
                     }
                 }

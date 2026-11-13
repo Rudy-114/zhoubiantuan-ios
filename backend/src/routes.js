@@ -1,7 +1,9 @@
+import { installLegacyProtocol } from "./legacyProtocol.js";
+import { assetCapabilityReader } from "./assetCapability.js";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import express from "express";
-import { hashPassword, optionalAuth, requireAuth, signToken, verifyPassword } from "./auth.js";
+import { assertUnrestrictedUser, requireUnrestrictedUser, hashPassword, optionalAuth, requireAuth, signToken, verifyPassword } from "./auth.js";
 import { loadBootstrap } from "./bootstrap.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
@@ -9,7 +11,8 @@ import { sendEmailCode } from "./email.js";
 import { logger } from "./logger.js";
 import { requestHash, assertPostReplay } from "./idempotency.js";
 import { assertRevision, editPost, validateRoles } from "./contentEditing.js";
-import { submitReport, listReports, decideReport } from "./reports.js";
+import { createSafetyReportRouter } from "./safety/reportRoutes.js";
+import { loadRetainedSafetyObjectKeys } from "./safety/objectRetention.js";
 import { postsPage, postDetail, collectionsPage, commentsPage, usersPage } from "./contentPages.js";
 import { asyncRoute } from "./http.js";
 import { collectionToClient, commentToClient, moderationReviewToClient, postToClient, userToClient } from "./mappers.js";
@@ -41,9 +44,10 @@ import { createAssetAccessCache, ASSET_ACCESS_CACHE_MS } from "./assets.js";
 import { validateContent } from "./contentValidation.js";
 import { visiblePostSQL, visibleCommentSQL, visibleCollectionSQL, unblockedSQL } from "./visibility.js";
 
-export function createRouter({ objectStorage = defaultObjectStorage, assetAccessCacheMs = ASSET_ACCESS_CACHE_MS,
+export function createRouter({ objectStorage = defaultObjectStorage, deleteObjects, assetAccessCacheMs = ASSET_ACCESS_CACHE_MS,
   emailSender = sendEmailCode } = {}) {
   const router = express.Router();
+  installLegacyProtocol(router);
   installUploadRoute(router, objectStorage);
   router.use(validateContent);
   const sharedRateLimitStore = config.nodeEnv === "production" ? "postgres" : "memory";
@@ -106,12 +110,14 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
   router.get("/assets/*", optionalAuth, assetLimiter, async (req, res, next) => {
     try {
       const objectKey = String(req.params[0] || "");
-      if (!/^(guarded\/)?(post|avatar|background|message)\//.test(objectKey) || objectKey.includes("..")) {
+      if (!/^(guarded\/)?(post|avatar|background|message|report)\//.test(objectKey) || objectKey.includes("..")) {
         return res.status(404).json({ error: "图片不存在" });
       }
 
       res.setHeader("Vary", "Authorization");
-      const access = await assetAccess.check(objectKey, req.user);
+      // Signed-in users, or a legacy single-image capability link (`?a=`).
+      const reader = req.user || await assetCapabilityReader(objectKey, req.query.a);
+      const access = await assetAccess.check(objectKey, reader);
       if (!access.allowed) {
         res.setHeader("Cache-Control", "private, no-store");
         return res.status(404).json({ error: "图片不存在" });
@@ -380,11 +386,12 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
 
         await client.query("UPDATE direct_messages SET body = '', image_object_key = NULL, revoked_at = COALESCE(revoked_at, now()) WHERE sender_id = $1", [userId]);
         const syncEvents = await createSyncEventsForUsers(client, { userIds: [null], eventType: "user.deleted", entityType: "user", entityId: userId });
-        return { objectKeys: keys, syncEvents };
+        const retained = await loadRetainedSafetyObjectKeys(client, keys);
+        return { objectKeys: keys.filter(key => !retained.has(key)), syncEvents };
       });
 
       // Best-effort OSS cleanup outside the transaction; never block deletion on it.
-      void (async () => { for (const key of objectKeys) { try { await objectStorage.removeImage(key); } catch { /* Retry through operations if needed. */ } } })();
+      void (async () => { if (deleteObjects) { await deleteObjects(objectKeys); return; } for (const key of objectKeys) { try { await objectStorage.removeImage(key); } catch { /* Retry through operations if needed. */ } } })();
       notifySyncEvents(syncEvents);
       logger.info("account.deleted", { userID: userId, objectKeys: objectKeys.length });
       res.status(204).end();
@@ -428,7 +435,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     windowMs: 60 * 1000, max: 300, keyGenerator: req => req.user.id,
     message: "互动操作太频繁，请稍后再试" });
 
-  router.patch("/me", requireAuth, contentLimiter, async (req, res, next) => {
+  router.patch("/me", requireAuth, requireUnrestrictedUser, contentLimiter, async (req, res, next) => {
     try {
       const nickname = boundedString(req.body.nickname, { max: 20, field: "昵称", fallback: req.user.nickname });
       const bio = boundedString(req.body.bio, { max: 200, field: "简介", fallback: "点击这里，填写简介" });
@@ -462,6 +469,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         : null;
 
       const { user, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         await assertReadyUploads(req.user.id, profileKeys, client, { retainKeys: retainedProfileKeys, markReferenced: true });
         const applyText = textResult.status === "active";
         const applyAvatar = !avatarResult || avatarResult.status === "active";
@@ -610,7 +618,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     res.json(await postDetail(req.params.id, req.user?.id || ""));
   }));
 
-  router.post("/collections", requireAuth, contentLimiter, async (req, res, next) => {
+  router.post("/collections", requireAuth, requireUnrestrictedUser, contentLimiter, async (req, res, next) => {
     try {
       const { collection, syncEvents } = await createCollection(req.user.id, req.body);
       notifySyncEvents(syncEvents);
@@ -620,7 +628,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.patch("/collections/:id", requireAuth, contentLimiter, async (req, res, next) => {
+  router.patch("/collections/:id", requireAuth, requireUnrestrictedUser, contentLimiter, async (req, res, next) => {
     try {
       const { collection, syncEvents } = await updateCollection(req.user.id, req.params.id, req.body);
       if (syncEvents.length) {
@@ -652,7 +660,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/posts", requireAuth, contentLimiter, async (req, res, next) => {
+  router.post("/posts", requireAuth, requireUnrestrictedUser, contentLimiter, async (req, res, next) => {
     try {
       const fields = assertPostTextFields(req.body);
       const title = fields.title;
@@ -670,7 +678,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
       const replacingPostId = trimmedString(req.body.replacingPostID);
       const collectionId = trimmedString(req.body.collectionID);
       const collection = collectionId
-        ? (await query("SELECT * FROM group_collections WHERE id = $1 AND owner_id = $2 AND status = 'active'", [collectionId, req.user.id])).rows[0]
+        ? (await query("SELECT * FROM group_collections WHERE id = $1 AND owner_id = $2 AND status = 'active' AND safety_status = 'active'", [collectionId, req.user.id])).rows[0]
         : null;
       if (!collection) throw badRequest("请选择自己已通过审核的合集");
       const roles = validateRoles(req.body.unsoldRoles ?? []);
@@ -689,12 +697,13 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         imageObjectKeys: reviewedImageKeys
       });
       const { post, syncEvents, replayed } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["post-submission:" + postId]);
         const committed = (await client.query("SELECT * FROM posts WHERE id=$1", [postId])).rows[0];
         if (committed) return { post: assertPostReplay(committed, req.user.id, submissionHash), syncEvents: [], replayed: true };
         const latestCollection = (await client.query("SELECT * FROM group_collections WHERE id=$1 FOR SHARE", [collectionId])).rows[0];
         assertRevision(latestCollection, collection.revision);
-        if (latestCollection.status !== "active" || latestCollection.owner_id !== req.user.id) throw badRequest("合集当前不可用");
+        if ((latestCollection.status !== "active" || latestCollection.safety_status !== "active") || latestCollection.owner_id !== req.user.id) throw badRequest("合集当前不可用");
         let previousPost;
         if (replacingPostId) {
           previousPost = (await client.query("SELECT * FROM posts WHERE id=$1 AND author_id=$2 FOR UPDATE", [replacingPostId, req.user.id])).rows[0];
@@ -775,7 +784,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.patch("/posts/:id", requireAuth, contentLimiter, asyncRoute(async (req, res) => {
+  router.patch("/posts/:id", requireAuth, requireUnrestrictedUser, contentLimiter, asyncRoute(async (req, res) => {
     const { post, moderation, syncEvents } = await editPost(req.user.id, req.params.id, req.body);
     notifySyncEvents(syncEvents);
     res.json({ post, moderation });
@@ -808,7 +817,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/posts/:id/comments", requireAuth, contentLimiter, async (req, res, next) => {
+  router.post("/posts/:id/comments", requireAuth, requireUnrestrictedUser, contentLimiter, async (req, res, next) => {
     try {
       const body = boundedString(req.body.body, { max: 500, field: "评论" });
       const replyToID = trimmedString(req.body.replyToID);
@@ -829,6 +838,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
         text: body
       });
       const { comment, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         const visiblePost = await client.query(`SELECT p.id FROM posts p WHERE p.id = $1 AND ${visiblePostSQL("p", "$2")} FOR SHARE OF p`, [req.params.id, req.user.id]);
         if (!visiblePost.rows[0]) throw badRequest("帖子不存在或不可评论");
         const { rows } = await client.query(
@@ -948,7 +958,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/users/:id/follow", requireAuth, interactionLimiter, async (req, res, next) => {
+  router.post("/users/:id/follow", requireAuth, requireUnrestrictedUser, interactionLimiter, async (req, res, next) => {
     try {
       const syncEvents = await setFollowState({ followerId: req.user.id, followingId: req.params.id, enabled: true });
       if (syncEvents.length) {
@@ -1059,7 +1069,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
   const directMessageLimiter = createRateLimiter({ name: "dm_send", store: sharedRateLimitStore,
     windowMs: 60 * 1000, max: 30, keyGenerator: req => req.user.id, message: "消息发送太频繁，请稍后再试" });
 
-  router.post("/messages/threads/:id/messages", requireAuth, directMessageLimiter, async (req, res, next) => {
+  router.post("/messages/threads/:id/messages", requireAuth, requireUnrestrictedUser, directMessageLimiter, async (req, res, next) => {
     try {
       const threadId = trimmedString(req.params.id);
       const recipientUserID = trimmedString(req.body.recipientUserID);
@@ -1101,6 +1111,7 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
       if (sharedProfileUserID && !(await query(`SELECT 1 FROM users u WHERE u.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND ${unblockedSQL("u.id", "$2")}`, [sharedProfileUserID, req.user.id])).rowCount) throw badRequest("分享的用户不存在或不可见");
 
       const { thread, syncEvents } = await withTransaction(async (client) => {
+        await assertUnrestrictedUser(client, req.user.id);
         if (imageObjectKey) await assertReadyUploads(req.user.id, [imageObjectKey], client, { markReferenced: true });
         const existingById = await client.query("SELECT * FROM message_threads WHERE id = $1 FOR UPDATE", [threadId]);
         let actualThreadId = threadId;
@@ -1316,80 +1327,8 @@ export function createRouter({ objectStorage = defaultObjectStorage, assetAccess
     }
   });
 
-  router.post("/reports", requireAuth, contentLimiter, asyncRoute(async (req, res) => {
-    const { report, syncEvents, created } = await submitReport(req.user, req.body);
-    notifySyncEvents(syncEvents);
-    res.status(created ? 201 : 200).json({ report });
-  }));
-  router.get("/reports", requireAuth, asyncRoute(async (req, res) => {
-    res.json(await listReports(req.user, req.query));
-  }));
-  router.get("/moderation/reports", requireAuth, requireModerationAdmin, asyncRoute(async (req, res) => {
-    res.json(await listReports(req.user, req.query, true));
-  }));
-  router.post("/moderation/reports/:id/decision", requireAuth, requireModerationAdmin, asyncRoute(async (req, res) => {
-    const { report, syncEvents } = await decideReport(req.user, req.params.id, req.body);
-    notifySyncEvents(syncEvents);
-    res.json({ report });
-  }));
-
-  router.get("/moderation/reviews", requireAuth, requireModerationAdmin, async (req, res, next) => {
-    try {
-      const status = trimmedString(req.query.status, "review");
-      if (!new Set(["all", "review", "active", "rejected", "hidden", "removed", "ignored"]).has(status)) throw badRequest("审核状态无效");
-      const limit = pageSize(req.query.limit, 100), cursor = readCursor(req.query.cursor);
-      const params = [], clauses = [];
-      if (status !== "all") { params.push(status); clauses.push(`mr.status = $${params.length}`); }
-      if (cursor) { params.push(cursor.time, cursor.id); clauses.push(`(mr.created_at,mr.id)<($${params.length - 1}::timestamptz,$${params.length})`); }
-      params.push(limit + 1);
-      const { rows } = await query(
-        `SELECT mr.*,mr.created_at::text AS page_time
-         FROM moderation_reviews mr
-         ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
-         ORDER BY mr.created_at DESC,mr.id DESC
-         LIMIT $${params.length}`,
-        params
-      );
-      const page = pageResult(rows, limit, moderationReviewToClient);
-      res.json({ reviews: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  router.post("/moderation/reviews/:id/decision", requireAuth, requireModerationAdmin, async (req, res, next) => {
-    try {
-      const decision = moderationDecision(req.body.decision);
-      const adminReason = trimmedString(req.body.reason);
-      const { review, syncEvents } = await withTransaction(async (client) => {
-        const selected = await client.query("SELECT * FROM moderation_reviews WHERE id = $1 FOR UPDATE", [req.params.id]);
-        const row = selected.rows[0];
-        if (!row) {
-          const error = new Error("审核记录不存在");
-          error.status = 404;
-          throw error;
-        }
-        await assertReviewCurrent(client, row, decision);
-        await applyModerationDecision(client, row, decision);
-        const updated = await client.query(
-          `UPDATE moderation_reviews
-           SET status = $2, decision = $3, reason = COALESCE(NULLIF($4, ''), reason),
-               handled_by = $5, handled_at = now(), updated_at = now()
-           WHERE id = $1
-           RETURNING *`,
-          [row.id, decision.reviewStatus, decision.decision, adminReason, req.user.id]
-        );
-        const entityType = ["post", "comment", "collection"].includes(row.target_type) ? row.target_type : "user";
-        const syncEvents = await createSyncEventsForUsers(client, { userIds: [row.owner_id, null], eventType: entityType + ".moderated", entityType,
-          entityId: entityType === "user" ? row.owner_id : row.target_id });
-        return { review: updated.rows[0], syncEvents };
-      });
-      notifySyncEvents(syncEvents);
-      res.json({ review: moderationReviewToClient(review) });
-    } catch (error) {
-      next(error);
-    }
-  });
+  if (config.safety.enabled) router.use(createSafetyReportRouter());
+  else mountLegacyReportRoute(router);
 
   router.post("/uploads/presign", requireAuth, asyncRoute(async (req, res) => {
     res.json(await issueUploadTicket(req.user.id, req.body));
@@ -1543,6 +1482,7 @@ async function setPostReaction({ userId, postId, table, eventType, enabled }) {
 async function setFollowState({ followerId, followingId, enabled }) {
   if (followerId === followingId) return [];
   return withTransaction(async (client) => {
+    if (enabled) await assertUnrestrictedUser(client, followerId);
     const target = await client.query("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'", [followingId]);
     if (!target.rows[0]) return [];
     if (enabled) {
@@ -1686,6 +1626,7 @@ async function createCollection(userId, body) {
     text: publicContentModerationText(snapshot)
   });
   return withTransaction(async client => {
+  await assertUnrestrictedUser(client, userId);
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["collection-names:" + userId]);
   const committed = (await client.query('SELECT * FROM group_collections WHERE id=$1', [collectionId])).rows[0];
   if (committed) return assertReplay(committed);
@@ -1750,9 +1691,11 @@ async function updateCollection(userId, collectionId, body) {
     text: publicContentModerationText(snapshot)
   });
   return withTransaction(async (client) => {
+    await assertUnrestrictedUser(client, userId);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["collection-names:" + userId]);
     const latest = (await client.query("SELECT * FROM group_collections WHERE id=$1 AND owner_id=$2 FOR UPDATE", [collectionId, userId])).rows[0];
     assertRevision(latest, body.revision);
+    if (latest.safety_status !== "active" || latest.contact_visibility !== "active") throw badRequest("请通过整改流程修改受限合集");
     await assertCollectionNameAvailable({ ownerId: userId, name, excludingId: collectionId, executor: client });
     const { rows } = await client.query(
       `UPDATE group_collections
@@ -1891,96 +1834,6 @@ async function createRegistrationNicknameReview(client, user, nickname, moderati
   });
 }
 
-function requireModerationAdmin(req, res, next) {
-  if (!isModerationAdmin(req.user)) {
-    return res.status(403).json({ error: "只有管理员可以访问审核后台" });
-  }
-  next();
-}
-
-function moderationDecision(value) {
-  const decision = String(value || "").trim();
-  switch (decision) {
-  case "approve":
-    return { decision, reviewStatus: "active", targetStatus: "active" };
-  case "reject":
-    return { decision, reviewStatus: "rejected", targetStatus: "rejected" };
-  case "hide":
-    return { decision, reviewStatus: "hidden", targetStatus: "hidden" };
-  case "remove":
-    return { decision, reviewStatus: "removed", targetStatus: "removed" };
-  case "ignore":
-    return { decision, reviewStatus: "ignored", targetStatus: null };
-  default:
-    throw badRequest("审核处理动作无效");
-  }
-}
-
-async function assertReviewCurrent(client, review, decision) {
-  if (decision.decision === "ignore") return;
-  const table = ({ post: "posts", comment: "comments", collection: "group_collections" })[review.target_type] || "users";
-  const targetId = table === "users" ? review.owner_id : review.target_id;
-  const target = (await client.query(`SELECT *, ${table === "comments" ? "false" : "updated_at > (SELECT created_at FROM moderation_reviews WHERE id=$2)"} AS stale FROM ${table} WHERE id=$1 FOR UPDATE`, table === "comments" ? [targetId] : [targetId, review.id])).rows[0];
-  if (!target || target.status === "deleted" || target.deleted_at) {
-    const error = badRequest("内容已删除，无法继续审核"); error.status = 409; throw error;
-  }
-  if (decision.decision === "approve" && target.stale) {
-    const error = badRequest("内容已变更，请刷新后审核最新版本"); error.status = 409; throw error;
-  }
-}
-
-async function applyModerationDecision(client, review, decision) {
-  if (decision.decision === "ignore") return;
-  const snapshot = review.snapshot || {};
-  if (review.target_type === "post") {
-    await client.query("UPDATE posts SET status = $2, updated_at = now() WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (review.target_type === "comment") {
-    await client.query("UPDATE comments SET status = $2 WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (review.target_type === "collection") {
-    await client.query("UPDATE group_collections SET status = $2, updated_at = now() WHERE id = $1", [review.target_id, decision.targetStatus]);
-    return;
-  }
-  if (decision.decision !== "approve") return;
-  if (review.target_type === "profileText") {
-    await client.query(
-      `UPDATE users
-       SET nickname = COALESCE($2, nickname), bio = COALESCE($3, bio),
-           red_book_id = COALESCE($4, red_book_id), gender = COALESCE($5, gender),
-           birthday = COALESCE($6, birthday), region = COALESCE($7, region),
-           avatar_symbol = COALESCE($8, avatar_symbol), avatar_tint = COALESCE($9, avatar_tint),
-           background_image_name = COALESCE($10, background_image_name), updated_at = now()
-       WHERE id = $1`,
-      [
-        review.owner_id,
-        snapshot.nickname,
-        snapshot.bio,
-        snapshot.redBookID,
-        snapshot.gender,
-        snapshot.birthday,
-        snapshot.region,
-        snapshot.avatarSymbol,
-        snapshot.avatarTint,
-        snapshot.backgroundImageName
-      ]
-    );
-    return;
-  }
-  if (review.target_type === "avatar") {
-    await client.query("UPDATE users SET avatar_object_key = $2, updated_at = now() WHERE id = $1", [review.owner_id, snapshot.avatarObjectKey || review.image_object_keys?.[0] || null]);
-    return;
-  }
-  if (review.target_type === "profileBackground") {
-    await client.query(
-      "UPDATE users SET background_object_key = $2, background_image_name = COALESCE($3, background_image_name), updated_at = now() WHERE id = $1",
-      [review.owner_id, snapshot.backgroundObjectKey || review.image_object_keys?.[0] || null, snapshot.backgroundImageName]
-    );
-  }
-}
-
 function moderationResponse(results) {
   const blocked = results.find((result) => result.status === "rejected");
   if (blocked) return blocked;
@@ -1999,4 +1852,106 @@ function unauthorized(message) {
   const error = new Error(message);
   error.status = 401;
   return error;
+}
+
+function mountLegacyReportRoute(router) {
+  router.post("/reports", requireAuth, async (req, res, next) => {
+    try {
+      const targetType = req.body.targetType === "comment" ? "comment" : "post";
+      const targetId = trimmedString(req.body.targetID);
+      if (!targetId) throw badRequest("举报目标不能为空");
+      await assertReportTargetExists(targetType, targetId);
+      const report = await withTransaction(async (client) => {
+        await closeLegacyTerminalPendingReports(client, req.user.id, targetType, targetId);
+        const safetyCase = await findOrCreateLegacyOpenCase(client, targetType, targetId);
+        const { rows } = await client.query(
+          `INSERT INTO reports (
+             id, target_type, target_id, reason, detail, reporter_id, status,
+             client_request_id, case_id, source_type, source_id, subject_type, subject_id, reason_code, reported_field
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, 'pending',
+             $7, $8, $2, $3, $2, $3, 'other', 'content'
+           )
+           ON CONFLICT DO NOTHING
+           RETURNING *`,
+          [
+            `rp-${randomUUID()}`,
+            targetType,
+            targetId,
+            trimmedString(req.body.reason, "用户举报"),
+            trimmedString(req.body.detail),
+            req.user.id,
+            `legacy-${randomUUID()}`,
+            safetyCase.id
+          ]
+        );
+        return rows[0] || null;
+      });
+      if (!report) return res.status(200).json({ ok: true, message: "你已举报过该内容，我们会尽快处理" });
+      res.status(201).json({ report });
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
+async function assertReportTargetExists(targetType, targetId) {
+  const target =
+    targetType === "comment"
+      ? await query("SELECT id FROM comments WHERE id = $1 AND status <> 'deleted'", [targetId])
+      : await query("SELECT id FROM posts WHERE id = $1 AND status <> 'deleted'", [targetId]);
+  if (!target.rows[0]) {
+    throw badRequest(targetType === "comment" ? "举报的评论不存在" : "举报的帖子不存在");
+  }
+}
+
+
+async function closeLegacyTerminalPendingReports(client, reporterID, targetType, targetID) {
+  await client.query(
+    `UPDATE reports r
+     SET status = 'closed', updated_at = now()
+     FROM safety_cases sc
+     WHERE r.case_id = sc.id
+       AND r.reporter_id = $1
+       AND r.target_type = $2
+       AND r.target_id = $3
+       AND r.reason_code = 'other'
+       AND r.status = 'pending'
+       AND sc.category = 'other'
+       AND sc.status IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')`,
+    [reporterID, targetType, targetID]
+  );
+}
+
+async function findOrCreateLegacyOpenCase(client, targetType, targetID) {
+  const existing = await findLegacyOpenCase(client, targetType, targetID);
+  if (existing) return existing;
+
+  const { rows } = await client.query(
+    `INSERT INTO safety_cases (id, subject_type, subject_id, category, impact_scope)
+     VALUES ($1, $2, $3, 'other', $2)
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    [`sc-${randomUUID()}`, targetType, targetID]
+  );
+  if (rows[0]) return rows[0];
+
+  const raced = await findLegacyOpenCase(client, targetType, targetID);
+  if (raced) return raced;
+  throw new Error("Unable to create legacy safety case");
+}
+
+async function findLegacyOpenCase(client, targetType, targetID) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM safety_cases
+     WHERE subject_type = $1
+       AND subject_id = $2
+       AND category = 'other'
+       AND status NOT IN ('resolved_no_action', 'resolved_restored', 'resolved_actioned')
+     LIMIT 1
+     FOR UPDATE`,
+    [targetType, targetID]
+  );
+  return rows[0] || null;
 }

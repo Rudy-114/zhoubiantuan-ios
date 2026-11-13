@@ -72,9 +72,11 @@ export function userToPublicClient(row, counts = {}) {
  * F24: contact fields (WeChat, QQ, group number/info, external link) are only
  * returned to signed-in viewers. Pass `{ viewer }` (the viewer's user id) on
  * every call; an empty viewer means a guest and yields `contactHidden: true`.
+ * A collection whose contact details were hidden by a safety action stays
+ * hidden for everyone.
  */
 export function postToClient(row, counts = {}, { viewer = "" } = {}) {
-  const showContact = Boolean(viewer);
+  const showContact = Boolean(viewer) && row.collection_contact_visibility !== "hidden";
   const imageKeys = row.image_object_keys || [];
   const previewImageKeys = row.preview_image_object_keys || [];
   return {
@@ -84,6 +86,8 @@ export function postToClient(row, counts = {}, { viewer = "" } = {}) {
     imageNames: row.image_names || [],
     remoteImageURLs: imageKeys.map((key) => publicAssetUrl(key)),
     imageObjectKeys: imageKeys,
+    safetyStatus: row.safety_status || "active",
+    contactVisibility: row.collection_contact_visibility || "active",
     previewRemoteImageURLs: previewImageKeys.map((key) => publicAssetUrl(key)),
     previewImageObjectKeys: previewImageKeys,
     authorID: row.author_id,
@@ -119,11 +123,13 @@ export function postToClient(row, counts = {}, { viewer = "" } = {}) {
 }
 
 export function collectionToClient(row, postIDs = [], { viewer = "" } = {}) {
-  const showContact = Boolean(viewer);
+  const showContact = Boolean(viewer) && row.contact_visibility !== "hidden";
   return {
     id: row.id,
     revision: row.revision,
     ownerID: row.owner_id,
+    safetyStatus: row.safety_status || "active",
+    contactVisibility: row.contact_visibility || "active",
     name: row.name,
     contactWechat: showContact ? row.contact_wechat || "" : "",
     contactQQ: showContact ? row.contact_qq || "" : "",
@@ -146,6 +152,7 @@ export function commentToClient(row) {
     authorID: row.author_id,
     postID: row.post_id,
     replyToID: row.reply_to_id,
+    safetyStatus: row.safety_status || "active",
     createdAt: row.created_at.toISOString(),
     status: row.status,
     moderationReason: row.moderation_reason || "",
@@ -156,18 +163,20 @@ export function commentToClient(row) {
 export function directMessageToClient(row, viewerUserID = "") {
   const deletedForUserIds = Array.isArray(row.deleted_for_user_ids) ? row.deleted_for_user_ids : [];
   const isDeletedForMe = Boolean(viewerUserID && deletedForUserIds.includes(viewerUserID));
+  const isSafetyHidden = row.safety_status === "hidden";
   const isRevoked = Boolean(row.revoked_at);
   return {
     id: row.id,
     senderID: row.sender_id,
     revision: row.revision,
-    body: isRevoked || isDeletedForMe ? "" : row.body || "",
+    body: isRevoked || isDeletedForMe || isSafetyHidden ? "" : row.body || "",
     createdAt: row.created_at.toISOString(),
-    imageURL: isRevoked || isDeletedForMe ? "" : publicAssetUrl(row.image_object_key),
+    imageURL: isRevoked || isDeletedForMe || isSafetyHidden ? "" : publicAssetUrl(row.image_object_key),
     isRevoked,
+    isSafetyHidden,
     isDeletedForMe,
-    sharedPostID: isRevoked || isDeletedForMe ? null : row.shared_post_id || null,
-    sharedProfileUserID: isRevoked || isDeletedForMe ? null : row.shared_profile_user_id || null
+    sharedPostID: isRevoked || isDeletedForMe || isSafetyHidden ? null : row.shared_post_id || null,
+    sharedProfileUserID: isRevoked || isDeletedForMe || isSafetyHidden ? null : row.shared_profile_user_id || null
   };
 }
 

@@ -6,9 +6,9 @@ struct PostDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var commentDraft = ""
     @State private var replyTargetCommentID: String?
-    @State private var reportTarget: ReportTarget?
     @State private var actionCommentID: String?
     @State private var isShareSheetPresented = false
+    @State private var reportSource: SafetyReportSource?
     @State private var isAuthorProfilePresented = false
     @State private var authorProfileUserID: String?
     @State private var pendingDeleteCommentID: String?
@@ -33,7 +33,14 @@ struct PostDetailView: View {
             let imageCount = max(1, max(post.remoteImageURLs.count, post.uploadedImageData.isEmpty ? post.imageNames.count : post.uploadedImageData.count))
             let detailImageHeight = imageHeight(for: post, index: 0)
             VStack(spacing: 0) {
-                DetailTopBar(post: post, author: author, isShareSheetPresented: $isShareSheetPresented)
+                DetailTopBar(
+                    post: post,
+                    author: author,
+                    isShareSheetPresented: $isShareSheetPresented,
+                    onReportRequested: {
+                        presentPostReport(post)
+                    }
+                )
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         TabView(selection: $selectedImageIndex) {
@@ -70,10 +77,23 @@ struct PostDetailView: View {
                                 PingguRoleAvailabilityCard(postID: post.id)
                             }
                             ContactCard(post: post)
-                            ReportButton(target: .post(post.id))
                             CommentSection(postID: post.id, commentDraft: $commentDraft, replyTargetCommentID: $replyTargetCommentID, actionCommentID: $actionCommentID)
                         }
                         .padding(18)
+                        // Back is the system pop (see `body`); this only adds
+                        // swiping in from the right edge to open the author.
+                        .edgeSwipeNavigation(
+                            onBack: {},
+                            onForward: {
+                                hideKeyboard()
+                                authorProfileUserID = author.id
+                                withAnimation(AppMotion.page) {
+                                    isAuthorProfilePresented = true
+                                }
+                            },
+                            canGoBack: { false },
+                            resetOffsetAfterCommit: true
+                        )
                     }
                     .padding(.bottom, 20)
                 }
@@ -109,10 +129,6 @@ struct PostDetailView: View {
                                 actionCommentID = nil
                             }
                         },
-                        onReport: {
-                            reportTarget = .comment(actionComment.id)
-                            actionCommentID = nil
-                        },
                         onDelete: {
                             if replyTargetCommentID == actionComment.id {
                                 replyTargetCommentID = nil
@@ -121,12 +137,17 @@ struct PostDetailView: View {
                                 actionCommentID = nil
                             }
                             pendingDeleteCommentID = actionComment.id
-                        }
+                        },
+                        onReport: SafetyReportEntryPolicy.canReportComment(actionComment, currentUserID: store.currentUserID) ? {
+                            presentCommentReport(actionComment)
+                        } : nil
                     )
                     .transition(.opacity)
                 }
             }
-            .sheet(item: $reportTarget) { ReportForm(target: $0) }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
+            }
             .sheet(isPresented: $isShareSheetPresented) {
                 ShareSheetView(post: post)
                     .presentationDetents([.height(440), .large])
@@ -159,9 +180,34 @@ struct PostDetailView: View {
                 if store.loadingPostDetailIDs.contains(postID) { ProgressView("正在加载内容…") }
                 else {
                     ContentUnavailableView("暂时无法显示", systemImage: "exclamationmark.triangle", description: Text(store.postDetailErrors[postID] ?? "这条团购可能已下架或被隐藏。"))
-                    Button("重新加载") { Task { await store.loadPostDetail(postID) } }
+                    Button("重新加载") { Task { await store.loadPostDetail(postID, forceRefresh: true) } }
                 }
             }.background(Theme.background)
+        }
+    }
+
+    private func presentPostReport(_ post: GroupBuyPost) {
+        guard SafetyReportEntryPolicy.canReportPost(post, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.post(post)
+    }
+
+    private func presentCommentReport(_ comment: Comment) {
+        guard SafetyReportEntryPolicy.canReportComment(comment, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            actionCommentID = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            reportSource = SafetyReportSourceFactory.comment(comment)
         }
     }
 
@@ -189,9 +235,9 @@ struct PostDetailView: View {
             VStack(spacing: 18) {
                 Image(systemName: "eye.slash.fill")
                     .font(.system(size: 58, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 86, height: 86)
-                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+                    .background(Theme.accent.opacity(0.12), in: Circle())
 
                 Text("帖子不可见")
                     .font(AppFont.title)
@@ -367,8 +413,10 @@ struct DetailTopBar: View {
     let post: GroupBuyPost
     let author: User
     @Binding var isShareSheetPresented: Bool
+    let onReportRequested: () -> Void
 
     var body: some View {
+        let canReportPost = SafetyReportEntryPolicy.canReportPost(post, currentUserID: store.currentUserID)
         HStack(spacing: 12) {
             Button {
                 dismiss()
@@ -397,28 +445,41 @@ struct DetailTopBar: View {
             } label: {
                 Text(store.followedUserIDs.contains(author.id) ? "已关注" : "关注")
                     .font(AppFont.callout.weight(.bold))
-                    .foregroundStyle(store.followedUserIDs.contains(author.id) ? Theme.subtext : Theme.hotPink)
+                    .foregroundStyle(store.followedUserIDs.contains(author.id) ? Theme.subtext : Theme.accent)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 10)
                     .overlay {
-                        Capsule().stroke(store.followedUserIDs.contains(author.id) ? Theme.hairline : Theme.hotPink, lineWidth: 1)
+                        Capsule().stroke(store.followedUserIDs.contains(author.id) ? Theme.hairline : Theme.accent, lineWidth: 1)
                     }
             }
             .buttonStyle(.pressFeedback)
             .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(author.id))
 
-            Button {
-                if store.requireLogin(prompt: "登录后才能分享") {
-                    isShareSheetPresented = true
+            Menu {
+                Button {
+                    if store.requireLogin(prompt: "登录后才能分享") {
+                        isShareSheetPresented = true
+                    }
+                } label: {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+
+                if canReportPost {
+                    Button(role: .destructive) {
+                        onReportRequested()
+                    } label: {
+                        Label("举报", systemImage: "exclamationmark.bubble")
+                    }
                 }
             } label: {
-                Image(systemName: "square.and.arrow.up")
+                Image(systemName: "ellipsis.circle")
                     .font(.system(size: 24, weight: .semibold))
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("分享")
             .buttonStyle(.pressFeedback)
             .foregroundStyle(Theme.text)
+            .accessibilityLabel("更多操作")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -497,7 +558,7 @@ struct ShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
-                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
+                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.accent) {
                         isRecipientPickerPresented = true
                     }
                 }
@@ -746,7 +807,7 @@ struct ProfileShareSheetView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 26) {
-                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.hotPink) {
+                    ShareOptionButton(title: "私信好友", icon: "paperplane.fill", color: Theme.accent) {
                         isRecipientPickerPresented = true
                     }
                 }
@@ -911,7 +972,7 @@ private struct ExternalLinkRow: View {
                 Link(destination: validURL) {
                     Text(urlString.trimmed)
                         .font(AppFont.callout.weight(.bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .multilineTextAlignment(.trailing)
                         .lineLimit(2)
                 }
@@ -989,7 +1050,7 @@ struct PingguRoleAvailabilityCard: View {
                     if !draftRoles.isEmpty && !rolesAreValid {
                         Text("请填写角色名称，并将余量设置为大于 0 的整数。")
                             .font(.footnote)
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                     }
                     Button(isSaving ? "正在保存…" : "保存库存") {
                         let session = store.authSessionVersion
@@ -1044,7 +1105,7 @@ struct EditableRoleRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 TextField("角色名", text: $role.name)
-                Button("删除", systemImage: "trash", action: onDelete).labelStyle(.iconOnly).tint(Theme.hotPink)
+                Button("删除", systemImage: "trash", action: onDelete).labelStyle(.iconOnly).tint(Theme.danger)
             }
             HStack {
                 Text("余量")
@@ -1071,6 +1132,7 @@ struct ContactCard: View {
         let qq = collection?.contactQQ ?? post.qq
         let groupNumber = collection?.contactGroupNumber ?? post.groupNumber
         let groupInfo = collection?.groupInfo ?? post.groupInfo
+        let isContactHidden = SafetyReportEntryPolicy.isContactHidden(post: post, collection: collection)
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("联系团长", systemImage: "person.crop.circle.badge.questionmark")
@@ -1079,7 +1141,7 @@ struct ContactCard: View {
                 Spacer()
                 Text(collection == nil ? "外部交易" : "合集共享")
                     .font(AppFont.caption.weight(.bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
             }
             Text("站内仅展示信息和咨询入口，不承接支付、订单、退款、物流或售后。正式交易请在微信、QQ、群聊等外部平台完成。")
                 .font(AppFont.caption.weight(.regular))
@@ -1095,21 +1157,21 @@ struct ContactCard: View {
                         .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                        .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 }
                 .buttonStyle(.pressFeedback)
             } else {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
-                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !wechat.trimmed.isEmpty) {
+                    ContactButton(title: "复制微信", icon: "doc.on.doc.fill", isEnabled: !isContactHidden && !wechat.trimmed.isEmpty) {
                         store.copyToPasteboard(wechat, label: "微信")
                     }
-                    ContactButton(title: "复制 QQ", icon: "number", isEnabled: !qq.trimmed.isEmpty) {
+                    ContactButton(title: "复制 QQ", icon: "number", isEnabled: !isContactHidden && !qq.trimmed.isEmpty) {
                         store.copyToPasteboard(qq, label: "QQ")
                     }
                 }
                 HStack(spacing: 10) {
-                    ContactButton(title: "加入群聊", icon: "person.3.fill", isEnabled: !groupNumber.trimmed.isEmpty) {
+                    ContactButton(title: "加入群聊", icon: "person.3.fill", isEnabled: !isContactHidden && !groupNumber.trimmed.isEmpty) {
                         store.copyToPasteboard(groupNumber, label: "QQ群号")
                     }
                     ContactButton(title: "私信咨询", icon: "bubble.left.and.text.bubble.right.fill") {
@@ -1117,7 +1179,13 @@ struct ContactCard: View {
                     }
                 }
             }
-            if !groupInfo.trimmed.isEmpty {
+            if isContactHidden {
+                Text(SafetyReportEntryPolicy.hiddenContactPlaceholder)
+                    .font(AppFont.caption)
+                    .lineSpacing(3)
+                    .foregroundStyle(Theme.subtext)
+                    .padding(.top, 2)
+            } else if !groupInfo.trimmed.isEmpty {
                 Text(groupInfo)
                     .font(AppFont.caption)
                     .lineSpacing(3)
@@ -1273,8 +1341,8 @@ struct CommentActionOverlay: View {
     let onDismiss: () -> Void
     let onReply: () -> Void
     let onCopy: () -> Void
-    let onReport: () -> Void
     let onDelete: () -> Void
+    let onReport: (() -> Void)?
 
     var body: some View {
         let author = store.user(id: comment.authorID)
@@ -1298,8 +1366,10 @@ struct CommentActionOverlay: View {
                     CommentActionRow(title: "回复", systemImage: "bubble.left", action: onReply)
                     CommentActionDivider()
                     CommentActionRow(title: "复制", systemImage: "doc.on.doc", action: onCopy)
-                    CommentActionDivider()
-                    CommentActionRow(title: "举报", systemImage: "flag", action: onReport)
+                    if let onReport {
+                        CommentActionDivider()
+                        CommentActionRow(title: "举报", systemImage: "exclamationmark.bubble", isDestructive: true, action: onReport)
+                    }
                 }
                 .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
@@ -1358,7 +1428,7 @@ struct CommentActionRow: View {
                     .font(AppFont.title.weight(.semibold))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(isDestructive ? Theme.hotPink : Color.white.opacity(0.9))
+            .foregroundStyle(isDestructive ? Theme.danger : Color.white.opacity(0.9))
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 72)
             .padding(.horizontal, 18)
@@ -1408,7 +1478,7 @@ struct DetailActionBar: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrowshape.turn.up.left.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                     Text("回复 \(replyAuthor.nickname)")
                         .font(AppFont.caption.weight(.semibold))
                         .foregroundStyle(Theme.text)
@@ -1466,13 +1536,13 @@ struct DetailActionBar: View {
                     .buttonStyle(.pressFeedback)
                 }
 
-                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.hotPink : Theme.text, feedback: .impact(weight: .light)) {
+                ActionIconButton(icon: isLiked ? "heart.fill" : "heart", title: livePost.likedCount.formattedCount, tint: isLiked ? Theme.accent : Theme.text, feedback: .impact(weight: .light)) {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
                         store.toggleLike(postID: post.id)
                     }
                 }
                 .disabled(store.pendingReactionKeys.contains("like:\(post.id)"))
-                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.hotPink : Theme.text, feedback: .selection) {
+                ActionIconButton(icon: isFavorite ? "star.fill" : "star", title: livePost.favoriteCount.formattedCount, tint: isFavorite ? Theme.accent : Theme.text, feedback: .selection) {
                     store.toggleFavorite(postID: post.id)
                 }
                 .disabled(store.pendingReactionKeys.contains("favorite:\(post.id)"))

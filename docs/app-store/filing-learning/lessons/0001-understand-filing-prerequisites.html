@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>看懂 App 备案的三个前置条件</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <p class="status">5 分钟短课</p>
+  <h1>看懂 App 备案的三个前置条件</h1>
+  <p class="lead">这三项不是技术暗号。它们分别在确认：谁对 App 负责、服务接在哪里、域名登记在谁名下。</p>
+
+  <h2>1. 备案主体 = 谁是法律上的运营者</h2>
+  <div class="term">没有公司、确实由你个人运营，就通常以个人备案；如果 App 由公司或其他单位运营，就用该单位的完整法定名称和证件。不能为了方便借用别人的主体。</div>
+  <p>Apple Developer 账号类型可以作为运营归属的线索，但不会自动决定备案主体。决定因素是实际由谁提供服务并承担责任。个人备案时，App 负责人通常就是本人；单位备案需要单位证件和负责人资料。</p>
+
+  <h2>2. 服务器支持备案 = 接入资源能否被备案系统选中</h2>
+  <div class="term">不是问服务器“能不能运行 App”，而是问它是否属于中国内地的合格接入资源，并满足云厂商对实例类型、付费方式、时长和公网带宽等要求。</div>
+  <p>周边团当前后端公开解析到阿里云上海网络，项目记录也表明生产后端运行在 ECS，所以地域和厂商方向正确。但公网无法看到实例是包年包月还是按量付费、剩余多久，因此最终要以阿里云 ICP 备案页面能否选中该实例为准。</p>
+
+  <h2>3. 域名实名一致 = 域名登记人和主体能否对应</h2>
+  <div class="term">个人备案时，域名实名姓名、证件类型和证件号码应与个人主体一致；单位备案时，应按阿里云和所在地管局规则与主办单位或允许的负责人信息一致。</div>
+  <p>`zhoubiantuanmail.top` 已确认由阿里云万网注册且状态正常，但公开 WHOIS 隐藏了持有人姓名，所以必须登录域名控制台查看“域名持有者”和实名认证证件。主体尚未选定之前，也无法判断“一致还是不一致”。</p>
+
+  <h2>现在只做这三步</h2>
+  <ol>
+    <li>先回答：这个 App 实际由你个人运营，还是已有公司/个体工商户运营？</li>
+    <li>进入阿里云 ICP 备案，查看“可用云资源”里是否出现当前上海 ECS。</li>
+    <li>进入域名控制台查看实名持有人；只核对姓名/单位是否匹配，不要把证件号码发到聊天里。</li>
+  </ol>
+
+  <h2>一分钟自测</h2>
+  <p>如果域名登记在你个人名下，但你决定用公司主体备案，哪一项需要先处理？答案：域名实名认证信息需要按适用规则调整到与单位备案主体相符，而不是修改服务器。</p>
+
+  <p>首选资料：<a href="https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/icp-filing-server-access-information-check">阿里云备案服务器检查</a>、<a href="https://help.aliyun.com/zh/icp-filing/basic-icp-service/user-guide/prepare-and-check-the-domain-name">阿里云域名准备与检查</a>。</p>
+  <p><a href="../reference/filing-three-checks.html">打开三项速查表</a>。任何一步看不懂，都可以继续问 Codex。</p>
+</main>
+</body>
+</html>

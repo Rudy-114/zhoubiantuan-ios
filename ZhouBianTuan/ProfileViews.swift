@@ -169,7 +169,7 @@ struct ProfileView: View {
                                             }
                                             .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                             Capsule()
-                                                .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                                .fill(selectedTab == tab ? Theme.accent : Color.clear)
                                                 .frame(width: 48, height: 4)
                                         }
                                         .frame(maxWidth: .infinity)
@@ -275,7 +275,7 @@ struct ProfileBioEditorView: View {
                     }
                 }
                 .font(AppFont.title.weight(canSave ? .bold : .medium))
-                .foregroundStyle(canSave ? Theme.hotPink : Color(red: 0.45, green: 0.08, blue: 0.13))
+                .foregroundStyle(canSave ? Theme.accent : Theme.muted)
                 .frame(width: 86, height: 48, alignment: .trailing)
                 .animation(.easeInOut(duration: 0.16), value: canSave)
                 .disabled(!canSave || isSaving)
@@ -291,7 +291,7 @@ struct ProfileBioEditorView: View {
                 TextEditor(text: $bio)
                     .font(AppFont.title.weight(.medium))
                     .foregroundStyle(Theme.text)
-                    .tint(Theme.hotPink)
+                    .tint(Theme.accent)
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 14)
                     .padding(.top, 10)
@@ -447,7 +447,7 @@ struct UserRelationRow: View {
                             .lineLimit(1)
                         Text("ID：\(store.registrationID(for: user.id))")
                             .font(AppFont.caption.weight(.bold))
-                            .foregroundStyle(Theme.hotPink.opacity(0.88))
+                            .foregroundStyle(Theme.accent.opacity(0.88))
                         Text(user.bio)
                             .font(AppFont.caption.weight(.semibold))
                             .foregroundStyle(Theme.subtext)
@@ -468,7 +468,7 @@ struct UserRelationRow: View {
                         .foregroundStyle(store.followedUserIDs.contains(user.id) ? Theme.subtext : .white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(store.followedUserIDs.contains(user.id) ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                 }
                 .buttonStyle(.pressFeedback)
                 .sensoryFeedback(.selection, trigger: store.followedUserIDs.contains(user.id))
@@ -554,7 +554,7 @@ struct ProfileNotesPanel: View {
                         } label: {
                             Text(isManaging ? "完成" : "管理")
                                 .font(AppFont.callout.weight(.bold))
-                                .foregroundStyle(isManaging ? Theme.text : Theme.hotPink)
+                                .foregroundStyle(isManaging ? Theme.text : Theme.accent)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .background(Theme.panelRaised, in: Capsule())
@@ -589,10 +589,10 @@ struct ProfileNotesPanel: View {
                             Spacer()
                             Text("\(attentionPosts.count)")
                                 .font(AppFont.caption.weight(.bold))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(Theme.hotPink.opacity(0.13), in: Capsule())
+                                .background(Theme.accent.opacity(0.13), in: Capsule())
                         }
                         ForEach(attentionPosts) { post in
                             ProfileAttentionPostRow(post: post)
@@ -641,10 +641,10 @@ struct ProfileAttentionPostRow: View {
                         .lineLimit(2)
                     Text(post.status.rawValue)
                         .font(AppFont.caption.weight(.bold))
-                        .foregroundStyle(post.status.canRepublish ? Theme.hotPink : Theme.muted)
+                        .foregroundStyle(post.status.canRepublish ? Theme.accent : Theme.muted)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((post.status.canRepublish ? Theme.hotPink.opacity(0.13) : Theme.panelRaised), in: Capsule())
+                        .background((post.status.canRepublish ? Theme.accent.opacity(0.13) : Theme.panelRaised), in: Capsule())
                 }
 
                 Spacer()
@@ -658,7 +658,7 @@ struct ProfileAttentionPostRow: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Theme.hotPink, in: Capsule())
+                            .background(Theme.accentFill, in: Capsule())
                     }
                     .buttonStyle(.pressFeedback)
                 } else {
@@ -675,9 +675,9 @@ struct ProfileAttentionPostRow: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.hotPink)
+                        .foregroundStyle(Theme.accent)
                         .frame(width: 44, height: 44)
-                        .background(Theme.hotPink.opacity(0.12), in: Capsule())
+                        .background(Theme.accent.opacity(0.12), in: Capsule())
                 }
                 .accessibilityLabel("删除")
                 .buttonStyle(.pressFeedback)
@@ -730,9 +730,9 @@ struct ProfilePostManageRow: View {
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 44, height: 44)
-                    .background(Theme.hotPink.opacity(0.12), in: Circle())
+                    .background(Theme.accent.opacity(0.12), in: Circle())
             }
             .accessibilityLabel("删除")
             .buttonStyle(.pressFeedback)
@@ -858,7 +858,7 @@ struct ProfileCollectionsPanel: View {
                                     .foregroundStyle(isManaging ? .white : Theme.text)
                                     .padding(.horizontal, 13)
                                     .frame(height: 36)
-                                    .background(isManaging ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                                    .background(isManaging ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                             }
                             .buttonStyle(.pressFeedback)
                         }
@@ -871,7 +871,7 @@ struct ProfileCollectionsPanel: View {
                                     .font(.system(size: 18, weight: .black))
                                     .foregroundStyle(.white)
                                     .frame(width: 44, height: 44)
-                                    .background(Theme.hotPink, in: Circle())
+                                    .background(Theme.accentFill, in: Circle())
                             }
                             .accessibilityLabel("新建合集")
                             .buttonStyle(.pressFeedback)
@@ -919,7 +919,7 @@ struct ProfileCollectionsPanel: View {
                         .foregroundStyle(selectedCollectionIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(selectedCollectionIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(selectedCollectionIDs.isEmpty ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -996,10 +996,10 @@ struct CollectionCard: View {
                     Spacer()
                     Text(isEnded ? "已结团" : "\(visibleCount)帖")
                         .font(AppFont.caption.weight(.bold))
-                        .foregroundStyle(isEnded ? Theme.muted : Theme.hotPink)
+                        .foregroundStyle(isEnded ? Theme.muted : Theme.accent)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((isEnded ? Theme.panelRaised : Theme.hotPink.opacity(0.13)), in: Capsule())
+                        .background((isEnded ? Theme.panelRaised : Theme.accent.opacity(0.13)), in: Capsule())
                 }
                 Text(collection.defaultNote)
                     .font(AppFont.caption.weight(.semibold))
@@ -1023,7 +1023,7 @@ struct CollectionCard: View {
             if isManaging {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.muted)
                     .padding(12)
             }
         }
@@ -1034,6 +1034,7 @@ struct CreateCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: MockAppStore
     let editingCollection: GroupCollection?
+    let revisionCaseID: String?
     var onCreated: ((String) -> Void)? = nil
     @State private var isSaving = false
     @State private var saveFailed = false
@@ -1046,10 +1047,17 @@ struct CreateCollectionSheet: View {
     @State private var groupInfo = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var note = ""
+    @State private var isSubmittingRevision = false
+    @State private var revisionErrorMessage: String?
 
-    init(editingCollection: GroupCollection? = nil, onCreated: ((String) -> Void)? = nil) {
+    init(
+        editingCollection: GroupCollection? = nil,
+        revisionCaseID: String? = nil,
+        onCreated: ((String) -> Void)? = nil
+    ) {
         self.editingCollection = editingCollection
         _revision = State(initialValue: editingCollection?.revision ?? 1)
+        self.revisionCaseID = revisionCaseID
         self.onCreated = onCreated
         _name = State(initialValue: editingCollection?.name ?? "")
         _wechat = State(initialValue: editingCollection?.contactWechat ?? "")
@@ -1064,6 +1072,10 @@ struct CreateCollectionSheet: View {
         editingCollection != nil
     }
 
+    var isRevision: Bool {
+        revisionCaseID != nil && editingCollection != nil
+    }
+
     var canCreate: Bool {
         !name.trimmed.isEmpty && (!wechat.trimmed.isEmpty || !qq.trimmed.isEmpty || !groupNumber.trimmed.isEmpty) && !note.trimmed.isEmpty
     }
@@ -1072,7 +1084,12 @@ struct CreateCollectionSheet: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HeaderTitle(title: isEditing ? "编辑拼团信息" : "创建拼团合集", subtitle: "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明")
+                    HeaderTitle(
+                        title: isRevision ? "整改拼团合集" : (isEditing ? "编辑拼团信息" : "创建拼团合集"),
+                        subtitle: isRevision
+                            ? "提交的是候选版本；审核通过前，当前合集信息保持不变"
+                            : "合集内帖子会自动共享联系方式、截团时间、拼团名称和默认说明"
+                    )
                     PrototypeTextField(title: "合集名称", placeholder: "例如：2026冬兵生日团", text: $name, required: true, limit: InputLimit.collectionName)
                     HStack(spacing: 10) {
                         PrototypeTextField(title: "微信", placeholder: "微信号", text: $wechat, required: qq.trimmed.isEmpty && groupNumber.trimmed.isEmpty, limit: InputLimit.contact)
@@ -1087,6 +1104,7 @@ struct CreateCollectionSheet: View {
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control))
                     PrototypeTextEditor(title: "默认说明", placeholder: "合集内所有帖子共用的说明", text: $note, required: true, limit: InputLimit.groupInfo)
                     Button {
+                        if isRevision { Task { await submitRevision() }; return }
                         let session = store.authSessionVersion
                         isSaving = true
                         Task { @MainActor in
@@ -1105,16 +1123,19 @@ struct CreateCollectionSheet: View {
                             if saved { dismiss() }
                         }
                     } label: {
-                        Text(isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
+                        Text(isRevision ? submitButtonTitle : isSaving ? "正在保存…" : (canCreate ? (isEditing ? "保存修改" : "创建合集") : "补齐必填字段"))
                             .font(AppFont.headline.weight(.bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
-                            .background(canCreate ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                            .background(canCreate ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                             .foregroundStyle(canCreate ? .white : Theme.muted)
                     }
                     .buttonStyle(.pressFeedback)
-                    .disabled(!canCreate)
+                    .disabled(!canCreate || isSubmittingRevision || store.isSubmittingSafetyContentAction)
                     .padding(.top, 8)
+                    if isRevision, let revisionErrorMessage {
+                        SafetyContentActionInlineError(message: revisionErrorMessage)
+                    }
                     if saveFailed, let editingCollection {
                         Button("重新加载最新合集信息") {
                             guard let latest = store.collection(id: editingCollection.id) else { return }
@@ -1139,18 +1160,54 @@ struct CreateCollectionSheet: View {
             }
         }
     }
+
+    private var submitButtonTitle: String {
+        guard canCreate else { return "补齐必填字段" }
+        if isRevision {
+            return isSubmittingRevision || store.isSubmittingSafetyContentAction ? "正在提交整改" : "提交整改复审"
+        }
+        return isEditing ? "保存修改" : "创建合集"
+    }
+
+    @MainActor
+    private func submitRevision() async {
+        guard let revisionCaseID else { return }
+        isSubmittingRevision = true
+        revisionErrorMessage = nil
+        defer { isSubmittingRevision = false }
+        let snapshot = SafetyCollectionRevisionSnapshot(
+            name: name.trimmed,
+            contactWechat: wechat.trimmed,
+            contactQQ: qq.trimmed,
+            contactGroupNumber: groupNumber.trimmed,
+            groupInfo: groupInfo.trimmed,
+            deadline: BackendDateParserString.string(from: deadline),
+            defaultNote: note.trimmed,
+            deadlineConfirmed: true
+        )
+        let succeeded = await store.submitRevision(
+            caseID: revisionCaseID,
+            draft: .collection(snapshot: snapshot, objectKeys: [])
+        )
+        if succeeded {
+            dismiss()
+        } else {
+            revisionErrorMessage = store.safetyContentActionErrorMessage ?? "整改提交失败，请重试"
+        }
+    }
 }
 
 struct CollectionDetailView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var isEditingCollection = false
+    @State private var reportSource: SafetyReportSource?
     let collectionID: String
 
     var body: some View {
         if let collection = store.collection(id: collectionID) {
             let posts = store.posts(in: collection.id)
             let canManage = collection.ownerID == store.currentUserID
-            ScrollView(showsIndicators: false) {
+            PullToRefreshScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     HeaderTitle(title: collection.name, subtitle: "合集共享信息会自动继承到新发布帖子")
                     if canManage {
@@ -1162,7 +1219,7 @@ struct CollectionDetailView: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Theme.hotPink, in: Capsule())
+                                .background(Theme.accentFill, in: Capsule())
                         }
                         .buttonStyle(.pressFeedback)
                         .padding(.horizontal, 16)
@@ -1192,20 +1249,53 @@ struct CollectionDetailView: View {
                 }
                 .padding(.bottom, 28)
                 ContentPageFooter(query: .collection(collectionID))
+            } action: {
+                await store.refreshContentPage(.collection(collectionID))
             }
-            .refreshable { await store.refreshContentPage(.collection(collectionID)) }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle(collection.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if !canManage {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button(role: .destructive) {
+                                presentCollectionReport(collection)
+                            } label: {
+                                Label("举报", systemImage: "exclamationmark.bubble")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("更多操作")
+                    }
+                }
+            }
             .sheet(isPresented: $isEditingCollection) {
                 CreateCollectionSheet(editingCollection: collection)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+            .sheet(item: $reportSource) { source in
+                ReportSheet(source: source) {}
+            }
         } else {
             ContentUnavailableView("合集不存在", systemImage: "rectangle.stack.badge.minus")
                 .background(Theme.background)
         }
+    }
+
+    private func presentCollectionReport(_ collection: GroupCollection) {
+        guard SafetyReportEntryPolicy.canReportCollection(collection, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.collection(collection)
     }
 }
 
@@ -1263,7 +1353,7 @@ struct CollectionPostManager: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Theme.hotPink, in: Capsule())
+                                .background(Theme.accentFill, in: Capsule())
                         }
                         .buttonStyle(.pressFeedback)
                     }
@@ -1282,15 +1372,21 @@ struct CollectionSharedInfoCard: View {
     let collection: GroupCollection
 
     var body: some View {
+        let isContactHidden = SafetyReportEntryPolicy.isContactHidden(collection: collection)
         VStack(alignment: .leading, spacing: 12) {
             Label("合集共享信息", systemImage: "link.circle.fill")
                 .font(AppFont.headline.weight(.bold))
                 .foregroundStyle(Theme.text)
             InfoRow(title: "拼团名称", value: collection.name)
             InfoRow(title: "截团时间", value: collection.deadline.fullDisplay)
-            InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
-            InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
-            InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            if isContactHidden {
+                InfoRow(title: "联系方式", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+                InfoRow(title: "拉群说明", value: SafetyReportEntryPolicy.hiddenContactPlaceholder)
+            } else {
+                InfoRow(title: "微信 / QQ", value: "\(collection.contactWechat.isEmpty ? "未填" : collection.contactWechat) · \(collection.contactQQ.isEmpty ? "未填" : collection.contactQQ)")
+                InfoRow(title: "QQ群号", value: collection.contactGroupNumber.isEmpty ? "未填写" : collection.contactGroupNumber)
+                InfoRow(title: "拉群说明", value: collection.groupInfo.isEmpty ? "未填写" : collection.groupInfo)
+            }
             InfoRow(title: "默认说明", value: collection.defaultNote)
         }
         .padding(14)
@@ -1418,7 +1514,7 @@ struct BrowsingHistoryView: View {
                         .font(AppFont.title)
                         .foregroundStyle(Theme.text)
                     Capsule()
-                        .fill(Theme.hotPink)
+                        .fill(Theme.accent)
                         .frame(width: 48, height: 4)
                 }
                 Spacer()
@@ -1460,7 +1556,7 @@ struct BrowsingHistoryView: View {
                         .foregroundStyle(selectedIDs.isEmpty ? Theme.muted : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(selectedIDs.isEmpty ? Theme.panelRaised : Theme.hotPink, in: Capsule())
+                        .background(selectedIDs.isEmpty ? Theme.panelRaised : Theme.accentFill, in: Capsule())
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 8)
@@ -1561,7 +1657,7 @@ struct HistoryCard: View {
                 if isManaging {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 25, weight: .bold))
-                        .foregroundStyle(isSelected ? Theme.hotPink : .white)
+                        .foregroundStyle(isSelected ? Theme.accent : .white)
                         .shadow(radius: 4)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(8)
@@ -1690,7 +1786,7 @@ struct DrawerRowContent: View {
                     .font(AppFont.caption.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(width: 28, height: 28)
-                    .background(Theme.hotPink, in: Circle())
+                    .background(Theme.accentFill, in: Circle())
             }
         }
         .padding(.horizontal, 14)
@@ -1878,7 +1974,7 @@ struct EditProfileView: View {
                                 HStack {
                                     Text("恢复默认背景图")
                                         .font(AppFont.callout.weight(.bold))
-                                        .foregroundStyle(Theme.hotPink)
+                                        .foregroundStyle(Theme.accent)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 146)
@@ -1912,7 +2008,7 @@ struct EditProfileView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(Theme.hotPink, in: Capsule())
+                            .background(Theme.accentFill, in: Capsule())
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(isSaving)
@@ -2055,7 +2151,7 @@ struct ProfileEditField: View {
                 .characterLimit(limit, text: $text)
                 .font(AppFont.title.weight(.semibold))
                 .foregroundStyle(text.isEmpty ? Theme.muted : Theme.text)
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
                 .disabled(!isEditable)
                 .opacity(isEditable ? 1 : 0.52)
             if let limit, InputLimit.count(text) * 5 >= limit * 4 {
@@ -2113,13 +2209,14 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        ScrollView {
+        PullToRefreshScrollView {
             VStack {
                 WaterfallGrid(posts: favoritePosts).padding(12)
                 ContentPageFooter(query: .favorites)
             }
+        } action: {
+            await store.refreshContentPage(.favorites)
         }
-        .refreshable { await store.refreshContentPage(.favorites) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("我的收藏")
     }
@@ -2129,7 +2226,7 @@ struct ReminderCenterView: View {
     @EnvironmentObject private var store: MockAppStore
 
     var body: some View {
-        ScrollView {
+        PullToRefreshScrollView {
             VStack(spacing: 12) {
                 Text("显示收藏中尚未截团的内容。请打开 App 查看；目前不会发送系统通知。")
                     .font(AppFont.caption.weight(.regular))
@@ -2149,8 +2246,9 @@ struct ReminderCenterView: View {
             }
             .padding(16)
             ContentPageFooter(query: .favorites)
+        } action: {
+            await store.refreshContentPage(.favorites)
         }
-        .refreshable { await store.refreshContentPage(.favorites) }
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("收藏截团日期")
     }
@@ -2226,7 +2324,7 @@ struct TagContentView: View {
                                         .font(AppFont.title.weight(sort == item ? .bold : .semibold))
                                         .foregroundStyle(sort == item ? Theme.text : Theme.subtext)
                                     Capsule()
-                                        .fill(sort == item ? Theme.hotPink : Color.clear)
+                                        .fill(sort == item ? Theme.accent : Color.clear)
                                         .frame(width: 42, height: 4)
                                 }
                             }
@@ -2270,6 +2368,7 @@ struct UserProfileView: View {
     @EnvironmentObject private var store: MockAppStore
     @State private var selectedTab = "制品"
     @State private var pendingBlockConfirmation: BlockConfirmation?
+    @State private var reportSource: SafetyReportSource?
     let userID: String
 
     private let tabs = ["制品", "拼团合集"]
@@ -2314,7 +2413,37 @@ struct UserProfileView: View {
                                 .buttonStyle(.pressFeedback)
 
                                 Spacer()
-                                if userID != store.currentUserID { ReportButton(target: .user(userID)).tint(.white) }
+
+                                if user.id != store.currentUserID {
+                                    Menu {
+                                        Button(role: .destructive) {
+                                            presentUserReport(user)
+                                        } label: {
+                                            Label("举报用户", systemImage: "exclamationmark.bubble")
+                                        }
+
+                                        Button(role: store.isBlocked(user.id) ? nil : .destructive) {
+                                            pendingBlockConfirmation = BlockConfirmation(
+                                                userID: user.id,
+                                                nickname: user.nickname,
+                                                isUnblock: store.isBlocked(user.id)
+                                            )
+                                        } label: {
+                                            Label(
+                                                store.isBlocked(user.id) ? "解除拉黑" : "拉黑该用户",
+                                                systemImage: store.isBlocked(user.id) ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark"
+                                            )
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                            .font(.system(size: 24, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .frame(width: 48, height: 48)
+                                            .background(.black.opacity(0.22), in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("更多操作")
+                                }
                             }
 
                             Spacer(minLength: 20)
@@ -2403,24 +2532,6 @@ struct UserProfileView: View {
                                 }
                             }
 
-                            if user.id != store.currentUserID {
-                                Button {
-                                    pendingBlockConfirmation = BlockConfirmation(
-                                        userID: user.id,
-                                        nickname: user.nickname,
-                                        isUnblock: store.isBlocked(user.id)
-                                    )
-                                } label: {
-                                    Text(store.isBlocked(user.id) ? "已拉黑 · 点击解除" : "拉黑该用户")
-                                        .font(AppFont.callout.weight(.bold))
-                                        .foregroundStyle(.white.opacity(0.9))
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-                                }
-                                .buttonStyle(.pressFeedback)
-                                .padding(.top, 10)
-                            }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
@@ -2441,7 +2552,7 @@ struct UserProfileView: View {
                                             .font(AppFont.title.weight(selectedTab == tab ? .bold : .semibold))
                                             .foregroundStyle(selectedTab == tab ? Theme.text : Theme.subtext)
                                         Capsule()
-                                            .fill(selectedTab == tab ? Theme.hotPink : Color.clear)
+                                            .fill(selectedTab == tab ? Theme.accent : Color.clear)
                                             .frame(width: 48, height: 4)
                                     }
                                     .frame(maxWidth: .infinity)
@@ -2479,6 +2590,9 @@ struct UserProfileView: View {
         .navigationBarBackButtonHidden(true)
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .sheet(item: $reportSource) { source in
+            ReportSheet(source: source) {}
+        }
         .task(id: "\(store.authSessionVersion)-\(userID)") {
             await store.loadContentPage(.init(path: "/users", parameters: ["id": userID]), reset: true)
         }
@@ -2514,6 +2628,16 @@ struct UserProfileView: View {
                 : "拉黑 \(confirmation.nickname) 后，对方将无法私信你，你也会隐藏来自对方的内容。")
         }
         .interactiveBackSwipe()
+    }
+
+    private func presentUserReport(_ user: User) {
+        guard SafetyReportEntryPolicy.canReportUser(userID: user.id, currentUserID: store.currentUserID) else {
+            return
+        }
+        guard store.requireLogin(prompt: "登录后才能举报") else {
+            return
+        }
+        reportSource = SafetyReportSourceFactory.user(user)
     }
 
     private func profileEmptyMessage(for user: User) -> String {

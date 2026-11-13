@@ -50,7 +50,7 @@ struct GuestAuthView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .frame(height: 62)
                                 .padding(.horizontal, 20)
-                                .background(Theme.hotPink, in: Capsule())
+                                .background(Theme.accentFill, in: Capsule())
                         }
                         .buttonStyle(.pressFeedback)
 
@@ -131,8 +131,8 @@ struct GuestBrandLogo: View {
         LinearGradient(
             colors: [
                 .white,
-                Color(red: 1, green: 0.78, blue: 0.82),
-                Theme.hotPink
+                Theme.accentHighlight,
+                Theme.accent
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -154,7 +154,7 @@ struct GuestBrandLogo: View {
                 .offset(x: -1, y: 2)
         }
         .frame(width: 92, height: 92)
-            .shadow(color: Theme.hotPink.opacity(0.26), radius: 14, x: 0, y: 6)
+            .shadow(color: Theme.accent.opacity(0.26), radius: 14, x: 0, y: 6)
             .accessibilityLabel("团")
     }
 }
@@ -281,7 +281,7 @@ struct AccountAuthView: View {
                                     .foregroundStyle(mode == item ? .white : Color.white.opacity(0.52))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
-                                    .background(mode == item ? Theme.hotPink : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                    .background(mode == item ? Theme.accentFill : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                             }
                             .accessibilityAddTraits(mode == item ? .isSelected : [])
                             .buttonStyle(.pressFeedback)
@@ -311,7 +311,7 @@ struct AccountAuthView: View {
                                             .font(AppFont.callout.weight(.bold))
                                             .foregroundStyle(.white)
                                             .frame(width: 104, height: 52)
-                                            .background(canRequestCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                            .background(canRequestCode ? Theme.accentFill : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                                     }
                                     .buttonStyle(.pressFeedback)
                                     .disabled(!canRequestCode)
@@ -346,7 +346,7 @@ struct AccountAuthView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(!canSubmit)
@@ -642,13 +642,13 @@ struct AuthTextField: View {
                 .autocorrectionDisabled()
                 .font(AppFont.headline)
                 .foregroundStyle(.white)
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
                 .padding(.horizontal, 14)
                 .frame(height: 52)
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.control)
-                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
+                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.danger.opacity(0.84), lineWidth: 1)
                 }
             if let error {
                 AuthFieldErrorText(error)
@@ -675,7 +675,7 @@ struct AuthSecureField: View {
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.control)
-                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.hotPink.opacity(0.84), lineWidth: 1)
+                        .stroke(error == nil ? Color.white.opacity(0.10) : Theme.danger.opacity(0.84), lineWidth: 1)
                 }
             if let error {
                 AuthFieldErrorText(error)
@@ -694,7 +694,7 @@ private struct AuthFieldErrorText: View {
     var body: some View {
         Text(message)
             .font(AppFont.caption.weight(.bold))
-            .foregroundStyle(Theme.hotPink)
+            .foregroundStyle(Theme.danger)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -714,7 +714,7 @@ struct SecureTextField: UIViewRepresentable {
         textField.borderStyle = .none
         textField.backgroundColor = .clear
         textField.textColor = .white
-        textField.tintColor = UIColor(red: 1.0, green: 0.12, blue: 0.27, alpha: 1)
+        textField.tintColor = Theme.accentUIColor
         textField.font = .systemFont(ofSize: 17, weight: .semibold)
         textField.attributedPlaceholder = NSAttributedString(
             string: placeholder,
@@ -814,7 +814,7 @@ struct PasswordResetView: View {
                                 .font(AppFont.callout.weight(.bold))
                                 .foregroundStyle(.white)
                                 .frame(width: 104, height: 52)
-                                .background(canSendCode ? Theme.hotPink : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                .background(canSendCode ? Theme.accentFill : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         }
                         .buttonStyle(.pressFeedback)
                         .disabled(!canSendCode)
@@ -834,7 +834,7 @@ struct PasswordResetView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
-                            .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(!canSubmit)

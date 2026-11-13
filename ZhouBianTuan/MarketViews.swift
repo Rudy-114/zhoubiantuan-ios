@@ -33,13 +33,14 @@ struct MarketView: View {
                         Rectangle().fill(Theme.hairline).frame(height: 0.5)
                     }
 
-                    ScrollView(showsIndicators: false) {
+                    PullToRefreshScrollView {
                         VStack {
                             FollowingFeedView(posts: posts).padding(.top, 2)
                             ContentPageFooter(query: .following)
                         }
+                    } action: {
+                        await store.refreshContentPage(.following)
                     }
-                    .refreshable { await store.refreshContentPage(.following) }
                 }
                 .background(Theme.background.ignoresSafeArea())
             } else {

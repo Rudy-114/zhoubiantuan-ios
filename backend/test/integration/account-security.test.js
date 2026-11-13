@@ -148,8 +148,10 @@ test('F28: delete codes are only issued to the signed-in owner', async () => {
   assert.equal((await call('/auth/email/send-code', { method: 'POST', body: { email: user.email, purpose: 'delete' } })).status, 401);
   assert.equal((await call('/auth/email/send-code', { method: 'POST', token: other.token, body: { email: user.email, purpose: 'delete' } })).status, 400);
   assert.equal((await call('/auth/email/send-code', { method: 'POST', token: user.token, body: { email: user.email, purpose: 'delete' } })).status, 200);
-  // Passwordless accounts delete with the emailed code.
-  await makeCode(user, { purpose: 'delete' });
+  // Passwordless accounts delete with the emailed code. The fixture code must
+  // be the newest row: the real send-code row above uses the DB clock (µs), the
+  // fixture uses JS time (ms), so give it an explicit later timestamp.
+  await makeCode(user, { purpose: 'delete', createdAt: new Date(Date.now() + 1000) });
   assert.equal((await call('/me', { method: 'DELETE', token: user.token, body: { password: 'anything-1' } })).status, 401);
   assert.equal((await call('/me', { method: 'DELETE', token: user.token, body: { code: '123456' } })).status, 204);
 });

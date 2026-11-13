@@ -5,12 +5,12 @@ import { visiblePostSQL } from './visibility.js';
 import { query } from './db.js';
 
 function unreadSQL(user) {
-  return `(SELECT count(*) FROM direct_messages dm WHERE dm.thread_id=mt.id AND dm.revoked_at IS NULL
+  return `(SELECT count(*) FROM direct_messages dm WHERE dm.thread_id=mt.id AND dm.revoked_at IS NULL AND dm.safety_status='active'
     AND NOT (${user}=ANY(dm.deleted_for_user_ids)) AND dm.sender_id<>${user}
     AND dm.created_at>coalesce((SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id=mt.id AND r.user_id=${user}),'-infinity'::timestamptz))`;
 }
 
-export async function loadMessageThreadForUser(client, threadId, userId, { messageIDs, cursor, limit } = {}) {
+export async function loadMessageThreadForUser(client, threadId, userId, { messageIDs, cursor, limit, legacyComplete = false } = {}) {
   const row = (await client.query(`SELECT mt.*, ${unreadSQL('$2')} AS unread_count FROM message_threads mt
     WHERE mt.id=$1 AND $2 IN(mt.buyer_user_id,mt.publisher_user_id)`, [threadId,userId])).rows[0];
   if (!row) { const error = new Error('会话不存在'); error.status = 404; throw error; }
@@ -19,15 +19,16 @@ export async function loadMessageThreadForUser(client, threadId, userId, { messa
     const ids = [...new Set(messageIDs)].slice(0, 200);
     messages = ids.length ? (await client.query('SELECT * FROM direct_messages WHERE thread_id=$1 AND id=ANY($2::text[]) ORDER BY created_at,id', [threadId,ids])).rows : [];
   } else {
-    const size = pageSize(limit, 100), boundary = readCursor(cursor), params = [threadId];
+    const size = legacyComplete ? 2000 : pageSize(limit, 100), boundary = readCursor(cursor), params = [threadId];
     let where = 'thread_id=$1';
     if (boundary) { params.push(boundary.time,boundary.id); where += ' AND (created_at,id)<($2::timestamptz,$3)'; }
     params.push(size+1);
     const rows = (await client.query(`SELECT *,created_at::text AS page_time FROM direct_messages WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT $${params.length}`,params)).rows;
     page = pageResult(rows,size); messages = page.items.reverse();
   }
+  await redactSharedReferences(client, [row], messages, userId);
   return { ...messageThreadToClient(row,messages.map(message=>directMessageToClient(message,userId))),
-    messagesArePartial: true, ...(page ? {nextCursor:page.nextCursor,hasMore:page.hasMore} : {}) };
+    messagesArePartial: !legacyComplete, ...(page ? {nextCursor:page.nextCursor,hasMore:page.hasMore} : {}) };
 }
 
 export async function loadMessageThreadsForUser(client, threadIds, userId, messageIdsByThread = {}) {
@@ -46,8 +47,9 @@ export async function loadThreadsPage(client, userId, input = {}) {
     FROM message_threads mt WHERE ${where} ORDER BY mt.updated_at DESC,mt.id DESC LIMIT $${params.length}`,params)).rows;
   const page=pageResult(rows,limit);
   const previews=page.items.length ? (await client.query(`SELECT dm.* FROM unnest($1::text[]) AS requested(thread_id)
-    CROSS JOIN LATERAL (SELECT * FROM direct_messages d WHERE d.thread_id=requested.thread_id AND d.revoked_at IS NULL
+    CROSS JOIN LATERAL (SELECT * FROM direct_messages d WHERE d.thread_id=requested.thread_id AND d.revoked_at IS NULL AND d.safety_status='active'
       AND NOT ($2=ANY(d.deleted_for_user_ids)) ORDER BY d.created_at DESC,d.id DESC LIMIT 1) dm`, [page.items.map(row=>row.id),userId])).rows : [];
+  await redactSharedReferences(client, page.items, previews, userId);
   const byThread=new Map(previews.map(row=>[row.thread_id,row]));
   const threads=page.items.map(row=>({...messageThreadToClient(row,byThread.has(row.id)?[directMessageToClient(byThread.get(row.id),userId)]:[]),messagesArePartial:true}));
   return {messageThreads:threads,users:await usersForIDs(threads.flatMap(t=>[t.buyerUserID,t.publisherUserID]),userId),
@@ -67,9 +69,17 @@ export async function messageHistoryPage(userId,threadId,input={}) {
 export async function loadUnreadSnapshot(userId) {
   const row = (await query(`SELECT s.cursor::text AS unread_cursor,
     (SELECT count(*) FROM direct_messages dm JOIN message_threads mt ON mt.id=dm.thread_id
-      WHERE $1 IN(mt.buyer_user_id,mt.publisher_user_id) AND dm.sender_id<>$1 AND dm.revoked_at IS NULL
+      WHERE $1 IN(mt.buyer_user_id,mt.publisher_user_id) AND dm.sender_id<>$1 AND dm.revoked_at IS NULL AND dm.safety_status='active'
       AND NOT ($1=ANY(dm.deleted_for_user_ids)) AND dm.created_at>coalesce(
         (SELECT r.read_at FROM message_thread_reads r WHERE r.thread_id=mt.id AND r.user_id=$1),'-infinity'::timestamptz)) AS unread_count
     FROM sync_state s WHERE s.singleton`, [userId])).rows[0];
   return { unreadMessageCount: Number(row.unread_count), unreadCursor: row.unread_cursor };
+}
+
+async function redactSharedReferences(client, threads, messages, userId) {
+  const ids=[...new Set([...threads.map(t=>t.related_post_id),...messages.map(m=>m.shared_post_id)].filter(Boolean))];
+  if(!ids.length)return;
+  const visible=new Set((await client.query(`SELECT p.id FROM posts p WHERE p.id=ANY($1::text[]) AND ${visiblePostSQL('p','$2')}`,[ids,userId])).rows.map(p=>p.id));
+  for(const row of threads)if(row.related_post_id && !visible.has(row.related_post_id))row.related_post_id=null;
+  for(const row of messages)if(row.shared_post_id && !visible.has(row.shared_post_id))row.shared_post_id=null;
 }

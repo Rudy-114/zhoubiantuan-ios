@@ -56,12 +56,76 @@ final class SessionIsolationTests: XCTestCase {
         return MockAppStore(backendClient: client, persistsData: false, automaticallyRefresh: false)
     }
 
+    private func feedPost(id: String, authorID: String, createdAt: Date, title: String, tags: [String] = [], deadline: Date? = nil) -> GroupBuyPost {
+        GroupBuyPost(
+            id: id,
+            title: title,
+            imageNames: [],
+            authorID: authorID,
+            categoryTags: tags,
+            fandomTags: [],
+            price: "99",
+            deposit: "",
+            deadline: deadline ?? createdAt.addingTimeInterval(86_400),
+            condition: "全新",
+            isFormed: false,
+            description: title,
+            wechat: "",
+            qq: "",
+            groupNumber: "",
+            groupInfo: "",
+            externalLink: "",
+            createdAt: createdAt,
+            likedCount: 0,
+            favoriteCount: 0,
+            commentCount: 0,
+            reportCount: 0,
+            status: .active,
+            imageAspect: 1
+        )
+    }
+
     private func login(_ id: String, store: MockAppStore) async {
         let body = payload(id)
         StubProtocol.handler = { $0.reply(body) }
         let success = await store.loginWithEmail(email: "\(id)@example.test", password: "test-password")
         XCTAssertTrue(success)
         XCTAssertEqual(store.currentUserID, id)
+    }
+
+    func testRecommendedFeedUsesFreshnessAndFollowSignalsWithoutReshuffling() {
+        let store = store()
+        let now = Date()
+        let followed = feedPost(id: "followed", authorID: "followed-user", createdAt: now, title: "我关注的动漫团", tags: ["动漫"])
+        let stale = feedPost(
+            id: "stale",
+            authorID: "other-user",
+            createdAt: now.addingTimeInterval(-10 * 86_400),
+            title: "很久以前的团",
+            deadline: now.addingTimeInterval(86_400)
+        )
+        store.followedUserIDs = ["followed-user"]
+
+        let first = store.recommendedFeedPosts([stale, followed]).map(\.id)
+        let second = store.recommendedFeedPosts([stale, followed]).map(\.id)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.first, "followed")
+    }
+
+    func testHomeRecommendationDoesNotMoveCardsAfterReadingAPost() {
+        let store = store()
+        let now = Date()
+        let candidates = (0..<4).map { index in
+            feedPost(id: "post-\(index)", authorID: "author-\(index)", createdAt: now, title: "帖子 \(index)")
+        }
+        store.posts = candidates
+        let before = store.recommendedFeedPosts(candidates).map(\.id)
+
+        store.recordBrowse(postID: before[0])
+
+        XCTAssertEqual(store.recommendedFeedPosts(candidates).map(\.id), before,
+                       "Reading a post must not rearrange the feed beneath the navigation stack")
     }
 
     func testOldBootstrapCannotReplaceNewAccountOrItsCursor() async {
@@ -343,22 +407,21 @@ final class SessionIsolationTests: XCTestCase {
         let store = store()
         defer { store.logOut() }
         await login("A", store: store)
-        XCTAssertFalse(store.canModerate)
+        let draft = SafetyReportDraft(sourceType: .directMessage, sourceID: "dm-test", reasonCode: .harassmentOrAbuse, detail: "Please review", objectKeys: [])
         let held = RequestSlot(), started = expectation(description: "Report in flight")
         StubProtocol.handler = { request in held.set(request); started.fulfill() }
-        let submission = Task { await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review") }
+        let submission = Task { await store.submitSafetyReport(draft: draft, imageData: [], blockUserID: nil) }
         await fulfillment(of: [started], timeout: 3)
-        XCTAssertTrue(store.reports.isEmpty)
+        XCTAssertTrue(store.safetyReports.isEmpty)
         held.take().reply(["error": "Report could not be saved"], status: 503)
         let failed = await submission.value
         XCTAssertFalse(failed)
-        XCTAssertTrue(store.reports.isEmpty)
-        StubProtocol.handler = { $0.reply(["report": ["id": "rp-test", "target": ["type": "message", "id": "dm-test"],
-            "reason": "Harassment", "detail": "Please review", "reporterID": "A", "status": "pending"]]) }
-        let saved = await store.submitReport(target: .message("dm-test"), reason: "Harassment", detail: "Please review")
+        XCTAssertTrue(store.safetyReports.isEmpty)
+        StubProtocol.handler = { $0.reply(["duplicate": false, "report": ["id": "rp-test", "caseID": "sc-test", "sourceType": "direct_message", "sourceID": "dm-test", "subjectType": "direct_message", "subjectID": "dm-test", "reasonCode": "harassment_or_abuse", "reportedField": "content", "detail": "Please review", "status": "received", "createdAt": "2026-09-12T00:00:00Z", "updatedAt": "2026-09-12T00:00:00Z"]]) }
+        let saved = await store.submitSafetyReport(draft: draft, imageData: [], blockUserID: nil)
         XCTAssertTrue(saved)
-        XCTAssertEqual(store.reports.count, 1)
-        XCTAssertEqual(store.reports.first?.target, .message("dm-test"))
+        XCTAssertEqual(store.safetyReports.count, 1)
+        XCTAssertEqual(store.safetyReports.first?.sourceID, "dm-test")
     }
 
     func testPaginationForwardsTheCursorAndMergesPagesWithoutDuplicateRows() async {

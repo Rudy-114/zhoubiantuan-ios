@@ -23,6 +23,19 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: MyReportsNavigationEntry.route) {
+                            SettingsRow(
+                                icon: MyReportsNavigationEntry.systemImage,
+                                title: MyReportsNavigationEntry.title
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
+                        NavigationLink(value: Route.contentRemediation) {
+                            SettingsRow(icon: "checkmark.shield", title: "内容处理")
+                        }
+                        .buttonStyle(.plain)
+                        Divider().overlay(Theme.hairline).padding(.leading, 58)
                         NavigationLink(destination: GeneralSettingsView()) {
                             SettingsRow(icon: "gearshape", title: "通用设置")
                         }
@@ -33,18 +46,10 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.pressFeedback)
                         Divider().overlay(Theme.hairline).padding(.leading, 58)
-                        NavigationLink(destination: ReportListView(admin: false)) {
+                        NavigationLink(destination: MyReportsView()) {
                             SettingsRow(icon: "flag", title: "我的举报")
                         }
                         .buttonStyle(.pressFeedback)
-                        if store.canModerate {
-                            NavigationLink(destination: AdminReportView()) {
-                                SettingsRow(icon: "checkmark.shield", title: "举报处理")
-                            }.buttonStyle(.pressFeedback)
-                            NavigationLink(destination: AdminModerationView()) {
-                                SettingsRow(icon: "text.badge.checkmark", title: "内容审核")
-                            }.buttonStyle(.pressFeedback)
-                        }
                         NavigationLink(destination: HelpFeedbackView()) {
                             SettingsRow(icon: "questionmark.circle", title: "帮助与反馈")
                         }
@@ -218,7 +223,7 @@ struct SettingsInlineError: View {
     var body: some View {
         Label(message, systemImage: "exclamationmark.circle.fill")
             .font(.footnote.weight(.semibold))
-            .foregroundStyle(Theme.hotPink)
+            .foregroundStyle(Theme.accent)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
     }
@@ -227,7 +232,7 @@ struct SettingsInlineError: View {
 struct SettingsPrimaryButton: View {
     let title: String
     var isEnabled = true
-    var tint: Color = Theme.hotPink
+    var tint: Color = Theme.accent
     let action: () -> Void
 
     var body: some View {
@@ -399,7 +404,7 @@ struct SettingsToggleRow: View {
             Spacer(minLength: 12)
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(Theme.hotPink)
+                .tint(Theme.accent)
         }
         .padding(.horizontal, 16)
         .frame(minHeight: subtitle == nil ? 72 : 96)
@@ -605,10 +610,10 @@ struct BlockedUsersView: View {
                             } label: {
                                 Text("解除")
                                     .font(AppFont.callout.weight(.bold))
-                                    .foregroundStyle(Theme.hotPink)
+                                    .foregroundStyle(Theme.accent)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 7)
-                                    .overlay { Capsule().stroke(Theme.hotPink, lineWidth: 1) }
+                                    .overlay { Capsule().stroke(Theme.accent, lineWidth: 1) }
                             }
                             .buttonStyle(.pressFeedback)
                         }
@@ -684,7 +689,7 @@ struct AccountDeletionView: View {
                 bullet("释放你的注册邮箱，之后可重新注册")
                 Text("此操作不可恢复，请谨慎操作。")
                     .font(AppFont.callout.weight(.semibold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.accent)
                     .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -753,7 +758,7 @@ struct AccountDeletionView: View {
                             .font(AppFont.callout.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(width: 104, height: 48)
-                            .background(Theme.hotPink.opacity(isSendingCode ? 0.5 : 1), in: RoundedRectangle(cornerRadius: Radius.control))
+                            .background(Theme.accentFill.opacity(isSendingCode ? 0.5 : 1), in: RoundedRectangle(cornerRadius: Radius.control))
                     }
                     .buttonStyle(.pressFeedback)
                     .disabled(isSendingCode)

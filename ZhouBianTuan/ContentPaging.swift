@@ -97,8 +97,10 @@ extension MockAppStore {
         }
     }
     func invalidateContentPages() {
+        homeFeedOrders.removeAll()
         contentPages.removeAll()
         postDetailRequests.removeAll()
+        postDetailLastLoadedAt.removeAll()
         contentPageEpoch = UUID()
     }
 
@@ -132,6 +134,7 @@ extension MockAppStore {
             let page = try await backendClient.contentPage(query, cursor: reset ? nil : state.nextCursor, token: backendToken, refreshSeed: refreshSeed,
                                                            manualRefresh: reset && manualRefresh && isPersonalizedFeed)
             guard isCurrentSession(session), contentPageEpoch == epoch, contentPages[query.key]?.requestID == requestID else { return }
+            if reset { homeFeedOrders[query.key] = nil }
             mergeContentPage(page)
             let ids: [String]
             if query.isThreadPage { ids = page.messageThreads?.map(\.id) ?? [] }
@@ -177,10 +180,16 @@ extension MockAppStore {
         mergeComments(page.comments?.map { $0.localComment() } ?? [])
     }
 
-    func loadPostDetail(_ id: String) async {
+    func loadPostDetail(_ id: String, forceRefresh: Bool = false) async {
         let cachedComments = pageState(ContentQuery.comments(id))
         if isShowingOfflineFeed, cachedComments.isOfflineSnapshot { return }
         guard isBackendEnabled, postDetailRequests[id] == nil else { return }
+        if !forceRefresh,
+           postIndex(id) != nil,
+           let lastLoadedAt = postDetailLastLoadedAt[id],
+           Date().timeIntervalSince(lastLoadedAt) < 45 {
+            return
+        }
         let session = authSessionVersion, requestID = UUID()
         postDetailRequests[id] = requestID
         defer { if postDetailRequests[id] == requestID { postDetailRequests[id] = nil } }
@@ -196,11 +205,13 @@ extension MockAppStore {
             contentPages[ContentQuery.comments(id).key] = state
             postDetailErrors[id] = nil
             persistOfflineFeedSnapshot()
+            postDetailLastLoadedAt[id] = Date()
         } catch {
             guard isCurrentSession(session), postDetailRequests[id] == requestID else { return }
             postDetailErrors[id] = error.localizedDescription
             if (error as NSError).domain == "AliyunBackendClient", (error as NSError).code == 404 {
                 posts.removeAll { $0.id == id }
+                postDetailLastLoadedAt[id] = nil
             }
         }
     }
@@ -357,6 +368,7 @@ struct ContentPageFooter: View {
     @EnvironmentObject private var store: MockAppStore
     let query: ContentQuery
     var loadMore: (() async -> Void)? = nil
+    var automaticallyLoad = false
 
     var body: some View {
         let state = store.pageState(query)
@@ -377,6 +389,10 @@ struct ContentPageFooter: View {
         .frame(maxWidth: .infinity)
         .task(id: "\(store.authSessionVersion)-\(store.contentPageEpoch)-\(query.key)") {
             if !store.pageState(query).isLoaded { await store.loadContentPage(query) }
+        }
+        .onAppear {
+            guard automaticallyLoad, store.isBackendEnabled else { return }
+            Task { await load() }
         }
     }
 

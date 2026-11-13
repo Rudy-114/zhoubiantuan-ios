@@ -48,12 +48,46 @@ struct CreatePostView: View {
     @State private var draftID = UUID().uuidString
     @State private var loadedDraftID = ""
     @State private var isPreviewPresented = false
+    @State private var isSubmittingRevision = false
+    @State private var revisionErrorMessage: String?
     let republishingPostID: String?
+    let revisionCaseID: String?
+    let editingOriginalPostID: String?
     let initialDraft: PostDraft?
 
-    init(republishingPostID: String? = nil, initialDraft: PostDraft? = nil) {
+    init(
+        republishingPostID: String? = nil,
+        revisionCaseID: String? = nil,
+        editingOriginalPostID: String? = nil,
+        initialDraft: PostDraft? = nil
+    ) {
         self.republishingPostID = republishingPostID
+        self.revisionCaseID = revisionCaseID
+        self.editingOriginalPostID = editingOriginalPostID
         self.initialDraft = initialDraft
+        #if DEBUG
+        if AppStoreScreenshotScreen.current == .create,
+           republishingPostID == nil,
+           revisionCaseID == nil,
+           editingOriginalPostID == nil,
+           initialDraft == nil {
+            _title = State(initialValue: "植物星球亚克力立牌拼团")
+            _selectedGroupType = State(initialValue: .followGroup)
+            _selectedCollectionID = State(initialValue: AppStoreScreenshotFixtures.collectionID)
+            _uploadedImageData = State(
+                initialValue: AppStoreScreenshotFixtures.imageData(named: "merch-acrylic-standees.png")
+                    .map { [$0] } ?? []
+            )
+            _selectedTags = State(initialValue: ["立牌", "自印团", "预售"])
+            _priceLowerBound = State(initialValue: "48")
+            _priceUpperBound = State(initialValue: "68")
+            _deadline = State(
+                initialValue: Calendar.current.date(byAdding: .day, value: 18, to: Date()) ?? Date()
+            )
+            _condition = State(initialValue: "满 20 件成团")
+            _description = State(initialValue: "透明亚克力搭配雾面底座，共三款可选；进度会在合集内持续更新。")
+        }
+        #endif
     }
 
     let allTags = ["小卡", "吧唧", "立牌", "娃娃", "专辑", "饰品", "杂志", "演唱会周边", "自印团", "预售", "现货"]
@@ -69,6 +103,10 @@ struct CreatePostView: View {
 
     var isRepublishing: Bool {
         republishingPostID != nil
+    }
+
+    var isRevision: Bool {
+        revisionCaseID != nil && editingOriginalPostID != nil
     }
 
     var isSplitGoods: Bool {
@@ -134,7 +172,21 @@ struct CreatePostView: View {
         if store.isLoggedIn {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    HeaderTitle(title: isRepublishing ? "重新编辑团购帖" : "发布团购帖", subtitle: isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
+                    if isRevision {
+                        Button { dismiss() } label: {
+                            Label("返回内容处理", systemImage: "chevron.left")
+                                .font(AppFont.callout.weight(.bold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .buttonStyle(.pressFeedback)
+                        .padding(.horizontal, 16)
+                    }
+                    HeaderTitle(
+                        title: isRevision ? "整改团购帖" : (isRepublishing ? "重新编辑团购帖" : "发布团购帖"),
+                        subtitle: isRevision
+                            ? "提交的是候选版本；审核通过前，当前帖子不会被替换或删除"
+                            : (isRepublishing ? "提交后会创建新版本，并删除上一版未通过审核的帖子" : "每个帖子必须归入一个拼团合集")
+                    )
                     HStack {
                         Spacer()
                         Button {
@@ -142,7 +194,7 @@ struct CreatePostView: View {
                         } label: {
                             Label("预览", systemImage: "eye")
                                 .font(AppFont.callout.weight(.bold))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                         }
                         .buttonStyle(.pressFeedback)
                         .disabled(!hasDraftContent)
@@ -172,14 +224,20 @@ struct CreatePostView: View {
                                 }
                             }
                             .buttonStyle(.pressFeedback)
+                            .disabled(isRevision)
                         }
+                    }
+                    if isRevision {
+                        Label("沿用原帖类型，整改时不可修改", systemImage: "lock.fill")
+                            .font(AppFont.caption.weight(.bold))
+                            .foregroundStyle(Theme.muted)
                     }
                 }
                 .padding(.horizontal, 16)
 
                 VStack(alignment: .leading, spacing: 10) {
                     RequiredLabel("拼团合集")
-                    if store.collections(ownerID: store.currentUserID).isEmpty {
+                    if store.collections(ownerID: store.currentUserID).isEmpty && !isRevision {
                         VStack(alignment: .leading, spacing: 12) {
                             Label("发布前必须先创建一个合集", systemImage: "rectangle.stack.badge.plus")
                                 .font(AppFont.callout.weight(.bold))
@@ -195,19 +253,43 @@ struct CreatePostView: View {
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 11)
-                                    .background(Theme.hotPink, in: Capsule())
+                                    .background(Theme.accentFill, in: Capsule())
                             }
                             .buttonStyle(.pressFeedback)
                         }
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    } else if isRevision, let selectedCollection {
+                        HStack(spacing: 12) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 38, height: 38)
+                                .background(Theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: Radius.card))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(selectedCollection.name)
+                                    .font(AppFont.callout.weight(.bold))
+                                    .foregroundStyle(Theme.text)
+                                Text("沿用原帖合集，整改时不可修改")
+                                    .font(AppFont.caption.weight(.semibold))
+                                    .foregroundStyle(Theme.muted)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(13)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Radius.card)
+                                .stroke(Theme.hairline, lineWidth: 1)
+                        }
                     } else {
                         Button {
-                            isCollectionPickerPresented = true
+                            if !isRevision { isCollectionPickerPresented = true }
                         } label: {
                             CollectionPickerSummary(collection: selectedCollection)
                         }
                         .buttonStyle(.pressFeedback)
+                        .disabled(isRevision)
                     }
 
                     if let selectedCollection {
@@ -227,7 +309,7 @@ struct CreatePostView: View {
                     if isLoadingRepublishImages {
                         Label("正在载入旧帖图片", systemImage: "arrow.down.circle")
                             .font(AppFont.caption.weight(.bold))
-                            .foregroundStyle(Theme.hotPink)
+                            .foregroundStyle(Theme.accent)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -355,6 +437,7 @@ struct CreatePostView: View {
                 Button {
                     guard let firstIssue = validationIssues.first else {
                         guard let selectedGroupType, let selectedCollection else { return }
+                        if isRevision { Task { await submitRevision() }; return }
                         let identity = PostSubmissionIdentity(fields: [store.currentUserID, republishingPostID ?? "", title,
                             selectedGroupType.rawValue, selectedCollection.id, priceRangeText, depositText, condition, description,
                             isSplitGoods ? pingguAveragePrice : "", isSplitGoods ? pingguNote : "",
@@ -385,30 +468,38 @@ struct CreatePostView: View {
                     }
                     validationMessage = firstIssue
                 } label: {
-                    Text(isPublishing ? "正在上传并提交审核…" : canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
+                    Text(isRevision ? submitButtonTitle : isPublishing ? "正在上传并提交审核…" : canPublish ? (isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块") : "补齐必填字段后发布")
                         .font(AppFont.headline.weight(.bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 15)
-                        .background(canPublish ? Theme.hotPink : Theme.panelRaised, in: Capsule())
+                        .background(canPublish ? Theme.accentFill : Theme.panelRaised, in: Capsule())
                         .foregroundStyle(canPublish ? .white : Theme.muted)
                 }
                 .buttonStyle(.pressFeedback)
-                .disabled(!canPublish || isPublishing)
+                .disabled(!canPublish || isPublishing || isSubmittingRevision || store.isSubmittingSafetyContentAction)
                 .padding(.horizontal, 16)
-                Button {
-                    saveDraft()
-                } label: {
-                    Label("保存草稿", systemImage: "tray.and.arrow.down")
-                        .font(AppFont.callout.weight(.bold))
-                        .foregroundStyle(Theme.subtext)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Theme.panelRaised, in: Capsule())
+                if isRevision, let revisionErrorMessage {
+                    SafetyContentActionInlineError(message: revisionErrorMessage)
+                        .padding(.horizontal, 16)
                 }
-                .buttonStyle(.pressFeedback)
-                .disabled(!hasDraftContent || isPublishing)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 28)
+                if !isRevision {
+                    // Revisions are tied to a safety case; a saved draft would
+                    // reopen as a brand-new post, so only new posts keep drafts.
+                    Button {
+                        saveDraft()
+                    } label: {
+                        Label("保存草稿", systemImage: "tray.and.arrow.down")
+                            .font(AppFont.callout.weight(.bold))
+                            .foregroundStyle(Theme.subtext)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Theme.panelRaised, in: Capsule())
+                    }
+                    .buttonStyle(.pressFeedback)
+                    .disabled(!hasDraftContent || isPublishing)
+                    .padding(.horizontal, 16)
+                }
+                Color.clear.frame(height: 28)
                 }
                 .disabled(isPublishing)
             }
@@ -427,7 +518,7 @@ struct CreatePostView: View {
                 }
             }
             .onDisappear {
-                if !isPublishing, hasDraftContent, store.isLoggedIn, draftOwnerID == store.currentUserID {
+                if !isRevision, !isPublishing, hasDraftContent, store.isLoggedIn, draftOwnerID == store.currentUserID {
                     saveDraft()
                 }
                 if !store.isLoggedIn || draftOwnerID != store.currentUserID {
@@ -442,8 +533,8 @@ struct CreatePostView: View {
             .background(Theme.background.ignoresSafeArea())
             .interactiveBackSwipe()
             .navigationBarHidden(true)
-            .task(id: republishingPostID) {
-                await loadRepublishDraftIfNeeded()
+            .task(id: editingOriginalPostID ?? republishingPostID) {
+                await loadEditingDraftIfNeeded()
             }
             .task(id: initialDraft?.id) {
                 loadInitialDraftIfNeeded()
@@ -517,7 +608,7 @@ struct CreatePostView: View {
     }
 
     private func saveDraft() {
-        guard store.isLoggedIn, !store.currentUserID.isEmpty, hasDraftContent else { return }
+        guard !isRevision, store.isLoggedIn, !store.currentUserID.isEmpty, hasDraftContent else { return }
         PostDraftStore.shared.save(currentDraftSnapshot())
         store.showToast("草稿已保存")
     }
@@ -571,11 +662,11 @@ struct CreatePostView: View {
     }
 
     @MainActor
-    func loadRepublishDraftIfNeeded() async {
-        guard let republishingPostID,
-              loadedRepublishPostID != republishingPostID,
-              let post = store.post(id: republishingPostID) else { return }
-        loadedRepublishPostID = republishingPostID
+    func loadEditingDraftIfNeeded() async {
+        guard let sourcePostID = editingOriginalPostID ?? republishingPostID,
+              loadedRepublishPostID != sourcePostID,
+              let post = store.post(id: sourcePostID) else { return }
+        loadedRepublishPostID = sourcePostID
         title = post.title
         selectedGroupType = post.groupType
         selectedCollectionID = post.collectionID ?? noCollectionID
@@ -598,6 +689,50 @@ struct CreatePostView: View {
             isLoadingRepublishImages = true
             uploadedImageData = await loadImageData(from: post.remoteImageURLs)
             isLoadingRepublishImages = false
+        }
+    }
+
+    var submitButtonTitle: String {
+        guard canPublish else { return isRevision ? "补齐必填字段后提交" : "补齐必填字段后发布" }
+        if isRevision {
+            return isSubmittingRevision || store.isSubmittingSafetyContentAction ? "正在提交整改" : "提交整改复审"
+        }
+        return isRepublishing ? "重新发布" : "发布到\(selectedGroupType?.moduleTitle ?? "首页")模块"
+    }
+
+    @MainActor
+    func submitRevision() async {
+        guard let revisionCaseID,
+              let editingOriginalPostID,
+              var candidate = store.post(id: editingOriginalPostID),
+              let selectedGroupType,
+              let selectedCollection else { return }
+        isSubmittingRevision = true
+        revisionErrorMessage = nil
+        defer { isSubmittingRevision = false }
+
+        candidate.title = title.trimmed
+        candidate.groupType = selectedGroupType
+        candidate.collectionID = selectedCollection.id
+        candidate.categoryTags = Array(selectedTags)
+        candidate.price = priceRangeText
+        candidate.deposit = depositText
+        candidate.condition = condition.trimmed
+        candidate.description = description.trimmed
+        candidate.pingguAveragePrice = selectedGroupType == .splitGoods ? pingguAveragePrice.trimmed : ""
+        candidate.pingguNote = selectedGroupType == .splitGoods ? pingguNote.trimmed : ""
+        candidate.unsoldRoles = selectedGroupType == .splitGoods ? roleDrafts.filter(\.isAvailable) : []
+        candidate.uploadedImageData = uploadedImageData
+
+        let succeeded = await store.submitPostRevision(
+            caseID: revisionCaseID,
+            candidate: candidate,
+            imageData: uploadedImageData
+        )
+        if succeeded {
+            dismiss()
+        } else {
+            revisionErrorMessage = store.safetyContentActionErrorMessage ?? "整改提交失败，请重试"
         }
     }
 
@@ -725,12 +860,12 @@ struct UploadedImageTile: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background((isCover ? Theme.hotPink : Color.black.opacity(0.58)), in: Capsule())
+                        .background((isCover ? Theme.accentFill : Color.black.opacity(0.58)), in: Capsule())
                         .padding(8)
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.control)
-                        .stroke(isCover ? Theme.hotPink : Theme.hairline, lineWidth: isCover ? 2 : 1)
+                        .stroke(isCover ? Theme.accent : Theme.hairline, lineWidth: isCover ? 2 : 1)
                 }
 
             Button {
@@ -857,7 +992,7 @@ struct PhotoLibraryImportView: View {
             if isLoadingAssets && assets.isEmpty {
                 VStack(spacing: 14) {
                     ProgressView()
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                     Text("正在读取相册")
                         .font(AppFont.callout.weight(.bold))
                         .foregroundStyle(Theme.muted)
@@ -945,13 +1080,13 @@ struct PhotoLibraryImportView: View {
                     }
                     .foregroundStyle(.white)
                     .frame(width: 170, height: 62)
-                    .background(Theme.hotPink, in: Capsule())
+                    .background(Theme.accentFill, in: Capsule())
                     .overlay(alignment: .topLeading) {
                         Text("\(selectedIDs.count)")
                             .font(AppFont.headline.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(width: 38, height: 38)
-                            .background(Theme.hotPink, in: Circle())
+                            .background(Theme.accentFill, in: Circle())
                             .overlay {
                                 Circle().stroke(.white, lineWidth: 3)
                             }
@@ -966,7 +1101,7 @@ struct PhotoLibraryImportView: View {
             if let importErrorMessage {
                 Text(importErrorMessage)
                     .font(AppFont.caption.weight(.bold))
-                    .foregroundStyle(Theme.hotPink)
+                    .foregroundStyle(Theme.danger)
                     .padding(.horizontal, 26)
             }
         }
@@ -983,7 +1118,7 @@ struct PhotoLibraryImportView: View {
         VStack(spacing: 16) {
             Image(systemName: "photo.badge.plus")
                 .font(.system(size: 46, weight: .semibold))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
             Text(title)
                 .font(AppFont.title)
                 .foregroundStyle(Theme.text)
@@ -999,7 +1134,7 @@ struct PhotoLibraryImportView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 26)
             .padding(.vertical, 13)
-            .background(Theme.hotPink, in: Capsule())
+            .background(Theme.accentFill, in: Capsule())
             .buttonStyle(.pressFeedback)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1234,7 +1369,7 @@ struct PhotoLibraryGridCell: View {
                 .font(AppFont.callout.weight(.bold))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
-                .background(Theme.hotPink, in: Circle())
+                .background(Theme.accentFill, in: Circle())
                 .overlay {
                     Circle().stroke(.white, lineWidth: 2.5)
                 }
@@ -1259,7 +1394,7 @@ struct PhotoLibraryThumbnailImage: View {
                 .fill(Theme.panelRaised)
                 .overlay {
                     ProgressView()
-                        .tint(Theme.hotPink)
+                        .tint(Theme.accent)
                 }
         }
     }
@@ -1272,11 +1407,11 @@ struct CollectionPickerSummary: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .fill(collection == nil ? Theme.panelRaised : Theme.hotPink.opacity(0.18))
+                    .fill(collection == nil ? Theme.panelRaised : Theme.accent.opacity(0.18))
                     .frame(width: 46, height: 46)
                 Image(systemName: "rectangle.stack.fill")
                     .font(.system(size: 20, weight: .black))
-                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.hotPink)
+                    .foregroundStyle(collection == nil ? Theme.subtext : Theme.accent)
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -1294,13 +1429,13 @@ struct CollectionPickerSummary: View {
 
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 16, weight: .black))
-                .foregroundStyle(Theme.hotPink)
+                .foregroundStyle(Theme.accent)
         }
         .padding(14)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                .stroke(collection == nil ? Theme.hairline : Theme.hotPink.opacity(0.48), lineWidth: 1)
+                .stroke(collection == nil ? Theme.hairline : Theme.accent.opacity(0.48), lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
@@ -1365,7 +1500,7 @@ struct CollectionPickerSheet: View {
                                 .font(.system(size: 22, weight: .black))
                                 .foregroundStyle(.white)
                                 .frame(width: 56, height: 56)
-                                .background(Theme.hotPink, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("新建拼团合集")
@@ -1381,13 +1516,13 @@ struct CollectionPickerSheet: View {
 
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 16, weight: .black))
-                                .foregroundStyle(Theme.hotPink)
+                                .foregroundStyle(Theme.accent)
                         }
                         .padding(14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                                .stroke(Theme.hotPink.opacity(0.42), lineWidth: 1)
+                                .stroke(Theme.accent.opacity(0.42), lineWidth: 1)
                         }
                     }
                     .buttonStyle(.pressFeedback)
@@ -1421,9 +1556,9 @@ struct CollectionPickerOption: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .black))
-                    .foregroundStyle(isSelected ? .white : Theme.hotPink)
+                    .foregroundStyle(isSelected ? .white : Theme.accent)
                     .frame(width: 42, height: 42)
-                    .background(isSelected ? Theme.hotPink : Theme.hotPink.opacity(0.14), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .background(isSelected ? Theme.accentFill : Theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
@@ -1440,13 +1575,13 @@ struct CollectionPickerOption: View {
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22, weight: .black))
-                    .foregroundStyle(isSelected ? Theme.hotPink : Theme.muted)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.muted)
             }
             .padding(14)
             .background(isSelected ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .stroke(isSelected ? Theme.hotPink.opacity(0.7) : Theme.hairline, lineWidth: 1)
+                    .stroke(isSelected ? Theme.accent.opacity(0.7) : Theme.hairline, lineWidth: 1)
             }
         }
         .buttonStyle(.pressFeedback)

@@ -1,216 +1,204 @@
-# 2026-09-12 最新生产部署提示
+# 最新部署与 TestFlight 状态（2026-09-13）
 
-正式服务器已更新到发布提交 `913f05a0cf01bd31739690728e656df777af3710`，生产迁移、图片域名权限与缓存切换均已完成并验证。以下旧记录中“尚未部署”部分已过时。此次为保留原工作树中的用户改动，在独立工作树完成集成与发布；不要直接用当前旧分支覆盖服务器。
+以下历史交接记录描述旧阶段；当前状态以本段和部署记录为准。用户已明确授权部署，正式服务器已完成更新。
 
-- 继续维护请使用 `/Users/rudy2009/Documents/欧美团app/.worktrees/deploy-diagnostics-20260912`，分支 `codex/deploy-diagnostics-20260912`。
-- 完整部署记录：`docs/DEPLOYMENT_2026-09-12.md`；详细交接在发布工作树的 `CODEX_HANDOFF.md`。
-- iOS `1.0 (13)`（含橙色主题与诊断修复）已于 2026-09-13 10:45 经 Xcode Organizer 上传成功；手机安装仍需等待 Apple 处理及 TestFlight 测试组开放。上传记录位于维护工作树的 `docs/operations/verification/2026-09-13-testflight-build-13.md`。
-- 原有交接内容原样保留如下。
+- 当前维护工作树：`/Users/rudy2009/Documents/欧美团app/.worktrees/deploy-diagnostics-20260912`，分支 `codex/deploy-diagnostics-20260912`。
+- 已部署源码：`913f05a0cf01bd31739690728e656df777af3710`，Node 24.21.0，全部 31 个迁移已应用。
+- 原诊断工作树和 report-safety-system 工作树里的用户改动保持原样。
+- 详细变更、备份、验证及限制：`docs/operations/verification/2026-09-12-diagnostic-deployment.md`。
+- 后端、独立管理员网页、图片网关与旧 CDN 权限切换均已验证；安全 AI 预算仍为 0，自动处置关闭。
+- iOS `1.0 (13)`（源码 `ecdb409`，含橙色主题 `185bcc1`）已通过签名真机 Archive，并于 2026-09-13 10:45 经 Xcode Organizer 上传成功。详见 `docs/operations/verification/2026-09-13-testflight-build-13.md`。
+- 手机端下一步是在 TestFlight 确认 Apple 构建处理与现有测试组可安装状态；尚未提交正式 App Store 审核。继续维护前核对本工作树最新 Git 状态，不得把旧工作树直接覆盖服务器。
+- 不要将旧服务直接接回新同步表；备份恢复前先停止全部写入。
 
 ---
 
 # Codex Conversation Handoff
 
-Status: Ready for a new thread
-Generated: 2026-07-09 23:34 CST
-Project root: `/Users/rudy2009/Documents/欧美团app`
+Status: `d31e34d` 最终独立代码质量复核与修复已完成；仍停留在总阶段 4，子任务 5 尚未开始
+Generated: 2026-07-13 16:00 CST
+Project root: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
 
 ## Resume Prompt
 
-请先阅读 `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`，然后用当前文件系统和 Git 状态验证它是否仍然准确。项目现在应停在举报功能开工前的稳定版本，下一步只需要补齐生产级举报功能闭环：用户端举报入口、后端管理员举报处理 API、管理员处理界面和验证。
+请先阅读 `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`，再用当前文件系统、Git 状态和计划文件复核。`d31e34d` 相对 `1fc72b4` 的最终 Standards / Spec 独立复核、TDD 修复和完整后端验证已在 `d8e2a30` 完成。只有收到 Rudy 明确的继续指令后，才从总阶段 4 子任务 5（iOS 内容操作模型、客户端与 Store）开始；不得提前进入总阶段 5。
 
 ## Objective And User Intent
 
-Rudy 正在准备周边团 iOS App 上线。用户已经确认删除账号功能和双账号 QA 测试成功，目前判断上线前主要只差举报功能。
+项目是 iOS App「周边团」。当前目标是完整建设举报与安全审核系统：帖子、合集、评论、用户、私信均可举报；合集共享信息问题可以影响合集内帖子，单帖内容问题不连坐；被限制的团长可修改原内容并申请恢复，必须保留原 ID、互动和审核历史。后续管理员使用独立账号，并采用本设备批准新设备的访问方式；审核要高度自动化，但 AI 只提供分析和建议，人工最终控制高风险决定。
 
-当前明确要求：
+## Stage Status
 
-- 确保仓库回到“还没开始做举报功能”的上一个稳定版本。
-- 写一份新对话可直接接手的交接文档。
-- 暂时不要继续实现举报功能，等新对话开始后再做。
+总计划共有 8 个阶段，当前处于 **总阶段 4 / 8：内容修正与申诉**。
 
-## Current State
+1. WebSocket P0 修复：完成。
+2. 举报与安全案件后端核心：完成。
+3. iOS 五类举报入口：完成。
+4. 内容修正与申诉：进行中。
+5. 独立管理员认证：未开始。
+6. 管理员网页控制台：未开始。
+7. 通义千问影子分析：未开始。
+8. 加固、闸门与最终生产发布：未开始。
 
-- 当前分支：`main`
-- 当前 HEAD：`74dffb4 Handle blocked follow attempts`
-- `main` 相对 `origin/main`：本地 ahead 11
-- 本地 checkpoint 分支：`codex/pre-report-feature-checkpoint`，指向 `74dffb4`
-- 写本交接文档前，Git 工作区是干净的，且没有保留刚才开始做举报功能时的代码改动。
-- 现在写入本文件后，工作区会出现 `CODEX_HANDOFF.md` 的修改，这是本次交接文档本身。
+当前总阶段 4 共有 7 个子任务，已完成前 4 个：
 
-重要说明：
+1. 修正版本与申诉数据库结构：完成。
+2. 不可变候选版本提交：完成。
+3. 审核并原位发布修正内容：完成。
+4. 团长内容操作、修正提交与申诉 API：完成；最终 Standards / Spec 独立复核无遗留 P1/P2。
+5. iOS 内容操作模型、客户端与 Store：未开始。
+6. iOS 内容修正与申诉界面：未开始。
+7. 保留原 ID 的端到端验证：未开始。
 
-- 之前短暂开始过举报功能实现，涉及 `backend/src/routes.js`、`backend/src/mappers.js`、`ZhouBianTuan/Models.swift`、`ZhouBianTuan/BackendClient.swift`，但这些未提交改动已被撤掉。
-- 之前生成的 `.codegraph/` 索引目录已删除。
-- 当前代码状态就是举报功能正式开工前的稳定版本。
+计划复选框以以下文件为准：
 
-## Completed Work
+- `docs/superpowers/plans/2026-07-10-report-safety-program.md`
+- `docs/superpowers/plans/2026-07-10-04-content-remediation.md`
 
-最近已完成并提交的关键工作：
+## Git State And Completed Commits
 
-- `74dffb4 Handle blocked follow attempts`
-  - 被对方拉黑后再关注，会提示“你已被对方拉黑，无法关注”。
-  - 自己已拉黑对方时关注，会提示“你已拉黑对方，解除拉黑后才能关注”。
-  - 后端 `/users/:id/follow` 返回明确错误 code，不再静默成功。
-  - 个人页侧边菜单里的“审核后台”入口已移除。
-- `8e7653e Fix chat profile navigation and blocked post state`
-  - 私信页点头像进入对方主页，不再重复进入私信页。
-  - 拉黑后返回原帖子，显示“帖子不可见”状态和破损/不可见图标文案。
-- `85fb0ef Improve auth validation feedback`
-  - 注册/登录按钮不再静默灰掉。
-  - 点击按钮时显示当前优先级最高的错误提示。
-  - 对应输入框下方显示红字错误，同时保留顶部 toast。
-- `0cb4058 Preserve debug backend token fallback`
-- `b0d46d5 Stabilize blocking and chat semantics`
-- `f41af0a Update handoff after privacy policy deployment`
-- `cd167e7 Stabilize OSS URL tests`
-- `ef5f92c Add public privacy policy page`
+- Branch: `codex/report-safety-system`
+- Latest implementation/review-fix commit: `d8e2a3046b332db64020768a7b5925d738094ebc`
+- 本交接文件和计划勾选位于包含本文件的检查点提交中。
 
-Rudy 已手动确认：
+当前总阶段 4 已完成提交：
 
-- 删除账号功能测试成功。
-- 双账号 QA 测试成功。
-- 当前剩余上线缺口主要是举报功能。
+- `e42356fbb04e900b4ff6ddcd72c3380045846974` `Add content revision and appeal schema`
+- `c0ecf5fce637f6a59a31607682bff032a91bbe94` `Add immutable content revision intake`
+- `1fc72b4abdf1430a950c9181bcefb17fc802cc43` `Publish approved revisions in place`
+- `d31e34dc56da5a4f21806d1fcb641c15daa21a4c` `Add owner correction and appeal APIs`
+- `d8e2a3046b332db64020768a7b5925d738094ebc` `Fix owner remediation review findings`
 
-## Files Changed
+此前举报系统关键提交：
 
-当前交接动作只修改：
+- `54113f585b1f5e2cf9ccc795fae3a9bed9635e37` `Add PostgreSQL safety job worker`
+- `f75b1fae4680bb34357858796f0ce08b58f4bdfe` `Record safety core deployment verification`
+- `8a640c28005208ca1623180abdc0ba5ef30c61d7` `Add iOS safety report contracts`
+- `ace382aba28304515cf1cd3768cd3ec8374e2c60` `Connect iOS safety report APIs`
+- `ab6cba428d218b2b2a47ab79bf523868ad8270cb` `Build shared iOS report form`
+- `e87abb2832271f16e46306f099f5cf5d8ee047f7` `Add five iOS report entry points`
+- `2e02d1d4595e3b6830ed2608eb76618075a762e6` `Add My Reports status view`
+- `c045faf5c0d34547274f0307c33471cbe44152a1` `Fix migrated safety fixture seed`
 
-- `/Users/rudy2009/Documents/欧美团app/CODEX_HANDOFF.md`
+## Current Subtask Result
 
-当前稳定版本中已存在但未完成生产闭环的举报相关代码：
+子任务 4 新增并接入：
 
-- `/Users/rudy2009/Documents/欧美团app/backend/src/routes.js`
-  - 已有 `POST /reports`，可写入举报记录。
-  - 还没有生产级管理员 `GET /reports` 和处理举报的 API。
-- `/Users/rudy2009/Documents/欧美团app/backend/src/mappers.js`
-  - 已有 `reportToClient`。
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/BackendClient.swift`
-  - 已有 `reportPost(token:postID:reason:)`。
-  - 还没有评论举报、管理员拉取举报、管理员处理举报的客户端方法。
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MockAppStore.swift`
-  - 已有本地 `reportPost` 和本地 `handleReport` 原型逻辑。
-- `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/AdminViews.swift`
-  - 已有 `AdminReportView` 原型界面，但它目前主要使用本地 store，不是完整生产后端闭环。
+- `GET /api/me/content-actions`
+- `POST /api/content-actions/:caseId/revisions`
+- `POST /api/content-actions/:caseId/appeal`
+
+主要实现文件：
+
+- `backend/src/safety/revisionRoutes.js`
+- `backend/src/safety/contentActionMapper.js`
+- `backend/src/safety/appealService.js`
+- `backend/src/safety/reportRoutes.js`
+- `backend/test/safety/revisionRoutes.integration.test.js`
+
+已覆盖团长数据隔离、私有审核字段隐藏、当前状态约束、不可变修正版本、证据归属、七天申诉窗口、每次最终人工决定仅一次申诉、并发重复申诉以及提交后通知失败不回滚已提交事务。
+
+最终独立复核另外发现并修复：
+
+- 申诉案与同目标/类别的新开放案触发旧唯一索引冲突；新增 `016_appealed_case_aggregation.sql`，申诉案不再吸收后续新举报。
+- 同一举报人的旧 pending 举报会阻塞申诉期间的新举报；进入申诉后旧 pending 举报会关闭，新举报进入独立案件。
+- 整改提交原本没有滥用上限；新增 IP 日限、账号日限和账号分钟突发限制，稳定错误码为 `content_revision_rate_limited`。
+- `GET /api/me/content-actions` 原本只返回前 100 项；现返回可选 `nextCursor`，用不可变创建时间和 ID 做微秒精度稳定分页。
+- 016 down 若存在旧应用无法安全表示的多案件状态会拒绝回滚，并在事务内保留迁移、索引和案件；无冲突时才恢复旧约束。
 
 ## Verification
 
-本次交接前实际运行：
+### Full PostgreSQL Database Suite
 
-- `git status --short --branch`
-  - 结果：`## main...origin/main [ahead 11]`
-  - 写交接文档前没有 tracked diff，也没有 `.codegraph/`。
-- `git rev-parse --short HEAD`
-  - 结果：`74dffb4`
-- `git branch --show-current`
-  - 结果：`main`
-- `git branch --list codex/pre-report-feature-checkpoint`
-  - 结果：checkpoint 分支存在。
-- `npm --prefix backend test`
-  - 结果：通过，`16/16` pass。
-  - 有 npm warning：`Unknown user config "home"`，不影响测试通过。
-- `curl -fsS https://api.zhoubiantuanmail.top/api/health`
-  - 结果：`{"ok":true}`
-- `curl -fsS -I https://api.zhoubiantuanmail.top/privacy-policy | head -n 5`
-  - 结果：HTTP 200，隐私政策页面可访问。
+使用正确的 PostgreSQL 16 工具目录执行：
 
-本次未重新运行：
+```sh
+cd /Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backend
+PG_BINDIR=/usr/local/opt/postgresql@16/bin ZBT_TEST_PG_PORT=55432 npm run test:db
+```
 
-- iOS `xcodebuild`，因为本次目标是回到稳定版本并交接，不继续实现新功能。
-- 模拟器端完整手测，Rudy 已反馈删除账号和双账号 QA 成功。
+最终结果：`173/173` 通过，退出码 `0`，耗时约 `119.1s`。该结果是在安全 down 闸门最后修改后重新完整执行所得。
 
-## Running Services And Environment
+### Backend Focused And Unit Suites
 
-- 项目根目录：`/Users/rudy2009/Documents/欧美团app`
-- 后端生产健康检查：`https://api.zhoubiantuanmail.top/api/health`
-- 隐私政策：`https://api.zhoubiantuanmail.top/privacy-policy`
-- 正式客服邮箱：`support@zhoubiantuanmail.top`
-- 之前两个 iOS 18.5 模拟器曾用于测试：
-  - iPhone 16 Pro：`4A818C18-C716-4104-A797-D2A0D5C422F9`
-  - iPhone 16 Pro Max：`BF96DF18-2567-4945-90B2-37C3E45ABDED`
+- 团长修正/申诉路由与迁移聚焦集成测试：`24/24` 通过（路由 `21`、迁移 `3`）。
+- 后端非数据库单元测试：`64/64` 通过。
+- 最新数据库完整测试：`173/173` 通过。
+- `git diff --check` 与修改过的 Node 源文件语法检查通过。
 
-没有需要继续等待的长运行命令。
+### Clean iOS XCTest
+
+在 iPhone 17 Pro 模拟器 `272C2D53-9725-410F-A712-EADB3677EDA2` 上先执行 shutdown、erase、boot，并使用全新 DerivedData：
+
+```sh
+xcodebuild test \
+  -project ZhouBianTuan.xcodeproj \
+  -scheme ZhouBianTuan \
+  -configuration Debug \
+  -destination 'platform=iOS Simulator,id=272C2D53-9725-410F-A712-EADB3677EDA2' \
+  -derivedDataPath /tmp/zbt-xctest-derived \
+  -resultBundlePath /tmp/zbt-xctest-result.xcresult \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+结果：`** TEST SUCCEEDED **`；XCTest 总计 `84`，通过 `84`，失败 `0`，跳过 `0`。结果包位于 `/tmp/zbt-xctest-result.xcresult`。
+
+唯一已知警告是 `ZhouBianTuan/PostDetailViews.swift:1098` 使用已弃用的 `NavigationLink` 初始化器，不影响本次测试结果。
+
+### Environment Cleanup
+
+- 每次验证使用的临时 PostgreSQL 16 集群均由测试 trap 停止并删除。
+- 已复核 PostgreSQL 进程及端口 `55432`，没有本轮临时测试集群仍在运行。
+- XCTest 完成后已关闭测试模拟器。
+- 当前没有为本阶段启动的临时开发服务器。
+- 本检查点没有部署总阶段 4 的修正/申诉实现到生产环境。
 
 ## Key Decisions And Constraints
 
-- 普通用户 App 菜单里不要暴露“审核后台”入口。
-- 举报/审核的运营入口可以是管理员专用界面、隐藏入口、单独内部工具或后端脚本，但必须能真实处理举报。
-- App Store 消费者版本不急着做审核后台入口，但 UGC 上线需要举报、拉黑、内容处理和客服联系方式形成闭环。
-- 下架/删除/审核隐藏的内容继续使用“内容不存在 / 已下架或被隐藏”语义。
-- 拉黑导致不可见的帖子使用单独文案：“你已拉黑该用户，或对方已拉黑你，因此无法查看这条帖子。”
-- 不要提交 secrets、token、测试账号密码、`.env`、上传缓存、DerivedData、`node_modules`。
-- 当前 `main` 本地 ahead 11，之后需要考虑 push 到远端，避免只有本机有稳定提交。
+- 修正内容原位更新，保留帖子/合集原 ID、作者、互动、举报和审核历史。
+- 合集共享字段错误可以影响合集与子帖；单帖内容问题不自动连坐合集。
+- 申诉绑定最近一次仍生效的人工最终动作；每个最终动作最多一次申诉，动作生效时间起七天内（含边界）可提交。
+- 申诉后设置 `manual_hold=true`，AI 不自动裁决申诉，也不直接恢复内容。
+- 团长接口不得暴露举报人、管理员内部备注、AI 原始分析或其他用户隐私。
+- 修正版本发布和自动恢复必须遵守人工动作、其他开放案件与 `manual_hold` 边界。
+- 管理员认证、管理网页和 Qwen 分析分别属于后续总阶段，不在本检查点启动。
+- 不把 API Key、密码、Token、SSH 私钥或管理员凭据写入代码、提交或交接文件。
+
+## Review State And Risks
+
+- 子任务 3 已通过规格与代码质量复核。
+- 子任务 4 已完成最终独立 Standards / Spec 复核。初轮与修复复核发现的问题均按最小 TDD 循环解决；最后两路复核均回复 `no findings`。
+- 申诉窗口仍按最近人工最终动作的 `applied_at` 计算。动作与团长同步事件在同一事务产生，当前数据模型没有独立 `notified_at`；阶段 4 计划也明确使用 decision age。
+- 申诉提交目前只创建团长的同步事件，符合阶段 4 子任务 4 的 owner sync 约定；是否同时变更举报人的公开案件状态应在后续产品规格明确后另行处理。
+- 016 down 是安全闸门：若生产数据已存在旧约束无法表达的多案件组合，应用/迁移不能回滚到不兼容版本，必须先采用兼容代码或显式数据迁移，不能删除或改写案件来强行回滚。
+- iOS 尚无内容操作客户端、修正表单和申诉界面，因此用户端流程尚未完整。
+- 保留原 ID 和互动的完整 iOS 到后端端到端流程尚未验证。
+- 总阶段 4 代码尚未部署到生产环境。
 
 ## Unfinished Work
 
-当前上线前主要剩余：生产级举报功能。
+- 总阶段 4 子任务 5：iOS 内容操作模型、客户端与 Store。
+- 总阶段 4 子任务 6：iOS 内容修正、重新发布与申诉 UI。
+- 总阶段 4 子任务 7：原 ID、互动保留、恢复边界的端到端验证及阶段复核。
+- 总阶段 5：独立管理员账号与本设备批准新设备。
+- 总阶段 6：管理员网页控制台。
+- 总阶段 7：通义千问影子分析与自动化策略。
+- 总阶段 8：加固、功能闸门、生产发布与回滚验证。
 
-建议最小上线范围：
+## Exact Next Action
 
-1. 用户端举报入口
-   - 帖子详情页增加明确“举报”入口。
-   - 评论长按菜单增加“举报”。
-   - 可选但推荐：用户主页增加“举报用户”；私信消息增加“举报消息”。
-2. 后端举报管理 API
-   - `GET /reports?status=pending|all`
-   - `POST /reports/:id/decision`
-   - 处理动作至少包括：忽略、隐藏、下架、警告。
-   - 隐藏/下架应更新目标帖子或评论状态。
-   - 仅管理员邮箱可访问，复用现有 `requireModerationAdmin`。
-3. iOS 后端客户端
-   - 补 `reportComment`
-   - 补 `adminReports`
-   - 补 `decideReport`
-4. 管理员处理 UI
-   - 让 `AdminReportView` 从真实后端拉取 reports。
-   - 展示被举报目标、举报原因、举报人、状态。
-   - 点击处理后刷新数据并触发前端同步。
-5. 验证
-   - 后端测试。
-   - Xcode Debug build。
-   - 双账号提交举报、管理员处理举报、普通用户刷新后目标内容不可见。
+收到 Rudy 明确的继续指令后：
 
-## Risks And Known Issues
+1. 复核工作区、Git 与两个计划文件，确认本 handoff 未过期。
+2. 在总阶段 4 内开始子任务 5，先为 `SafetyContentAction`、修正草稿与申诉 payload 写失败的 Codable 测试。
+3. iOS 客户端读取 `GET /api/me/content-actions` 时必须持续跟随可选 `nextCursor`，直到游标不存在，不能只取第一页。
+4. 完成子任务 5 的测试与检查点提交后再进入总阶段 4 子任务 6；总阶段 4 完成前不得进入总阶段 5。
 
-- 当前已有 `POST /reports`，但生产管理员读取和处理举报的闭环缺失。
-- `AdminReportView` 目前看起来仍偏本地原型，不应误认为已经完成生产后台。
-- 帖子详情里是否存在实际可点击的举报入口需要新对话重新确认；之前检查时没有看到明确入口。
-- 本地 `main` ahead 11 尚未 push，换机器或远端协作前有丢失风险。
-- 后端生产环境看起来健康，但新对话若要部署举报功能，需要重新确认 ECS 服务、迁移状态和环境变量，不要假设。
+## Important Paths
 
-## Next Actions
-
-1. 先运行 `git status --short --branch && git rev-parse --short HEAD`，确认仍在 `main` 且 HEAD 是 `74dffb4`，只有 `CODEX_HANDOFF.md` 可能是交接文档改动。
-2. 为当前交接文档做一个小提交，或由 Rudy 决定是否先 push 当前 ahead 11 的稳定提交。
-3. 开始实现最小生产举报闭环：后端 `GET /reports` 和 `POST /reports/:id/decision`。
-4. 接 Swift `BackendClient` 和 `MockAppStore`。
-5. 补用户端帖子/评论举报入口。
-6. 改 `AdminReportView` 为真实后端数据源。
-7. 跑 `npm --prefix backend test`、`xcodebuild`，再做双账号举报手测。
-8. 部署后端到 ECS，并用生产 API 验证举报写入和管理员处理。
-
-## Important Commands And Paths
-
-- 项目根目录：
-  - `/Users/rudy2009/Documents/欧美团app`
-- 查看状态：
-  - `git status --short --branch`
-  - `git log --oneline -n 8`
-  - `git rev-parse --short HEAD`
-- 当前稳定提交：
-  - `74dffb4 Handle blocked follow attempts`
-- 当前稳定 checkpoint 分支：
-  - `codex/pre-report-feature-checkpoint`
-- 后端测试：
-  - `npm --prefix backend test`
-- 后端健康检查：
-  - `curl -fsS https://api.zhoubiantuanmail.top/api/health`
-- 隐私政策检查：
-  - `curl -fsS -I https://api.zhoubiantuanmail.top/privacy-policy | head -n 5`
-- 关键文件：
-  - `/Users/rudy2009/Documents/欧美团app/backend/src/routes.js`
-  - `/Users/rudy2009/Documents/欧美团app/backend/src/mappers.js`
-  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/BackendClient.swift`
-  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/MockAppStore.swift`
-  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/AdminViews.swift`
-  - `/Users/rudy2009/Documents/欧美团app/ZhouBianTuan/PostDetailViews.swift`
+- Worktree: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system`
+- Handoff: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/CODEX_HANDOFF.md`
+- Master plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-report-safety-program.md`
+- Current phase plan: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/docs/superpowers/plans/2026-07-10-04-content-remediation.md`
+- Backend: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/backend`
+- iOS project: `/Users/rudy2009/Documents/欧美团app/.worktrees/report-safety-system/ZhouBianTuan.xcodeproj`

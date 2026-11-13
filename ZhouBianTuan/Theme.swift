@@ -38,19 +38,26 @@ enum Theme {
         dark: UIColor.white.withAlphaComponent(0.92),
         light: UIColor.black.withAlphaComponent(0.78)
     ))
-    static let hotPink = Color(red: 1, green: 0.12, blue: 0.27)
-    static let softPink = Color(red: 1, green: 0.42, blue: 0.58)
+    // AccentColor also supplies UIKit controls and the app-wide SwiftUI tint.
+    static let accentUIColor = UIColor(named: "AccentColor")
+        ?? UIColor(red: 194 / 255, green: 77 / 255, blue: 0, alpha: 1)
+    static let accent = Color(accentUIColor)
+    // Keep solid controls dark enough for their white labels in either appearance.
+    static let accentFill = Color(red: 194 / 255, green: 77 / 255, blue: 0)
+    static let accentSoft = Color(adaptiveUIColor(
+        dark: UIColor(red: 1, green: 180 / 255, blue: 114 / 255, alpha: 1),
+        light: UIColor(red: 173 / 255, green: 68 / 255, blue: 0, alpha: 1)
+    ))
+    static let accentHighlight = Color(red: 1, green: 211 / 255, blue: 163 / 255)
+    static let danger = Color.red
     /// Tappable text such as hashtags. Light mode uses a darker blue so it
     /// keeps at least 4.5:1 contrast on white.
     static let link = Color(adaptiveUIColor(
         dark: UIColor(red: 0.78, green: 0.86, blue: 1.0, alpha: 1),
         light: UIColor(red: 0.10, green: 0.36, blue: 0.80, alpha: 1)
     ))
-    /// Text on `hotPink.opacity(0.13)` tag capsules.
-    static let tagText = Color(adaptiveUIColor(
-        dark: UIColor(red: 1, green: 0.42, blue: 0.58, alpha: 1),
-        light: UIColor(red: 0.78, green: 0.06, blue: 0.22, alpha: 1)
-    ))
+    /// Text on `accent.opacity(0.13)` tag capsules (readable in both appearances).
+    static let tagText = accentSoft
 
     static let barBackgroundUIColor = adaptiveUIColor(
         dark: UIColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1),

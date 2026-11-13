@@ -71,6 +71,12 @@ function trustProxy() {
   return entries;
 }
 
+function positiveFiniteInteger(name, fallback) { return integer(name, fallback); }
+function nonNegativeFiniteNumber(name, fallback = 0) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value < 0) throw new Error("Invalid " + name);
+  return value;
+}
 export const config = {
   nodeEnv,
   trustProxy: trustProxy(),
@@ -112,8 +118,48 @@ export const config = {
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean)
   },
+  safety: {
+    enabled: String(process.env.SAFETY_CASES_ENABLED || "false").toLowerCase() === "true",
+    aiMode: enumValue("SAFETY_AI_MODE", "off", ["off", "shadow", "enforce"]),
+    autoActionsEnabled: String(process.env.SAFETY_AUTO_ACTIONS_ENABLED || "false").toLowerCase() === "true",
+    reportAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_ACCOUNT_MAX_24H", 20),
+    reportIpMax24h: positiveFiniteInteger("SAFETY_REPORT_IP_MAX_24H", 60),
+    reportBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_BURST_MAX_MINUTE", 5),
+    reportUploadOutstandingMax: positiveFiniteInteger("SAFETY_REPORT_UPLOAD_OUTSTANDING_MAX", 24),
+    reportUploadAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_UPLOAD_ACCOUNT_MAX_24H", 60),
+    reportSupplementAccountMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_ACCOUNT_MAX_24H", 40),
+    reportSupplementIpMax24h: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_IP_MAX_24H", 120),
+    reportSupplementBurstMaxMinute: positiveFiniteInteger("SAFETY_REPORT_SUPPLEMENT_BURST_MAX_MINUTE", 10),
+    contentRevisionAccountMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_ACCOUNT_MAX_24H", 20),
+    contentRevisionIpMax24h: positiveFiniteInteger("SAFETY_CONTENT_REVISION_IP_MAX_24H", 60),
+    contentRevisionBurstMaxMinute: positiveFiniteInteger("SAFETY_CONTENT_REVISION_BURST_MAX_MINUTE", 5)
+  },
+  safetyAi: {
+    baseUrl: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiKey: process.env.DASHSCOPE_API_KEY || "",
+    model: "qwen3.7-plus-2026-05-26",
+    promptVersion: "safety-case-prompt-v2",
+    policyVersion: "safety-policy-v2",
+    monthlyBudgetCny: nonNegativeFiniteNumber("SAFETY_AI_MONTHLY_BUDGET_CNY"),
+    inputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_INPUT_CNY_PER_MILLION"),
+    outputCnyPerMillion: nonNegativeFiniteNumber("SAFETY_QWEN_OUTPUT_CNY_PER_MILLION"),
+    timeoutMs: positiveFiniteInteger("SAFETY_QWEN_TIMEOUT_MS", 12_000)
+  },
+  admin: {
+    webEnabled: String(process.env.ADMIN_WEB_ENABLED || "false").toLowerCase() === "true",
+    sessionCookieName: "zbt_admin_session",
+    csrfCookieName: "zbt_admin_csrf",
+    cookieSecure: nodeEnv === "production"
+      ? true
+      : String(process.env.ADMIN_COOKIE_SECURE || "false").toLowerCase() === "true",
+    sessionIdleMinutes: 30,
+    sessionAbsoluteHours: 8,
+    challengeTtlSeconds: 120,
+    deviceRequestTtlMinutes: 10,
+    bootstrapTtlMinutes: 10
+  },
   email: {
-    provider: enumValue("EMAIL_PROVIDER", "console", ["console", "smtp"]),
+    provider: enumValue("EMAIL_PROVIDER", "console", ["console", "smtp", "aliyun"]),
     from: process.env.EMAIL_FROM || "",
     codeSecret: requiredSecret("EMAIL_CODE_SECRET"),
     codeTtlMinutes: integer("EMAIL_CODE_TTL_MINUTES", 10, 1, 30),
@@ -135,7 +181,7 @@ if (nodeEnv === "production" && config.moderation.provider !== "aliyun") {
 if (nodeEnv === "production") {
   const url = new URL(config.publicApiBaseUrl);
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("Production PUBLIC_API_BASE_URL must be HTTPS");
-  if (config.email.provider !== "smtp" || !config.email.smtp.host || !config.email.smtp.user || !config.email.smtp.pass || !config.email.from) {
+  if (!["smtp", "aliyun"].includes(config.email.provider) || !config.email.smtp.host || !config.email.smtp.user || !config.email.smtp.pass || !config.email.from) {
     throw new Error("Production requires a configured SMTP delivery service");
   }
 }
